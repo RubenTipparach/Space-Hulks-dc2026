@@ -1,0 +1,12 @@
+build/*
+!build/web/
+third_party/
+*.exe
+*.o
+*.obj
+.history/
+utilities/PaletteTools/obj/
+utilities/PaletteTools/bin/
+textures-128x128/
+screenshots/
+rubens_dungeon/
