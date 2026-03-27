@@ -34,18 +34,7 @@ static void dng_touch_ended(float sx, float sy, double time) {
     if (!touch_active) return;
     touch_active = false;
 
-    if (current_scene != SCENE_DUNGEON || dng_play_state != DNG_STATE_PLAYING) return;
-
-    /* Check MENU button first */
-    {
-        float fx, fy;
-        screen_to_fb(sx, sy, &fx, &fy);
-        int mbx = FB_WIDTH - 32, mby = 3, mbw = 30, mbh = 11;
-        if (fx >= mbx && fx <= mbx + mbw && fy >= mby && fy <= mby + mbh) {
-            app_state = STATE_MENU;
-            return;
-        }
-    }
+    if (dng_play_state != DNG_STATE_PLAYING) return;
 
     float dx = sx - touch_start_sx;
     float dy = sy - touch_start_sy;

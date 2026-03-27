@@ -60,7 +60,7 @@ jobs:
       - name: Upload web artifact
         uses: actions/upload-artifact@v4
         with:
-          name: starraster-web
+          name: spacehulks-web
           path: build/web/
 
       - name: Upload Pages artifact
@@ -96,23 +96,23 @@ jobs:
             src/sr_raster.c \
             src/sr_texture.c \
             src/sr_gif.c \
-            -o build/starraster.exe \
+            -o build/spacehulks.exe \
             -lopengl32 -lgdi32 -luser32 -lkernel32 -lshell32 -lwinmm -lm
 
       - name: Package Windows zip
         shell: bash
         run: |
-          mkdir -p starraster-win
-          cp build/starraster.exe starraster-win/
-          cp -r assets starraster-win/assets
-          cp -r config starraster-win/config
-          cd starraster-win && 7z a -tzip ../starraster-windows.zip . && cd ..
+          mkdir -p spacehulks-win
+          cp build/spacehulks.exe spacehulks-win/
+          cp -r assets spacehulks-win/assets
+          cp -r config spacehulks-win/config
+          cd spacehulks-win && 7z a -tzip ../spacehulks-windows.zip . && cd ..
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
         with:
-          name: starraster-windows
-          path: starraster-windows.zip
+          name: spacehulks-windows
+          path: spacehulks-windows.zip
 
   deploy-itch:
     name: Deploy to itch.io
@@ -122,13 +122,13 @@ jobs:
       - name: Download web build
         uses: actions/download-artifact@v4
         with:
-          name: starraster-web
+          name: spacehulks-web
           path: web-build/
 
       - name: Download Windows build
         uses: actions/download-artifact@v4
         with:
-          name: starraster-windows
+          name: spacehulks-windows
           path: win-build/
 
       - name: Deploy web to itch.io
@@ -142,7 +142,7 @@ jobs:
       - name: Deploy Windows to itch.io
         uses: robpc/itchio-upload-action@v1
         with:
-          path: win-build/starraster-windows.zip
+          path: win-build/spacehulks-windows.zip
           project: ruben-tipparach/space-hulks
           channel: windows
           api-key: ${{ secrets.BUTLER_API_KEY }}

@@ -1,5 +1,5 @@
-/*  StarRaster — CPU Software Rasterizer
- *  Entry point: Sokol app with multiple scene demos.
+/*  Space Hulks — Dungeon Crawler Engine
+ *  Entry point: Sokol app with dungeon scene.
  */
 
 #if defined(__EMSCRIPTEN__)
@@ -37,13 +37,7 @@
 
 #include "sr_app.h"
 #include "sr_lighting.h"
-#include "sr_scene_neighborhood.h"
-#include "sr_scene_cubes.h"
-#include "sr_scene_palette.h"
 #include "sr_scene_dungeon.h"
-#include "sr_scene_space_fleet.h"
-#include "sr_scene_node_map.h"
-#include "sr_scene_ship_viewer.h"
 #include "sr_menu.h"
 #include "sr_mobile_input.h"
 
@@ -276,8 +270,6 @@ static void init(void) {
 
     sr_fog_set(FOG_COLOR, FOG_NEAR, FOG_FAR);
 
-    cubes_scene_init();
-
     dng_load_config();
     dng_game_init(&dng_state);
     dng_initialized = true;
@@ -286,12 +278,15 @@ static void init(void) {
     timeBeginPeriod(1);
 #endif
 
-    printf("StarRaster initialized (%dx%d @ %dfps)\n", FB_WIDTH, FB_HEIGHT, TARGET_FPS);
-    printf("  TAB    = menu\n");
-    printf("  Ctrl+8 = start GIF recording (24fps)\n");
-    printf("  Ctrl+9 = stop & save GIF\n");
-    printf("  Ctrl+P = save screenshot\n");
-    printf("  ESC    = quit\n");
+    printf("Space Hulks — Dungeon Crawler initialized (%dx%d @ %dfps)\n", FB_WIDTH, FB_HEIGHT, TARGET_FPS);
+    printf("  WASD/Arrows = move/turn\n");
+    printf("  F           = toggle lighting mode\n");
+    printf("  I           = toggle info overlay\n");
+    printf("  +/-         = adjust torch brightness\n");
+    printf("  Ctrl+8      = start GIF recording (24fps)\n");
+    printf("  Ctrl+9      = stop & save GIF\n");
+    printf("  Ctrl+P      = save screenshot\n");
+    printf("  ESC         = quit\n");
 }
 
 static void frame(void) {
@@ -307,137 +302,53 @@ static void frame(void) {
         fps_timer -= 1.0;
     }
 
-    /* ── Camera (not used by Space Fleet — it has its own) ──── */
-    sr_mat4 vp;
-    if (current_scene != SCENE_SPACE_FLEET && current_scene != SCENE_NODE_MAP && current_scene != SCENE_SHIP_VIEWER) {
-        float angle = (float)time_acc * 0.25f;
-        float cam_dist, cam_height;
-        sr_vec3 target_pos;
-
-        if (current_scene == SCENE_CUBES) {
-            cam_dist   = 45.0f;
-            cam_height = 20.0f;
-            target_pos = (sr_vec3){ 0, 5.0f, 0 };
-        } else if (current_scene == SCENE_PALETTE_HOUSE) {
-            cam_dist   = 10.0f;
-            cam_height = 5.0f;
-            target_pos = (sr_vec3){ 0, 1.5f, 0 };
-        } else {
-            cam_dist   = 28.0f;
-            cam_height = 12.0f;
-            target_pos = (sr_vec3){ 0, 1.5f, 0 };
-        }
-
-        sr_vec3 eye = {
-            cosf(angle) * cam_dist,
-            cam_height,
-            sinf(angle) * cam_dist
-        };
-        sr_vec3 up = { 0, 1, 0 };
-
-        sr_mat4 view = sr_mat4_lookat(eye, target_pos, up);
-        sr_mat4 proj = sr_mat4_perspective(
-            60.0f * 3.14159f / 180.0f,
-            (float)FB_WIDTH / (float)FB_HEIGHT,
-            0.1f, 100.0f
-        );
-        vp = sr_mat4_mul(proj, view);
-    }
+    sr_mat4 vp; /* unused — dungeon builds its own MVP */
+    (void)vp;
 
     /* ── CPU rasterize ───────────────────────────────────────── */
     sr_stats_reset();
-    uint32_t clear_color;
-    if (current_scene == SCENE_PALETTE_HOUSE)
-        clear_color = PAL_NIGHT_SKY;
-    else if (current_scene == SCENE_DUNGEON)
-        clear_color = 0xFF000000;
-    else if (current_scene == SCENE_SPACE_FLEET)
-        clear_color = SFA_BG_COLOR;
-    else if (current_scene == SCENE_NODE_MAP)
-        clear_color = NM_BG_COLOR;
-    else if (current_scene == SCENE_SHIP_VIEWER)
-        clear_color = 0xFF1A0A0A;
-    else if (night_mode && current_scene == SCENE_NEIGHBORHOOD)
-        clear_color = NIGHT_SKY_COLOR;
-    else
-        clear_color = FOG_COLOR;
-    sr_framebuffer_clear(&fb, clear_color, 1.0f);
+    sr_framebuffer_clear(&fb, 0xFF000000, 1.0f);
+    sr_fog_disable();
 
-    if (app_state == STATE_RUNNING) {
-        switch (current_scene) {
-            case SCENE_NEIGHBORHOOD:
-                setup_street_lights((float)time_acc);
-                build_light_grid();
-                draw_neighborhood(&fb, &vp);
-                break;
-            case SCENE_CUBES:
-                draw_cube_scene(&fb, &vp, (float)time_acc);
-                break;
-            case SCENE_PALETTE_HOUSE:
-                sr_fog_disable();
-                draw_palette_scene(&fb, &vp, (float)time_acc);
-                break;
-            case SCENE_DUNGEON:
-                sr_fog_disable();
-                /* Update dungeon game state */
-                if (dng_play_state == DNG_STATE_CLIMBING) {
-                    if (dng_update_climb(&dng_state)) {
-                        dng_play_state = DNG_STATE_PLAYING;
-                    }
-                } else {
-                    sr_dungeon *dd = dng_state.dungeon;
-                    dng_player *pp = &dng_state.player;
-                    bool on_up = (dd->has_up && pp->gx == dd->stairs_gx && pp->gy == dd->stairs_gy);
-                    bool on_down = (dd->has_down && pp->gx == dd->down_gx && pp->gy == dd->down_gy);
-                    if (dng_state.on_stairs) {
-                        if (!on_up && !on_down) dng_state.on_stairs = false;
-                    } else {
-                        if (on_up) {
-                            dng_start_climb(&dng_state, true);
-                            dng_play_state = DNG_STATE_CLIMBING;
-                        } else if (on_down) {
-                            dng_start_climb(&dng_state, false);
-                            dng_play_state = DNG_STATE_CLIMBING;
-                        }
-                    }
-                }
-                dng_player_update(&dng_state.player);
-                draw_dungeon_scene(&fb, &vp);
-                draw_dungeon_minimap(&fb);
-                if (dng_show_info) {
-                    static const char *dir_names[] = {"N","E","S","W"};
-                    char ibuf[64];
-                    dng_player *ip = &dng_state.player;
-                    snprintf(ibuf, sizeof(ibuf), "F%d  %s  (%d,%d)",
-                             dng_state.current_floor + 1,
-                             dir_names[ip->dir],
-                             ip->gx, ip->gy);
-                    sr_draw_text_shadow(fb.color, fb.width, fb.height,
-                                        3, 3, ibuf, 0xFFFFFFFF, 0xFF000000);
-                }
-                break;
-            case SCENE_SPACE_FLEET:
-                sr_fog_disable();
-                draw_space_fleet_scene(&fb, (float)dt);
-                break;
-            case SCENE_NODE_MAP:
-                sr_fog_disable();
-                draw_node_map_scene(&fb, (float)dt);
-                break;
-            case SCENE_SHIP_VIEWER:
-                sr_fog_disable();
-                draw_ship_viewer_scene(&fb, (float)dt);
-                break;
+    /* Update dungeon game state */
+    if (dng_play_state == DNG_STATE_CLIMBING) {
+        if (dng_update_climb(&dng_state)) {
+            dng_play_state = DNG_STATE_PLAYING;
         }
+    } else {
+        sr_dungeon *dd = dng_state.dungeon;
+        dng_player *pp = &dng_state.player;
+        bool on_up = (dd->has_up && pp->gx == dd->stairs_gx && pp->gy == dd->stairs_gy);
+        bool on_down = (dd->has_down && pp->gx == dd->down_gx && pp->gy == dd->down_gy);
+        if (dng_state.on_stairs) {
+            if (!on_up && !on_down) dng_state.on_stairs = false;
+        } else {
+            if (on_up) {
+                dng_start_climb(&dng_state, true);
+                dng_play_state = DNG_STATE_CLIMBING;
+            } else if (on_down) {
+                dng_start_climb(&dng_state, false);
+                dng_play_state = DNG_STATE_CLIMBING;
+            }
+        }
+    }
+    dng_player_update(&dng_state.player);
+    draw_dungeon_scene(&fb, &vp);
+    draw_dungeon_minimap(&fb);
+    if (dng_show_info) {
+        static const char *dir_names[] = {"N","E","S","W"};
+        char ibuf[64];
+        dng_player *ip = &dng_state.player;
+        snprintf(ibuf, sizeof(ibuf), "F%d  %s  (%d,%d)",
+                 dng_state.current_floor + 1,
+                 dir_names[ip->dir],
+                 ip->gx, ip->gy);
+        sr_draw_text_shadow(fb.color, fb.width, fb.height,
+                            3, 3, ibuf, 0xFFFFFFFF, 0xFF000000);
     }
 
     int tris = sr_stats_tri_count();
     draw_stats(&fb, tris);
-
-    if (app_state == STATE_MENU)
-        draw_menu(&fb);
-    else if (app_state == STATE_SFA_SUBMENU)
-        draw_sfa_submenu(&fb);
 
     /* ── GIF capture (time-based, 24fps) ─────────────────────── */
     if (sr_gif_is_recording()) {
@@ -500,195 +411,14 @@ static void cleanup(void) {
 #endif
 }
 
-/* ── Input: tap handling for menus/buttons ───────────────────────── */
-
-static void handle_tap(float sx, float sy) {
-    float fx, fy;
-    screen_to_fb(sx, sy, &fx, &fy);
-
-    if (app_state == STATE_SFA_SUBMENU) {
-        for (int i = 0; i < 3; i++) {
-            float item_y = 125.0f + (float)i * 15.0f;
-            if (fx >= 140.0f && fx <= 340.0f &&
-                fy >= item_y - 4.0f && fy <= item_y + 12.0f) {
-                sfa_submenu_cursor = i;
-                if (i == 0) {
-                    campaign.campaign_active = false;
-                    current_scene = SCENE_SPACE_FLEET;
-                    sfa.initialized = false;
-                    app_state = STATE_RUNNING;
-                } else if (i == 1) {
-                    campaign.campaign_active = true;
-                    campaign.credits = 0;
-                    campaign.player_ship_class = SHIP_CLASS_FRIGATE;
-                    campaign.current_node = 0;
-                    campaign.sector = 0;
-                    campaign.event_type = -1;
-                    current_scene = SCENE_NODE_MAP;
-                    app_state = STATE_RUNNING;
-                } else {
-                    current_scene = SCENE_SHIP_VIEWER;
-                    sv.initialized = false;
-                    app_state = STATE_RUNNING;
-                }
-                return;
-            }
-        }
-        return;
-    } else if (app_state == STATE_MENU) {
-        for (int i = 0; i < SCENE_MENU_COUNT; i++) {
-            float item_y = 115.0f + (float)i * 15.0f;
-            if (fx >= 140.0f && fx <= 340.0f &&
-                fy >= item_y - 4.0f && fy <= item_y + 12.0f) {
-                if (i == SCENE_SPACE_FLEET) {
-                    menu_cursor = i;
-                    sfa_submenu_cursor = 0;
-                    app_state = STATE_SFA_SUBMENU;
-                } else {
-                    current_scene = i;
-                    menu_cursor = i;
-                    app_state = STATE_RUNNING;
-                }
-                return;
-            }
-        }
-    } else {
-        /* MENU button check */
-        int mbx = FB_WIDTH - 32, mby = 3, mbw = 30, mbh = 11;
-        if (fx >= mbx && fx <= mbx + mbw && fy >= mby && fy <= mby + mbh) {
-            app_state = STATE_MENU;
-            return;
-        }
-
-        if (current_scene == SCENE_PALETTE_HOUSE) {
-        int bx = 2, bw = 100, bh = 11;
-        int by0 = FB_HEIGHT - 62;
-        int by1 = FB_HEIGHT - 50;
-        int by2 = FB_HEIGHT - 38;
-        int by3 = FB_HEIGHT - 26;
-
-        if (fx >= bx && fx <= bx + bw && fy >= by0 && fy <= by0 + bh) {
-            adjusting_ambient = true; return;
-        }
-        if (fx >= bx + bw + 2 && fx <= bx + bw + 14 && fy >= by0 && fy <= by0 + bh) {
-            pal_ambient -= 0.02f; if (pal_ambient < 0.0f) pal_ambient = 0.0f; return;
-        }
-        if (fx >= bx + bw + 16 && fx <= bx + bw + 28 && fy >= by0 && fy <= by0 + bh) {
-            pal_ambient += 0.02f; if (pal_ambient > 1.0f) pal_ambient = 1.0f; return;
-        }
-        if (fx >= bx && fx <= bx + bw && fy >= by1 && fy <= by1 + bh) {
-            adjusting_ambient = false; return;
-        }
-        if (fx >= bx + bw + 2 && fx <= bx + bw + 14 && fy >= by1 && fy <= by1 + bh) {
-            pal_light_mult -= 0.1f; if (pal_light_mult < 0.0f) pal_light_mult = 0.0f; return;
-        }
-        if (fx >= bx + bw + 16 && fx <= bx + bw + 28 && fy >= by1 && fy <= by1 + bh) {
-            pal_light_mult += 0.1f; if (pal_light_mult > 5.0f) pal_light_mult = 5.0f; return;
-        }
-        if (fx >= bx && fx <= bx + 90 && fy >= by2 && fy <= by2 + bh) {
-            pixel_lighting = !pixel_lighting; return;
-        }
-        if (fx >= bx && fx <= bx + 78 && fy >= by3 && fy <= by3 + bh) {
-            shadows_enabled = !shadows_enabled; return;
-        }
-        }
-    }
-}
-
 /* ── Event handler ───────────────────────────────────────────────── */
 
 static void event(const sapp_event *ev) {
     double now_time = sapp_frame_count() * sapp_frame_duration();
 
-    /* ── Touch / pointer tracking ────────────────────────────── */
-    /* ── Node Map touch routing ────────────────────────────── */
-    if (current_scene == SCENE_NODE_MAP && app_state == STATE_RUNNING) {
-        if (ev->type == SAPP_EVENTTYPE_MOUSE_DOWN && ev->mouse_button == SAPP_MOUSEBUTTON_LEFT) {
-            nm_handle_click(ev->mouse_x, ev->mouse_y);
-            return;
-        }
-        if (ev->type == SAPP_EVENTTYPE_MOUSE_MOVE) {
-            nm_handle_mouse_move(ev->mouse_x, ev->mouse_y);
-            return;
-        }
-        if (ev->type == SAPP_EVENTTYPE_TOUCHES_BEGAN && ev->num_touches > 0) {
-            nm_handle_click(ev->touches[0].pos_x, ev->touches[0].pos_y);
-            return;
-        }
-        if (ev->type == SAPP_EVENTTYPE_TOUCHES_MOVED && ev->num_touches > 0) {
-            nm_handle_mouse_move(ev->touches[0].pos_x, ev->touches[0].pos_y);
-            return;
-        }
-        if (ev->type == SAPP_EVENTTYPE_KEY_DOWN) {
-            if (ev->key_code == SAPP_KEYCODE_TAB || ev->key_code == SAPP_KEYCODE_ESCAPE)
-                app_state = STATE_MENU;
-            return;
-        }
-        return;
-    }
-
-    /* ── Ship Viewer touch routing ─────────────────────────── */
-    if (current_scene == SCENE_SHIP_VIEWER && app_state == STATE_RUNNING) {
-        if (ev->type == SAPP_EVENTTYPE_MOUSE_DOWN && ev->mouse_button == SAPP_MOUSEBUTTON_LEFT) {
-            float fx2, fy2; screen_to_fb(ev->mouse_x, ev->mouse_y, &fx2, &fy2);
-            sv_handle_click(fx2, fy2);
-            return;
-        }
-        if (ev->type == SAPP_EVENTTYPE_TOUCHES_BEGAN && ev->num_touches > 0) {
-            float fx2, fy2; screen_to_fb(ev->touches[0].pos_x, ev->touches[0].pos_y, &fx2, &fy2);
-            sv_handle_click(fx2, fy2);
-            return;
-        }
-        if (ev->type == SAPP_EVENTTYPE_KEY_DOWN) {
-            sv_handle_key(ev->key_code);
-            return;
-        }
-        return;
-    }
-
-    /* ── Space Fleet touch routing ──────────────────────────── */
-    if (current_scene == SCENE_SPACE_FLEET && app_state == STATE_RUNNING) {
-        if (ev->type == SAPP_EVENTTYPE_MOUSE_DOWN && ev->mouse_button == SAPP_MOUSEBUTTON_LEFT) {
-            /* Try targeting first; only pass to steering if not consumed */
-            if (!sfa_handle_mouse_click(ev->mouse_x, ev->mouse_y))
-                sfa_handle_touch_began(ev->mouse_x, ev->mouse_y);
-            return;
-        }
-        if (ev->type == SAPP_EVENTTYPE_MOUSE_MOVE) {
-            sfa_handle_mouse_move(ev->mouse_x, ev->mouse_y);
-            sfa_handle_touch_moved(ev->mouse_x, ev->mouse_y);
-            return;
-        }
-        if (ev->type == SAPP_EVENTTYPE_MOUSE_UP && ev->mouse_button == SAPP_MOUSEBUTTON_LEFT) {
-            sfa_handle_touch_ended();
-            return;
-        }
-        if (ev->type == SAPP_EVENTTYPE_TOUCHES_BEGAN && ev->num_touches > 0) {
-            /* Try targeting first; only pass to steering if not consumed */
-            if (!sfa_handle_mouse_click(ev->touches[0].pos_x, ev->touches[0].pos_y))
-                sfa_handle_touch_began(ev->touches[0].pos_x, ev->touches[0].pos_y);
-            return;
-        }
-        if (ev->type == SAPP_EVENTTYPE_TOUCHES_MOVED && ev->num_touches > 0) {
-            sfa_handle_touch_moved(ev->touches[0].pos_x, ev->touches[0].pos_y);
-            return;
-        }
-        if (ev->type == SAPP_EVENTTYPE_TOUCHES_ENDED && ev->num_touches > 0) {
-            sfa_handle_touch_ended();
-            return;
-        }
-        if (ev->type == SAPP_EVENTTYPE_TOUCHES_CANCELLED) {
-            sfa_handle_touch_ended();
-            return;
-        }
-    }
-
+    /* ── Touch / pointer for dungeon ────────────────────────── */
     if (ev->type == SAPP_EVENTTYPE_MOUSE_DOWN && ev->mouse_button == SAPP_MOUSEBUTTON_LEFT) {
         dng_touch_began(ev->mouse_x, ev->mouse_y, now_time);
-        if (current_scene != SCENE_DUNGEON || app_state != STATE_RUNNING ||
-            dng_play_state != DNG_STATE_PLAYING) {
-            handle_tap(ev->mouse_x, ev->mouse_y);
-        }
         return;
     }
     if (ev->type == SAPP_EVENTTYPE_MOUSE_MOVE) {
@@ -702,10 +432,6 @@ static void event(const sapp_event *ev) {
     if (ev->type == SAPP_EVENTTYPE_TOUCHES_BEGAN && ev->num_touches > 0) {
         float sx = ev->touches[0].pos_x, sy = ev->touches[0].pos_y;
         dng_touch_began(sx, sy, now_time);
-        if (current_scene != SCENE_DUNGEON || app_state != STATE_RUNNING ||
-            dng_play_state != DNG_STATE_PLAYING) {
-            handle_tap(sx, sy);
-        }
         return;
     }
     if (ev->type == SAPP_EVENTTYPE_TOUCHES_MOVED && ev->num_touches > 0) {
@@ -718,13 +444,6 @@ static void event(const sapp_event *ev) {
     }
     if (ev->type == SAPP_EVENTTYPE_TOUCHES_CANCELLED) {
         dng_touch_cancelled();
-        return;
-    }
-
-    /* ── Key up — space fleet needs this for smooth turning ── */
-    if (ev->type == SAPP_EVENTTYPE_KEY_UP) {
-        if (current_scene == SCENE_SPACE_FLEET && app_state == STATE_RUNNING)
-            sfa_handle_key_up(ev->key_code);
         return;
     }
 
@@ -747,234 +466,61 @@ static void event(const sapp_event *ev) {
         return;
     }
 
-    /* ── Space Fleet sub-menu state ─────────────────────────── */
-    if (app_state == STATE_SFA_SUBMENU) {
-        switch (ev->key_code) {
-            case SAPP_KEYCODE_UP:
-                if (sfa_submenu_cursor > 0) sfa_submenu_cursor--;
-                break;
-            case SAPP_KEYCODE_DOWN:
-                if (sfa_submenu_cursor < 2) sfa_submenu_cursor++;
-                break;
-            case SAPP_KEYCODE_ENTER:
-            case SAPP_KEYCODE_KP_ENTER:
-                if (sfa_submenu_cursor == 0) {
-                    /* Instant Action */
-                    campaign.campaign_active = false;
-                    current_scene = SCENE_SPACE_FLEET;
-                    sfa.initialized = false;
-                    app_state = STATE_RUNNING;
-                } else if (sfa_submenu_cursor == 1) {
-                    /* Campaign */
-                    campaign.campaign_active = true;
-                    campaign.credits = 0;
-                    campaign.player_ship_class = SHIP_CLASS_FRIGATE;
-                    campaign.current_node = 0;
-                    campaign.sector = 0;
-                    campaign.event_type = -1;
-                    current_scene = SCENE_NODE_MAP;
-                    app_state = STATE_RUNNING;
-                } else {
-                    /* Ship Viewer */
-                    current_scene = SCENE_SHIP_VIEWER;
-                    sv.initialized = false;
-                    app_state = STATE_RUNNING;
-                }
-                break;
-            case SAPP_KEYCODE_1:
-                campaign.campaign_active = false;
-                current_scene = SCENE_SPACE_FLEET;
-                sfa.initialized = false;
-                app_state = STATE_RUNNING;
-                break;
-            case SAPP_KEYCODE_2:
-                campaign.campaign_active = true;
-                campaign.credits = 0;
-                campaign.player_ship_class = SHIP_CLASS_FRIGATE;
-                campaign.current_node = 0;
-                campaign.sector = 1;
-                campaign.event_type = -1;
-                current_scene = SCENE_NODE_MAP;
-                app_state = STATE_RUNNING;
-                break;
-            case SAPP_KEYCODE_3:
-                current_scene = SCENE_SHIP_VIEWER;
-                sv.initialized = false;
-                app_state = STATE_RUNNING;
-                break;
-            case SAPP_KEYCODE_ESCAPE:
-                app_state = STATE_MENU;
-                break;
-            default: break;
-        }
-        return;
-    }
-
-    /* ── Menu state ──────────────────────────────────────────── */
-    if (app_state == STATE_MENU) {
-        switch (ev->key_code) {
-            case SAPP_KEYCODE_UP:
-                if (menu_cursor > 0) menu_cursor--;
-                break;
-            case SAPP_KEYCODE_DOWN:
-                if (menu_cursor < SCENE_MENU_COUNT - 1) menu_cursor++;
-                break;
-            case SAPP_KEYCODE_ENTER:
-            case SAPP_KEYCODE_KP_ENTER:
-                if (menu_cursor == SCENE_SPACE_FLEET) {
-                    sfa_submenu_cursor = 0;
-                    app_state = STATE_SFA_SUBMENU;
-                } else {
-                    current_scene = menu_cursor;
-                    app_state = STATE_RUNNING;
-                }
-                break;
-            case SAPP_KEYCODE_1:
-                current_scene = SCENE_NEIGHBORHOOD;
-                menu_cursor = SCENE_NEIGHBORHOOD;
-                app_state = STATE_RUNNING;
-                break;
-            case SAPP_KEYCODE_2:
-                current_scene = SCENE_CUBES;
-                menu_cursor = SCENE_CUBES;
-                app_state = STATE_RUNNING;
-                break;
-            case SAPP_KEYCODE_3:
-                current_scene = SCENE_PALETTE_HOUSE;
-                menu_cursor = SCENE_PALETTE_HOUSE;
-                app_state = STATE_RUNNING;
-                break;
-            case SAPP_KEYCODE_4:
-                current_scene = SCENE_DUNGEON;
-                menu_cursor = SCENE_DUNGEON;
-                app_state = STATE_RUNNING;
-                break;
-            case SAPP_KEYCODE_5:
-                menu_cursor = SCENE_SPACE_FLEET;
-                sfa_submenu_cursor = 0;
-                app_state = STATE_SFA_SUBMENU;
-                break;
-            case SAPP_KEYCODE_ESCAPE:
-                app_state = STATE_RUNNING;
-                break;
-            default: break;
-        }
-        return;
-    }
-
-    /* ── Ship Viewer keys ── */
-    if (current_scene == SCENE_SHIP_VIEWER) {
-        sv_handle_key(ev->key_code);
-        return;
-    }
-
-    /* ── Space Fleet keys (handled before generic running state) ── */
-    if (current_scene == SCENE_SPACE_FLEET) {
-        if (ev->key_code == SAPP_KEYCODE_ESCAPE) {
-            app_state = STATE_MENU;
-            sfa_key_left = sfa_key_right = false;
-        } else {
-            sfa_handle_key_down(ev->key_code);
-        }
-        return;
-    }
-
-    /* ── Running state ───────────────────────────────────────── */
+    /* ── Dungeon keys ────────────────────────────────────────── */
     switch (ev->key_code) {
-        case SAPP_KEYCODE_TAB:
-        case SAPP_KEYCODE_ESCAPE:
-            app_state = STATE_MENU;
-            break;
-        case SAPP_KEYCODE_N:
-            if (current_scene == SCENE_NEIGHBORHOOD) {
-                night_mode = !night_mode;
-                uint32_t fog_col = night_mode ? NIGHT_SKY_COLOR : FOG_COLOR;
-                sr_fog_set(fog_col, FOG_NEAR, FOG_FAR);
-                if (!night_mode) num_lights = 0;
-            }
-            break;
-        case SAPP_KEYCODE_L:
-            if (current_scene == SCENE_PALETTE_HOUSE) adjusting_ambient = !adjusting_ambient;
-            break;
-        case SAPP_KEYCODE_V:
-            if (current_scene == SCENE_PALETTE_HOUSE) pixel_lighting = !pixel_lighting;
-            break;
         case SAPP_KEYCODE_F:
-            if (current_scene == SCENE_DUNGEON) dng_light_mode = (dng_light_mode + 1) % 2;
+            dng_light_mode = (dng_light_mode + 1) % 2;
             break;
         case SAPP_KEYCODE_I:
-            if (current_scene == SCENE_DUNGEON) dng_show_info = !dng_show_info;
-            break;
-        case SAPP_KEYCODE_S:
-            if (current_scene == SCENE_PALETTE_HOUSE) {
-                shadows_enabled = !shadows_enabled;
-            } else if (current_scene == SCENE_DUNGEON && dng_play_state == DNG_STATE_PLAYING) {
-                dng_player_try_move(&dng_state.player, dng_state.dungeon,
-                                    (dng_state.player.dir + 2) % 4);
-            }
+            dng_show_info = !dng_show_info;
             break;
         case SAPP_KEYCODE_EQUAL:
         case SAPP_KEYCODE_KP_ADD:
-            if (current_scene == SCENE_PALETTE_HOUSE) {
-                if (adjusting_ambient) {
-                    pal_ambient += 0.02f; if (pal_ambient > 1.0f) pal_ambient = 1.0f;
-                } else {
-                    pal_light_mult += 0.1f; if (pal_light_mult > 5.0f) pal_light_mult = 5.0f;
-                }
-            } else if (current_scene == SCENE_DUNGEON) {
-                dng_cfg.light_brightness += 0.1f;
-                if (dng_cfg.light_brightness > 5.0f) dng_cfg.light_brightness = 5.0f;
-            }
+            dng_cfg.light_brightness += 0.1f;
+            if (dng_cfg.light_brightness > 5.0f) dng_cfg.light_brightness = 5.0f;
             break;
         case SAPP_KEYCODE_MINUS:
         case SAPP_KEYCODE_KP_SUBTRACT:
-            if (current_scene == SCENE_PALETTE_HOUSE) {
-                if (adjusting_ambient) {
-                    pal_ambient -= 0.02f; if (pal_ambient < 0.0f) pal_ambient = 0.0f;
-                } else {
-                    pal_light_mult -= 0.1f; if (pal_light_mult < 0.0f) pal_light_mult = 0.0f;
-                }
-            } else if (current_scene == SCENE_DUNGEON) {
-                dng_cfg.light_brightness -= 0.1f;
-                if (dng_cfg.light_brightness < 0.0f) dng_cfg.light_brightness = 0.0f;
-            }
+            dng_cfg.light_brightness -= 0.1f;
+            if (dng_cfg.light_brightness < 0.0f) dng_cfg.light_brightness = 0.0f;
             break;
-        /* ── Dungeon movement ────────────────────────────────── */
+        /* ── Movement ────────────────────────────────────────── */
         case SAPP_KEYCODE_W:
         case SAPP_KEYCODE_UP:
-            if (current_scene == SCENE_DUNGEON && dng_play_state == DNG_STATE_PLAYING) {
+            if (dng_play_state == DNG_STATE_PLAYING) {
                 dng_player_try_move(&dng_state.player, dng_state.dungeon,
                                     dng_state.player.dir);
             }
             break;
+        case SAPP_KEYCODE_S:
         case SAPP_KEYCODE_DOWN:
-            if (current_scene == SCENE_DUNGEON && dng_play_state == DNG_STATE_PLAYING) {
+            if (dng_play_state == DNG_STATE_PLAYING) {
                 dng_player_try_move(&dng_state.player, dng_state.dungeon,
                                     (dng_state.player.dir + 2) % 4);
             }
             break;
         case SAPP_KEYCODE_A:
-            if (current_scene == SCENE_DUNGEON && dng_play_state == DNG_STATE_PLAYING) {
+            if (dng_play_state == DNG_STATE_PLAYING) {
                 dng_player_try_move(&dng_state.player, dng_state.dungeon,
                                     (dng_state.player.dir + 3) % 4);
             }
             break;
         case SAPP_KEYCODE_D:
-            if (current_scene == SCENE_DUNGEON && dng_play_state == DNG_STATE_PLAYING) {
+            if (dng_play_state == DNG_STATE_PLAYING) {
                 dng_player_try_move(&dng_state.player, dng_state.dungeon,
                                     (dng_state.player.dir + 1) % 4);
             }
             break;
         case SAPP_KEYCODE_LEFT:
         case SAPP_KEYCODE_Q:
-            if (current_scene == SCENE_DUNGEON && dng_play_state == DNG_STATE_PLAYING) {
+            if (dng_play_state == DNG_STATE_PLAYING) {
                 dng_state.player.dir = (dng_state.player.dir + 3) % 4;
                 dng_state.player.target_angle -= 0.25f;
             }
             break;
         case SAPP_KEYCODE_RIGHT:
         case SAPP_KEYCODE_E:
-            if (current_scene == SCENE_DUNGEON && dng_play_state == DNG_STATE_PLAYING) {
+            if (dng_play_state == DNG_STATE_PLAYING) {
                 dng_state.player.dir = (dng_state.player.dir + 1) % 4;
                 dng_state.player.target_angle += 0.25f;
             }
@@ -992,7 +538,7 @@ sapp_desc sokol_main(int argc, char *argv[]) {
         .event_cb   = event,
         .width      = FB_WIDTH * 2,
         .height     = FB_HEIGHT * 2,
-        .window_title = "StarRaster",
+        .window_title = "Space Hulks",
         .high_dpi     = true,
         .logger.func  = slog_func,
         .swap_interval = 0,
