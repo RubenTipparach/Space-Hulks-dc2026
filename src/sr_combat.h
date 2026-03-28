@@ -1,0 +1,713 @@
+/*  sr_combat.h — Card-based combat system for Space Hulks.
+ *  Single-TU header-only. Depends on sr_app.h, sr_font.h, sr_sprites.h. */
+#ifndef SR_COMBAT_H
+#define SR_COMBAT_H
+
+#include "sr_sprites.h"
+
+/* ── Card types ──────────────────────────────────────────────────── */
+
+enum {
+    CARD_SHIELD,     /* +3 shield */
+    CARD_SHOOT,      /* 3 dmg to targeted enemy */
+    CARD_BURST,      /* 2 dmg to all enemies */
+    CARD_MOVE,       /* move 1 step closer */
+    CARD_MELEE,      /* 6 dmg if distance == 0, else fail */
+    CARD_TYPE_COUNT
+};
+
+static const char *card_names[] = {
+    "SHIELD", "SHOOT", "BURST", "MOVE", "MELEE"
+};
+
+static const uint32_t card_colors[] = {
+    0xFFCC8822,  /* shield - blue */
+    0xFF2222CC,  /* shoot - red */
+    0xFF2266FF,  /* burst - orange */
+    0xFF22CC22,  /* move - green */
+    0xFF22CCCC,  /* melee - yellow */
+};
+
+/* ── Character classes ───────────────────────────────────────────── */
+
+enum { CLASS_SCOUT, CLASS_MARINE };
+
+typedef struct {
+    int hp_max;
+    int deck_composition[CARD_TYPE_COUNT]; /* count of each card type */
+    const char *name;
+    const uint32_t *sprite;
+} char_class;
+
+static const char_class char_classes[] = {
+    [CLASS_SCOUT] = {
+        .hp_max = 20,
+        .deck_composition = { 3, 2, 2, 2, 1 }, /* 3 shield, 2 shoot, 2 burst, 2 move, 1 melee */
+        .name = "SCOUT",
+        .sprite = spr_scout,
+    },
+    [CLASS_MARINE] = {
+        .hp_max = 30,
+        .deck_composition = { 4, 3, 1, 1, 1 }, /* 4 shield, 3 shoot, 1 burst, 1 move, 1 melee */
+        .name = "MARINE",
+        .sprite = spr_marine,
+    },
+};
+
+/* ── Enemy types ─────────────────────────────────────────────────── */
+
+enum { ENEMY_LURKER, ENEMY_BRUTE, ENEMY_SPITTER, ENEMY_HIVEGUARD, ENEMY_TYPE_COUNT };
+
+typedef struct {
+    const char *name;
+    int hp_max;
+    int damage;
+    int move_points;  /* how many move cards needed to reach for melee */
+    int ranged;       /* 1 = can shoot back */
+} enemy_template;
+
+static const enemy_template enemy_templates[] = {
+    [ENEMY_LURKER]    = { "LURKER",     8,  2, 1, 0 },
+    [ENEMY_BRUTE]     = { "BRUTE",     18,  5, 2, 0 },
+    [ENEMY_SPITTER]   = { "SPITTER",   10,  3, 3, 1 },
+    [ENEMY_HIVEGUARD] = { "HIVEGUARD", 24,  4, 2, 1 },
+};
+
+/* ── Combat state ────────────────────────────────────────────────── */
+
+#define COMBAT_MAX_ENEMIES   4
+#define COMBAT_DECK_MAX      20
+#define COMBAT_HAND_MAX      5
+
+typedef struct {
+    int type;
+    int hp;
+    int hp_max;
+    int move_points;  /* moves needed to melee */
+    int damage;
+    int ranged;
+    int flash_timer;  /* > 0 = flashing white */
+    bool alive;
+} combat_enemy;
+
+typedef struct {
+    /* Player */
+    int player_class;
+    int player_hp;
+    int player_hp_max;
+    int player_shield;
+    int player_distance;  /* steps to enemies (0 = melee range) */
+
+    /* Deck */
+    int deck[COMBAT_DECK_MAX];
+    int deck_count;
+    int discard[COMBAT_DECK_MAX];
+    int discard_count;
+    int hand[COMBAT_HAND_MAX];
+    int hand_count;
+
+    /* Enemies */
+    combat_enemy enemies[COMBAT_MAX_ENEMIES];
+    int enemy_count;
+
+    /* UI state */
+    int cursor;           /* selected card in hand */
+    int target;           /* targeted enemy (for shoot) */
+    int phase;            /* combat phase */
+    int turn;
+    int anim_timer;       /* for animations */
+    int message_timer;
+    char message[64];
+
+    /* Result */
+    bool combat_over;
+    bool player_won;
+    bool initialized;
+} combat_state;
+
+enum {
+    CPHASE_DRAW,         /* drawing cards animation */
+    CPHASE_PLAYER_TURN,  /* player selects and plays cards */
+    CPHASE_ENEMY_TURN,   /* enemies attack */
+    CPHASE_RESULT,       /* win/lose screen */
+};
+
+static combat_state combat;
+
+/* ── Deck management ─────────────────────────────────────────────── */
+
+static void combat_shuffle_deck(combat_state *cs) {
+    for (int i = cs->deck_count - 1; i > 0; i--) {
+        int j = dng_rng_int(i + 1);
+        int tmp = cs->deck[i];
+        cs->deck[i] = cs->deck[j];
+        cs->deck[j] = tmp;
+    }
+}
+
+static void combat_build_deck(combat_state *cs) {
+    const char_class *cc = &char_classes[cs->player_class];
+    cs->deck_count = 0;
+    for (int type = 0; type < CARD_TYPE_COUNT; type++) {
+        for (int i = 0; i < cc->deck_composition[type]; i++) {
+            cs->deck[cs->deck_count++] = type;
+        }
+    }
+    cs->discard_count = 0;
+    combat_shuffle_deck(cs);
+}
+
+static void combat_draw_hand(combat_state *cs) {
+    cs->hand_count = 0;
+    for (int i = 0; i < COMBAT_HAND_MAX; i++) {
+        if (cs->deck_count == 0) {
+            /* Reshuffle discard into deck */
+            if (cs->discard_count == 0) break;
+            for (int j = 0; j < cs->discard_count; j++)
+                cs->deck[j] = cs->discard[j];
+            cs->deck_count = cs->discard_count;
+            cs->discard_count = 0;
+            combat_shuffle_deck(cs);
+        }
+        cs->hand[cs->hand_count++] = cs->deck[--cs->deck_count];
+    }
+}
+
+/* ── Combat initialization ───────────────────────────────────────── */
+
+static void combat_init(combat_state *cs, int player_class, int floor) {
+    memset(cs, 0, sizeof(*cs));
+    cs->player_class = player_class;
+    cs->player_hp_max = char_classes[player_class].hp_max;
+    cs->player_hp = cs->player_hp_max;
+    cs->player_shield = 0;
+    cs->player_distance = 3;
+
+    combat_build_deck(cs);
+
+    /* Generate enemies based on floor */
+    cs->enemy_count = 1 + dng_rng_int(2 + (floor > 1 ? 1 : 0));
+    if (cs->enemy_count > COMBAT_MAX_ENEMIES)
+        cs->enemy_count = COMBAT_MAX_ENEMIES;
+
+    for (int i = 0; i < cs->enemy_count; i++) {
+        int type;
+        if (floor <= 1)
+            type = dng_rng_int(2); /* lurker or brute */
+        else if (floor <= 3)
+            type = dng_rng_int(3); /* add spitter */
+        else
+            type = dng_rng_int(ENEMY_TYPE_COUNT);
+
+        const enemy_template *tmpl = &enemy_templates[type];
+        cs->enemies[i].type = type;
+        cs->enemies[i].hp = tmpl->hp_max;
+        cs->enemies[i].hp_max = tmpl->hp_max;
+        cs->enemies[i].move_points = tmpl->move_points;
+        cs->enemies[i].damage = tmpl->damage;
+        cs->enemies[i].ranged = tmpl->ranged;
+        cs->enemies[i].flash_timer = 0;
+        cs->enemies[i].alive = true;
+    }
+
+    cs->cursor = 0;
+    cs->target = 0;
+    cs->phase = CPHASE_DRAW;
+    cs->turn = 1;
+    cs->anim_timer = 30;
+    cs->combat_over = false;
+    cs->player_won = false;
+    cs->initialized = true;
+    cs->message_timer = 0;
+    snprintf(cs->message, sizeof(cs->message), "ENEMIES DETECTED!");
+}
+
+/* ── Card logic ──────────────────────────────────────────────────── */
+
+static void combat_set_message(combat_state *cs, const char *msg) {
+    snprintf(cs->message, sizeof(cs->message), "%s", msg);
+    cs->message_timer = 60;
+}
+
+static bool combat_all_enemies_dead(combat_state *cs) {
+    for (int i = 0; i < cs->enemy_count; i++)
+        if (cs->enemies[i].alive) return false;
+    return true;
+}
+
+static int combat_first_alive_enemy(combat_state *cs) {
+    for (int i = 0; i < cs->enemy_count; i++)
+        if (cs->enemies[i].alive) return i;
+    return -1;
+}
+
+static void combat_deal_damage_enemy(combat_state *cs, int idx, int dmg) {
+    if (idx < 0 || idx >= cs->enemy_count || !cs->enemies[idx].alive) return;
+    cs->enemies[idx].hp -= dmg;
+    cs->enemies[idx].flash_timer = 10;
+    if (cs->enemies[idx].hp <= 0) {
+        cs->enemies[idx].hp = 0;
+        cs->enemies[idx].alive = false;
+    }
+}
+
+static void combat_deal_damage_player(combat_state *cs, int dmg) {
+    int absorbed = dmg < cs->player_shield ? dmg : cs->player_shield;
+    cs->player_shield -= absorbed;
+    dmg -= absorbed;
+    cs->player_hp -= dmg;
+    if (cs->player_hp <= 0) cs->player_hp = 0;
+}
+
+static void combat_play_card(combat_state *cs, int hand_idx) {
+    if (hand_idx < 0 || hand_idx >= cs->hand_count) return;
+    int card = cs->hand[hand_idx];
+    char buf[64];
+
+    switch (card) {
+        case CARD_SHIELD:
+            cs->player_shield += 3;
+            combat_set_message(cs, "SHIELD +3");
+            break;
+
+        case CARD_SHOOT: {
+            /* Find target */
+            int t = cs->target;
+            while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
+            if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
+            if (t >= 0) {
+                combat_deal_damage_enemy(cs, t, 3);
+                snprintf(buf, sizeof(buf), "SHOOT %s -3HP", enemy_templates[cs->enemies[t].type].name);
+                combat_set_message(cs, buf);
+            }
+            break;
+        }
+
+        case CARD_BURST:
+            for (int i = 0; i < cs->enemy_count; i++) {
+                if (cs->enemies[i].alive)
+                    combat_deal_damage_enemy(cs, i, 2);
+            }
+            combat_set_message(cs, "BURST -2HP ALL");
+            break;
+
+        case CARD_MOVE:
+            if (cs->player_distance > 0) {
+                cs->player_distance--;
+                snprintf(buf, sizeof(buf), "ADVANCE! DIST: %d", cs->player_distance);
+                combat_set_message(cs, buf);
+            } else {
+                combat_set_message(cs, "ALREADY IN MELEE RANGE");
+            }
+            break;
+
+        case CARD_MELEE:
+            if (cs->player_distance <= 0) {
+                int t = cs->target;
+                while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
+                if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
+                if (t >= 0) {
+                    combat_deal_damage_enemy(cs, t, 6);
+                    snprintf(buf, sizeof(buf), "MELEE %s -6HP!", enemy_templates[cs->enemies[t].type].name);
+                    combat_set_message(cs, buf);
+                }
+            } else {
+                snprintf(buf, sizeof(buf), "TOO FAR! DIST: %d", cs->player_distance);
+                combat_set_message(cs, buf);
+            }
+            break;
+    }
+
+    /* Move card to discard */
+    cs->discard[cs->discard_count++] = card;
+
+    /* Remove from hand */
+    for (int i = hand_idx; i < cs->hand_count - 1; i++)
+        cs->hand[i] = cs->hand[i + 1];
+    cs->hand_count--;
+
+    if (cs->cursor >= cs->hand_count && cs->hand_count > 0)
+        cs->cursor = cs->hand_count - 1;
+}
+
+/* ── Enemy turn ──────────────────────────────────────────────────── */
+
+static void combat_enemy_turn(combat_state *cs) {
+    for (int i = 0; i < cs->enemy_count; i++) {
+        if (!cs->enemies[i].alive) continue;
+        combat_enemy *e = &cs->enemies[i];
+
+        if (e->ranged || cs->player_distance <= 0) {
+            combat_deal_damage_player(cs, e->damage);
+            char buf[64];
+            snprintf(buf, sizeof(buf), "%s ATTACKS -%dHP",
+                     enemy_templates[e->type].name, e->damage);
+            combat_set_message(cs, buf);
+        }
+    }
+}
+
+/* ── Update ──────────────────────────────────────────────────────── */
+
+static void combat_update(combat_state *cs) {
+    /* Decrement timers */
+    if (cs->message_timer > 0) cs->message_timer--;
+    for (int i = 0; i < cs->enemy_count; i++)
+        if (cs->enemies[i].flash_timer > 0) cs->enemies[i].flash_timer--;
+
+    if (cs->phase == CPHASE_DRAW) {
+        if (cs->anim_timer > 0) {
+            cs->anim_timer--;
+        } else {
+            combat_draw_hand(cs);
+            cs->cursor = 0;
+            /* Find first alive target */
+            cs->target = combat_first_alive_enemy(cs);
+            if (cs->target < 0) cs->target = 0;
+            cs->phase = CPHASE_PLAYER_TURN;
+        }
+    }
+
+    if (cs->phase == CPHASE_ENEMY_TURN) {
+        if (cs->anim_timer > 0) {
+            cs->anim_timer--;
+        } else {
+            combat_enemy_turn(cs);
+            if (cs->player_hp <= 0) {
+                cs->phase = CPHASE_RESULT;
+                cs->player_won = false;
+                cs->combat_over = true;
+                combat_set_message(cs, "DEFEATED...");
+            } else {
+                cs->turn++;
+                cs->phase = CPHASE_DRAW;
+                cs->anim_timer = 20;
+            }
+        }
+    }
+}
+
+/* ── Input handling ──────────────────────────────────────────────── */
+
+static void combat_handle_key(combat_state *cs, int key) {
+    if (cs->phase == CPHASE_RESULT) return;
+    if (cs->phase != CPHASE_PLAYER_TURN) return;
+
+    switch (key) {
+        case SAPP_KEYCODE_LEFT:
+        case SAPP_KEYCODE_A:
+            if (cs->cursor > 0) cs->cursor--;
+            break;
+        case SAPP_KEYCODE_RIGHT:
+        case SAPP_KEYCODE_D:
+            if (cs->cursor < cs->hand_count - 1) cs->cursor++;
+            break;
+        case SAPP_KEYCODE_UP:
+        case SAPP_KEYCODE_W: {
+            /* Cycle target to next alive enemy */
+            int start = cs->target;
+            do {
+                cs->target = (cs->target + 1) % cs->enemy_count;
+            } while (!cs->enemies[cs->target].alive && cs->target != start);
+            break;
+        }
+        case SAPP_KEYCODE_DOWN:
+        case SAPP_KEYCODE_S: {
+            int start = cs->target;
+            do {
+                cs->target = (cs->target + cs->enemy_count - 1) % cs->enemy_count;
+            } while (!cs->enemies[cs->target].alive && cs->target != start);
+            break;
+        }
+        case SAPP_KEYCODE_ENTER:
+        case SAPP_KEYCODE_KP_ENTER:
+        case SAPP_KEYCODE_SPACE:
+            if (cs->hand_count > 0) {
+                combat_play_card(cs, cs->cursor);
+                /* Check for victory */
+                if (combat_all_enemies_dead(cs)) {
+                    cs->phase = CPHASE_RESULT;
+                    cs->player_won = true;
+                    cs->combat_over = true;
+                    combat_set_message(cs, "VICTORY!");
+                }
+            }
+            break;
+        case SAPP_KEYCODE_TAB:
+        case SAPP_KEYCODE_E:
+            /* End turn — discard remaining hand, start enemy turn */
+            for (int i = 0; i < cs->hand_count; i++)
+                cs->discard[cs->discard_count++] = cs->hand[i];
+            cs->hand_count = 0;
+            cs->player_shield = 0; /* shield resets each turn */
+            cs->phase = CPHASE_ENEMY_TURN;
+            cs->anim_timer = 30;
+            break;
+    }
+}
+
+/* ── Rendering helpers ───────────────────────────────────────────── */
+
+static void combat_draw_rect(uint32_t *px, int W, int H,
+                             int x0, int y0, int w, int h, uint32_t col) {
+    for (int ry = y0; ry < y0 + h && ry < H; ry++)
+        for (int rx = x0; rx < x0 + w && rx < W; rx++)
+            if (ry >= 0 && rx >= 0) px[ry * W + rx] = col;
+}
+
+static void combat_draw_rect_outline(uint32_t *px, int W, int H,
+                                     int x0, int y0, int w, int h, uint32_t col) {
+    for (int rx = x0; rx < x0 + w && rx < W; rx++) {
+        if (rx >= 0) {
+            if (y0 >= 0 && y0 < H) px[y0 * W + rx] = col;
+            int yb = y0 + h - 1;
+            if (yb >= 0 && yb < H) px[yb * W + rx] = col;
+        }
+    }
+    for (int ry = y0; ry < y0 + h && ry < H; ry++) {
+        if (ry >= 0) {
+            if (x0 >= 0 && x0 < W) px[ry * W + x0] = col;
+            int xr = x0 + w - 1;
+            if (xr >= 0 && xr < W) px[ry * W + xr] = col;
+        }
+    }
+}
+
+static void combat_draw_bar(uint32_t *px, int W, int H,
+                            int x, int y, int w, int h,
+                            int val, int max_val, uint32_t fg, uint32_t bg) {
+    combat_draw_rect(px, W, H, x, y, w, h, bg);
+    if (max_val > 0) {
+        int fill = (w * val) / max_val;
+        if (fill > w) fill = w;
+        if (fill > 0)
+            combat_draw_rect(px, W, H, x, y, fill, h, fg);
+    }
+}
+
+/* ── Main combat render ──────────────────────────────────────────── */
+
+static void draw_combat_scene(sr_framebuffer *fb_ptr) {
+    int W = fb_ptr->width, H = fb_ptr->height;
+    uint32_t *px = fb_ptr->color;
+    uint32_t shadow = 0xFF000000;
+    uint32_t white = 0xFFFFFFFF;
+    uint32_t gray = 0xFF888888;
+    uint32_t dim = 0xFF555555;
+    uint32_t yellow = 0xFF00DDDD;
+
+    /* Background - dark industrial */
+    for (int i = 0; i < W * H; i++)
+        px[i] = 0xFF0D0D11;
+
+    /* Top bar - subtle divider line */
+    for (int x = 0; x < W; x++)
+        if (x < W) px[130 * W + x] = 0xFF222233;
+
+    /* ── Draw enemies (top half) ──────────────────────────────── */
+    if (combat.enemy_count > 0) {
+        int spacing = W / (combat.enemy_count + 1);
+        for (int i = 0; i < combat.enemy_count; i++) {
+            combat_enemy *e = &combat.enemies[i];
+            int cx = spacing * (i + 1);
+            int sprite_x = cx - 16;
+            int sprite_y = 20;
+
+            if (e->alive) {
+                const uint32_t *sprite = spr_enemy_table[e->type];
+                if (e->flash_timer > 0 && (e->flash_timer & 2))
+                    spr_draw_flash(px, W, H, sprite, sprite_x, sprite_y, 2);
+                else
+                    spr_draw(px, W, H, sprite, sprite_x, sprite_y, 2);
+
+                /* Target indicator */
+                if (i == combat.target && combat.phase == CPHASE_PLAYER_TURN) {
+                    sr_draw_text_shadow(px, W, H, cx - 3, sprite_y - 10, "V", yellow, shadow);
+                }
+            } else {
+                sr_draw_text_shadow(px, W, H, cx - 12, sprite_y + 12, "DEAD", 0xFF444444, shadow);
+            }
+
+            /* Enemy name */
+            sr_draw_text_shadow(px, W, H, cx - 18, sprite_y + 36,
+                                enemy_templates[e->type].name,
+                                e->alive ? white : 0xFF444444, shadow);
+
+            /* HP bar */
+            if (e->alive) {
+                combat_draw_bar(px, W, H, cx - 18, sprite_y + 46, 36, 4,
+                                e->hp, e->hp_max, 0xFF2222CC, 0xFF333333);
+                char hpbuf[16];
+                snprintf(hpbuf, sizeof(hpbuf), "%d/%d", e->hp, e->hp_max);
+                sr_draw_text_shadow(px, W, H, cx - 10, sprite_y + 52, hpbuf, gray, shadow);
+            }
+
+            /* Move points indicator */
+            if (e->alive) {
+                char mpbuf[16];
+                snprintf(mpbuf, sizeof(mpbuf), "MP:%d", e->move_points);
+                sr_draw_text_shadow(px, W, H, cx - 10, sprite_y + 62, mpbuf, dim, shadow);
+            }
+        }
+    }
+
+    /* ── Distance indicator ───────────────────────────────────── */
+    {
+        char distbuf[32];
+        snprintf(distbuf, sizeof(distbuf), "DISTANCE: %d", combat.player_distance);
+        uint32_t dist_col = combat.player_distance == 0 ? 0xFF00CCCC : 0xFF888888;
+        sr_draw_text_shadow(px, W, H, W/2 - 30, 108, distbuf, dist_col, shadow);
+
+        /* Visual distance: draw dots */
+        int dot_x = W/2 - combat.player_distance * 8;
+        for (int d = 0; d <= combat.player_distance; d++) {
+            uint32_t dc = d == 0 ? 0xFF00CC00 : 0xFF555555;
+            combat_draw_rect(px, W, H, dot_x + d * 16, 120, 4, 4, dc);
+        }
+        /* Player marker */
+        sr_draw_text_shadow(px, W, H, dot_x - 6, 116, "P", 0xFF44FF44, shadow);
+        /* Enemy marker */
+        sr_draw_text_shadow(px, W, H, dot_x + combat.player_distance * 16 + 6, 116,
+                            "E", 0xFFCC4444, shadow);
+    }
+
+    /* ── Player info (bottom left) ────────────────────────────── */
+    {
+        const char_class *cc = &char_classes[combat.player_class];
+
+        /* Player sprite */
+        spr_draw(px, W, H, cc->sprite, 8, 140, 2);
+
+        /* Class name */
+        sr_draw_text_shadow(px, W, H, 8, 175, cc->name, white, shadow);
+
+        /* HP bar */
+        sr_draw_text_shadow(px, W, H, 8, 186, "HP", 0xFF4444FF, shadow);
+        combat_draw_bar(px, W, H, 24, 186, 50, 6,
+                        combat.player_hp, combat.player_hp_max, 0xFF2222CC, 0xFF333333);
+        char hpbuf[16];
+        snprintf(hpbuf, sizeof(hpbuf), "%d/%d", combat.player_hp, combat.player_hp_max);
+        sr_draw_text_shadow(px, W, H, 28, 195, hpbuf, gray, shadow);
+
+        /* Shield bar */
+        if (combat.player_shield > 0) {
+            sr_draw_text_shadow(px, W, H, 8, 206, "SH", 0xFFCCCC22, shadow);
+            char shbuf[16];
+            snprintf(shbuf, sizeof(shbuf), "%d", combat.player_shield);
+            sr_draw_text_shadow(px, W, H, 28, 206, shbuf, 0xFFCCCC22, shadow);
+        }
+    }
+
+    /* ── Hand of cards (bottom) ───────────────────────────────── */
+    {
+        int card_w = 52;
+        int card_h = 44;
+        int card_gap = 4;
+        int total_w = combat.hand_count * (card_w + card_gap) - card_gap;
+        int base_x = (W - total_w) / 2;
+        int base_y = H - card_h - 8;
+
+        for (int i = 0; i < combat.hand_count; i++) {
+            int card = combat.hand[i];
+            int cx = base_x + i * (card_w + card_gap);
+            int cy = base_y;
+            bool selected = (i == combat.cursor && combat.phase == CPHASE_PLAYER_TURN);
+
+            if (selected) cy -= 6;
+
+            /* Card background */
+            uint32_t bg = selected ? 0xFF222233 : 0xFF111122;
+            combat_draw_rect(px, W, H, cx, cy, card_w, card_h, bg);
+
+            /* Card border */
+            uint32_t border = selected ? yellow : card_colors[card];
+            combat_draw_rect_outline(px, W, H, cx, cy, card_w, card_h, border);
+            if (selected)
+                combat_draw_rect_outline(px, W, H, cx+1, cy+1, card_w-2, card_h-2, border);
+
+            /* Card type color stripe at top */
+            combat_draw_rect(px, W, H, cx + 1, cy + 1, card_w - 2, 3, card_colors[card]);
+
+            /* Card name */
+            sr_draw_text_shadow(px, W, H, cx + 4, cy + 8, card_names[card], white, shadow);
+
+            /* Card effect text */
+            const char *effect = "";
+            switch (card) {
+                case CARD_SHIELD: effect = "+3 SH"; break;
+                case CARD_SHOOT:  effect = "3 DMG"; break;
+                case CARD_BURST:  effect = "2 ALL"; break;
+                case CARD_MOVE:   effect = "ADV 1"; break;
+                case CARD_MELEE:  effect = "6 DMG"; break;
+            }
+            sr_draw_text_shadow(px, W, H, cx + 4, cy + 20, effect, gray, shadow);
+
+            /* Extra info for melee */
+            if (card == CARD_MELEE) {
+                const char *req = combat.player_distance <= 0 ? "READY" : "NEED MOVE";
+                uint32_t rc = combat.player_distance <= 0 ? 0xFF00CC00 : 0xFF4444CC;
+                sr_draw_text_shadow(px, W, H, cx + 4, cy + 30, req, rc, shadow);
+            }
+            if (card == CARD_BURST) {
+                sr_draw_text_shadow(px, W, H, cx + 4, cy + 30, "HIT ALL", 0xFF5588FF, shadow);
+            }
+        }
+    }
+
+    /* ── Turn info (top right) ────────────────────────────────── */
+    {
+        char tbuf[32];
+        snprintf(tbuf, sizeof(tbuf), "TURN %d", combat.turn);
+        sr_draw_text_shadow(px, W, H, W - 50, 4, tbuf, gray, shadow);
+
+        char dbuf[16];
+        snprintf(dbuf, sizeof(dbuf), "DECK:%d", combat.deck_count + combat.discard_count);
+        sr_draw_text_shadow(px, W, H, W - 50, 14, dbuf, dim, shadow);
+    }
+
+    /* ── Controls hint ────────────────────────────────────────── */
+    if (combat.phase == CPHASE_PLAYER_TURN) {
+        sr_draw_text_shadow(px, W, H, W - 130, H - 30,
+                            "ENTER=PLAY TAB=END", dim, shadow);
+        sr_draw_text_shadow(px, W, H, W - 130, H - 20,
+                            "W/S=TARGET A/D=CARD", dim, shadow);
+    }
+
+    /* ── Message ──────────────────────────────────────────────── */
+    if (combat.message_timer > 0) {
+        uint32_t mc = white;
+        if (combat.message_timer < 15)
+            mc = 0xFF888888; /* fade out */
+        sr_draw_text_shadow(px, W, H, W/2 - 40, 98, combat.message, mc, shadow);
+    }
+
+    /* ── Phase indicators ─────────────────────────────────────── */
+    if (combat.phase == CPHASE_DRAW) {
+        sr_draw_text_shadow(px, W, H, W/2 - 30, H/2, "DRAWING...", yellow, shadow);
+    }
+    if (combat.phase == CPHASE_ENEMY_TURN) {
+        sr_draw_text_shadow(px, W, H, W/2 - 40, H/2, "ENEMY TURN...", 0xFF4444FF, shadow);
+    }
+
+    /* ── Result screen ────────────────────────────────────────── */
+    if (combat.phase == CPHASE_RESULT) {
+        /* Darken */
+        for (int i = 0; i < W * H; i++) {
+            uint32_t c = px[i];
+            uint8_t r = ((c      ) & 0xFF) >> 1;
+            uint8_t g = ((c >>  8) & 0xFF) >> 1;
+            uint8_t b = ((c >> 16) & 0xFF) >> 1;
+            uint8_t a = (c >> 24) & 0xFF;
+            px[i] = (a << 24) | (b << 16) | (g << 8) | r;
+        }
+        if (combat.player_won) {
+            sr_draw_text_shadow(px, W, H, W/2 - 30, H/2 - 10, "VICTORY!", 0xFF00FF00, shadow);
+        } else {
+            sr_draw_text_shadow(px, W, H, W/2 - 30, H/2 - 10, "DEFEATED", 0xFF0000FF, shadow);
+        }
+        sr_draw_text_shadow(px, W, H, W/2 - 50, H/2 + 10,
+                            "ENTER TO CONTINUE", gray, shadow);
+    }
+}
+
+#endif /* SR_COMBAT_H */
