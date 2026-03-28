@@ -336,6 +336,13 @@ static void init(void) {
     itextures[ITEX_TILE]  = sr_indexed_load("assets/indexed/tile.idx");
     itextures[ITEX_STONE] = sr_indexed_load("assets/indexed/stone.idx");
 
+    stextures[STEX_LURKER]    = sr_texture_load("assets/sprites/lurker.png");
+    stextures[STEX_BRUTE]     = sr_texture_load("assets/sprites/brute.png");
+    stextures[STEX_SPITTER]   = sr_texture_load("assets/sprites/spitter.png");
+    stextures[STEX_HIVEGUARD] = sr_texture_load("assets/sprites/hiveguard.png");
+    stextures[STEX_SCOUT]     = sr_texture_load("assets/sprites/scout.png");
+    stextures[STEX_MARINE]    = sr_texture_load("assets/sprites/marine.png");
+
     sr_fog_set(FOG_COLOR, FOG_NEAR, FOG_FAR);
 
     dng_load_config();
@@ -473,6 +480,8 @@ static void cleanup(void) {
         sr_texture_free(&textures[i]);
     for (int i = 0; i < ITEX_COUNT; i++)
         sr_indexed_free(&itextures[i]);
+    for (int i = 0; i < STEX_COUNT; i++)
+        sr_texture_free(&stextures[i]);
     sr_framebuffer_destroy(&fb);
     sr_framebuffer_destroy(&shadow_fb);
     sg_shutdown();

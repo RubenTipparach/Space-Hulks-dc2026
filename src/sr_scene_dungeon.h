@@ -490,57 +490,41 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
         }
     }
 
-    /* ── Alien billboards ───────────────────────────────────────── */
-    for (int gy = gy0; gy <= gy1; gy++) {
-        for (int gx = gx0; gx <= gx1; gx++) {
-            if (!dng_vis[gy][gx]) continue;
-            uint8_t alien_type = d->aliens[gy][gx];
-            if (alien_type == 0) continue;
+    /* ── Alien billboards (camera-facing textured quads) ──────── */
+    {
+        float cam_angle = p->angle * 6.28318f;
+        float right_x = cosf(cam_angle);
+        float right_z = sinf(cam_angle);
+        float sprite_half = 0.5f;  /* half-size of billboard quad in world units */
 
-            /* World position: center of cell, at floor level */
-            float wx = (gx - 0.5f) * DNG_CELL_SIZE;
-            float wy = -DNG_HALF_CELL + 0.5f;  /* slightly above floor */
-            float wz = (gy - 0.5f) * DNG_CELL_SIZE;
+        for (int bgy = gy0; bgy <= gy1; bgy++) {
+            for (int bgx = gx0; bgx <= gx1; bgx++) {
+                if (!dng_vis[bgy][bgx]) continue;
+                uint8_t alien_type = d->aliens[bgy][bgx];
+                if (alien_type == 0) continue;
 
-            /* Project to screen using MVP (column-major: m[col][row]) */
-            float cw = mvp.m[0][3]*wx + mvp.m[1][3]*wy + mvp.m[2][3]*wz + mvp.m[3][3];
-            if (cw <= 0.1f) continue; /* behind camera */
+                int type_idx = alien_type - 1;
+                if (type_idx < 0 || type_idx >= STEX_COUNT) continue;
+                const sr_texture *stex = &stextures[type_idx];
+                if (!stex->pixels) continue;
 
-            float cx2 = mvp.m[0][0]*wx + mvp.m[1][0]*wy + mvp.m[2][0]*wz + mvp.m[3][0];
-            float cy2 = mvp.m[0][1]*wx + mvp.m[1][1]*wy + mvp.m[2][1]*wz + mvp.m[3][1];
-            float cz2 = mvp.m[0][2]*wx + mvp.m[1][2]*wy + mvp.m[2][2]*wz + mvp.m[3][2];
+                float cx = (bgx - 0.5f) * DNG_CELL_SIZE;
+                float cz = (bgy - 0.5f) * DNG_CELL_SIZE;
+                float bot_y = -DNG_HALF_CELL;
+                float top_y = bot_y + sprite_half * 2.0f;
 
-            float ndcx = cx2 / cw;
-            float ndcy = cy2 / cw;
+                /* Quad corners: left-bottom, right-bottom, right-top, left-top */
+                float lx = cx - right_x * sprite_half;
+                float lz = cz - right_z * sprite_half;
+                float rx2 = cx + right_x * sprite_half;
+                float rz = cz + right_z * sprite_half;
 
-            /* NDC to screen */
-            int sx = (int)((ndcx * 0.5f + 0.5f) * FB_WIDTH);
-            int sy = (int)((0.5f - ndcy * 0.5f) * FB_HEIGHT);
-
-            /* Skip if off-screen */
-            if (sx < -32 || sx > FB_WIDTH + 32 || sy < -32 || sy > FB_HEIGHT + 32) continue;
-
-            /* Scale based on distance */
-            int sprite_scale = (int)(3.0f / cw + 0.5f);
-            if (sprite_scale < 1) sprite_scale = 1;
-            if (sprite_scale > 4) sprite_scale = 4;
-
-            int sprite_size = SPR_W * sprite_scale;
-            int draw_x = sx - sprite_size / 2;
-            int draw_y = sy - sprite_size;  /* bottom of sprite at feet position */
-
-            /* Depth check at center pixel */
-            if (sx >= 0 && sx < FB_WIDTH && sy >= 0 && sy < FB_HEIGHT) {
-                float sprite_depth = cz2 / cw;
-                if (sprite_depth > fb_ptr->depth[sy * FB_WIDTH + sx]) continue;
-            }
-
-            /* Draw the sprite */
-            int type_idx = alien_type - 1;
-            if (type_idx >= 0 && type_idx < 4) {
-                const uint32_t *sprite = spr_enemy_table[type_idx];
-                spr_draw(fb_ptr->color, FB_WIDTH, FB_HEIGHT,
-                         sprite, draw_x, draw_y, sprite_scale);
+                sr_draw_quad_doublesided(fb_ptr,
+                    sr_vert(lx, bot_y, lz, 0, 1),
+                    sr_vert(rx2, bot_y, rz, 1, 1),
+                    sr_vert(rx2, top_y, rz, 1, 0),
+                    sr_vert(lx, top_y, lz, 0, 0),
+                    stex, &mvp);
             }
         }
     }

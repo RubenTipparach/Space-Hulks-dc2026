@@ -33,6 +33,13 @@ enum {
 };
 static sr_indexed_texture itextures[ITEX_COUNT];
 
+/* Sprite textures (loaded from PNG) */
+enum {
+    STEX_LURKER, STEX_BRUTE, STEX_SPITTER, STEX_HIVEGUARD,
+    STEX_SCOUT, STEX_MARINE, STEX_COUNT
+};
+static sr_texture stextures[STEX_COUNT];
+
 /* Timing */
 static double time_acc;
 static int    frame_counter;
