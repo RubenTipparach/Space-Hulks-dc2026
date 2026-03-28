@@ -377,6 +377,8 @@ static void combat_deal_damage_enemy(combat_state *cs, int idx, int dmg) {
 }
 
 static void combat_deal_damage_player(combat_state *cs, int dmg) {
+    dmg = dmg / 2; /* halve incoming damage, round down */
+    if (dmg < 1) dmg = 1;
     int absorbed = dmg < cs->player_shield ? dmg : cs->player_shield;
     cs->player_shield -= absorbed;
     dmg -= absorbed;
@@ -843,7 +845,7 @@ static void combat_action_move_back(combat_state *cs) {
 
 /* ── Card layout helpers ─────────────────────────────────────────── */
 
-#define CARD_W  36
+#define CARD_W  45
 #define CARD_H  54
 #define CARD_GAP 4
 
@@ -1144,14 +1146,15 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
                         sr_draw_text_shadow(px, W, H, cx - 10, sprite_y - 10,
                                             "STUN", 0xFFCCCC22, shadow);
                     } else if (frozen && in_range) {
-                        int dmg = e->damage / 2; if (dmg < 1) dmg = 1;
+                        int dmg = e->damage / 2 / 2; if (dmg < 1) dmg = 1;
                         char intent_buf[16];
-                        snprintf(intent_buf, sizeof(intent_buf), "-%d!", dmg);
+                        snprintf(intent_buf, sizeof(intent_buf), "%d!", dmg);
                         sr_draw_text_shadow(px, W, H, cx - 8, sprite_y - 10,
                                             intent_buf, 0xFFFFCC44, shadow);
                     } else if (in_range && !stunned) {
+                        int dmg = e->damage / 2; if (dmg < 1) dmg = 1;
                         char intent_buf[16];
-                        snprintf(intent_buf, sizeof(intent_buf), "-%d!", e->damage);
+                        snprintf(intent_buf, sizeof(intent_buf), "%d!", dmg);
                         sr_draw_text_shadow(px, W, H, cx - 8, sprite_y - 10,
                                             intent_buf, 0xFF4444FF, shadow);
                     } else if (combat.player_distance > e->attack_range) {
