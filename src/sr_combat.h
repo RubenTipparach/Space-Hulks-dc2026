@@ -778,17 +778,6 @@ static void combat_check_victory(combat_state *cs) {
     }
 }
 
-static void combat_action_end_turn(combat_state *cs); /* forward decl */
-static void combat_action_play(combat_state *cs) {
-    if (cs->phase != CPHASE_PLAYER_TURN || cs->hand_count <= 0) return;
-    combat_play_card(cs, cs->cursor);
-    combat_check_victory(cs);
-    /* Auto-end turn when hand is empty */
-    if (cs->phase == CPHASE_PLAYER_TURN && cs->hand_count <= 0) {
-        combat_action_end_turn(cs);
-    }
-}
-
 static void combat_action_end_turn(combat_state *cs) {
     if (cs->phase != CPHASE_PLAYER_TURN) return;
     for (int i = 0; i < cs->hand_count; i++)
@@ -832,11 +821,6 @@ static void combat_action_move_back(combat_state *cs) {
 }
 
 /* ── Button layout constants (used by both render and touch) ─────── */
-
-#define BTN_PLAY_X   (FB_WIDTH - 78)
-#define BTN_PLAY_Y   135
-#define BTN_PLAY_W   70
-#define BTN_PLAY_H   18
 
 #define BTN_END_X    (FB_WIDTH - 78)
 #define BTN_END_Y    158
@@ -1026,11 +1010,6 @@ static void combat_handle_key(combat_state *cs, int key) {
             } while (!cs->enemies[cs->target].alive && cs->target != start);
             break;
         }
-        case SAPP_KEYCODE_ENTER:
-        case SAPP_KEYCODE_KP_ENTER:
-        case SAPP_KEYCODE_SPACE:
-            combat_action_play(cs);
-            break;
         case SAPP_KEYCODE_TAB:
         case SAPP_KEYCODE_E:
             combat_action_end_turn(cs);
@@ -1519,14 +1498,6 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
 
     /* ── Action buttons (touch-friendly) ─────────────────────── */
     if (combat.phase == CPHASE_PLAYER_TURN) {
-        /* PLAY button */
-        uint32_t play_bg = combat.hand_count > 0 ? 0xFF224422 : 0xFF222222;
-        uint32_t play_border = combat.hand_count > 0 ? 0xFF44CC44 : 0xFF444444;
-        combat_draw_rect(px, W, H, BTN_PLAY_X, BTN_PLAY_Y, BTN_PLAY_W, BTN_PLAY_H, play_bg);
-        combat_draw_rect_outline(px, W, H, BTN_PLAY_X, BTN_PLAY_Y, BTN_PLAY_W, BTN_PLAY_H, play_border);
-        sr_draw_text_shadow(px, W, H, BTN_PLAY_X + 10, BTN_PLAY_Y + 5,
-                            "PLAY", play_border, shadow);
-
         /* END TURN button */
         combat_draw_rect(px, W, H, BTN_END_X, BTN_END_Y, BTN_END_W, BTN_END_H, 0xFF332222);
         combat_draw_rect_outline(px, W, H, BTN_END_X, BTN_END_Y, BTN_END_W, BTN_END_H, 0xFFCC6644);
