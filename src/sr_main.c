@@ -103,8 +103,8 @@ static void draw_class_select(sr_framebuffer *fb_ptr) {
         sr_draw_text_shadow(px, W, H, bx + 8, by + 98, "4 SHIELD", gray, shadow);
     }
 
-    sr_draw_text_shadow(px, W, H, W/2 - 60, H - 20,
-                        "A/D = SELECT  ENTER = START", gray, shadow);
+    sr_draw_text_shadow(px, W, H, W/2 - 55, H - 20,
+                        "TAP TO SELECT  TAP AGAIN=GO", gray, shadow);
 }
 
 /* ── Shaders ─────────────────────────────────────────────────────── */
@@ -481,36 +481,107 @@ static void cleanup(void) {
 
 /* ── Event handler ───────────────────────────────────────────────── */
 
-static void event(const sapp_event *ev) {
-    double now_time = sapp_frame_count() * sapp_frame_duration();
+/* ── Handle tap/click in screen coords ───────────────────────────── */
 
-    if (ev->type != SAPP_EVENTTYPE_KEY_DOWN) {
-        /* Touch/pointer input — only for dungeon state */
-        if (app_state == STATE_RUNNING) {
-            if (ev->type == SAPP_EVENTTYPE_MOUSE_DOWN && ev->mouse_button == SAPP_MOUSEBUTTON_LEFT) {
-                dng_touch_began(ev->mouse_x, ev->mouse_y, now_time); return;
+static void handle_screen_tap(float sx, float sy) {
+    float fx, fy;
+    screen_to_fb(sx, sy, &fx, &fy);
+
+    if (app_state == STATE_CLASS_SELECT) {
+        /* Scout box: left quarter */
+        int sb_x = FB_WIDTH/4 - 40, sb_y = 80;
+        if (fx >= sb_x && fx <= sb_x + 80 && fy >= sb_y && fy <= sb_y + 120) {
+            if (class_select_cursor == 0) {
+                /* Already selected — start */
+                selected_class = 0;
+                dng_game_init(&dng_state);
+                dng_initialized = true;
+                last_player_gx = dng_state.player.gx;
+                last_player_gy = dng_state.player.gy;
+                app_state = STATE_RUNNING;
+            } else {
+                class_select_cursor = 0;
             }
-            if (ev->type == SAPP_EVENTTYPE_MOUSE_MOVE) {
-                dng_touch_moved(ev->mouse_x, ev->mouse_y); return;
+            return;
+        }
+        /* Marine box: right quarter */
+        int mb_x = 3*FB_WIDTH/4 - 40, mb_y = 80;
+        if (fx >= mb_x && fx <= mb_x + 80 && fy >= mb_y && fy <= mb_y + 120) {
+            if (class_select_cursor == 1) {
+                selected_class = 1;
+                dng_game_init(&dng_state);
+                dng_initialized = true;
+                last_player_gx = dng_state.player.gx;
+                last_player_gy = dng_state.player.gy;
+                app_state = STATE_RUNNING;
+            } else {
+                class_select_cursor = 1;
             }
-            if (ev->type == SAPP_EVENTTYPE_MOUSE_UP && ev->mouse_button == SAPP_MOUSEBUTTON_LEFT) {
-                dng_touch_ended(ev->mouse_x, ev->mouse_y, now_time); return;
-            }
-            if (ev->type == SAPP_EVENTTYPE_TOUCHES_BEGAN && ev->num_touches > 0) {
-                dng_touch_began(ev->touches[0].pos_x, ev->touches[0].pos_y, now_time); return;
-            }
-            if (ev->type == SAPP_EVENTTYPE_TOUCHES_MOVED && ev->num_touches > 0) {
-                dng_touch_moved(ev->touches[0].pos_x, ev->touches[0].pos_y); return;
-            }
-            if (ev->type == SAPP_EVENTTYPE_TOUCHES_ENDED && ev->num_touches > 0) {
-                dng_touch_ended(ev->touches[0].pos_x, ev->touches[0].pos_y, now_time); return;
-            }
-            if (ev->type == SAPP_EVENTTYPE_TOUCHES_CANCELLED) {
-                dng_touch_cancelled(); return;
-            }
+            return;
         }
         return;
     }
+
+    if (app_state == STATE_COMBAT) {
+        /* Result screen — tap anywhere */
+        if (combat.phase == CPHASE_RESULT) {
+            app_state = STATE_RUNNING;
+            return;
+        }
+        combat_handle_tap(&combat, fx, fy);
+        return;
+    }
+}
+
+/* ── Event handler ───────────────────────────────────────────────── */
+
+static void event(const sapp_event *ev) {
+    double now_time = sapp_frame_count() * sapp_frame_duration();
+
+    /* ── Mouse click / touch began → tap handling ────────────── */
+    if (ev->type == SAPP_EVENTTYPE_MOUSE_DOWN && ev->mouse_button == SAPP_MOUSEBUTTON_LEFT) {
+        if (app_state == STATE_RUNNING) {
+            dng_touch_began(ev->mouse_x, ev->mouse_y, now_time);
+        } else {
+            handle_screen_tap(ev->mouse_x, ev->mouse_y);
+        }
+        return;
+    }
+    if (ev->type == SAPP_EVENTTYPE_TOUCHES_BEGAN && ev->num_touches > 0) {
+        float sx = ev->touches[0].pos_x, sy = ev->touches[0].pos_y;
+        if (app_state == STATE_RUNNING) {
+            dng_touch_began(sx, sy, now_time);
+        } else {
+            handle_screen_tap(sx, sy);
+        }
+        return;
+    }
+
+    /* ── Mouse move / touch move ─────────────────────────────── */
+    if (ev->type == SAPP_EVENTTYPE_MOUSE_MOVE) {
+        if (app_state == STATE_RUNNING) dng_touch_moved(ev->mouse_x, ev->mouse_y);
+        return;
+    }
+    if (ev->type == SAPP_EVENTTYPE_TOUCHES_MOVED && ev->num_touches > 0) {
+        if (app_state == STATE_RUNNING) dng_touch_moved(ev->touches[0].pos_x, ev->touches[0].pos_y);
+        return;
+    }
+
+    /* ── Mouse up / touch end ────────────────────────────────── */
+    if (ev->type == SAPP_EVENTTYPE_MOUSE_UP && ev->mouse_button == SAPP_MOUSEBUTTON_LEFT) {
+        if (app_state == STATE_RUNNING) dng_touch_ended(ev->mouse_x, ev->mouse_y, now_time);
+        return;
+    }
+    if (ev->type == SAPP_EVENTTYPE_TOUCHES_ENDED && ev->num_touches > 0) {
+        if (app_state == STATE_RUNNING) dng_touch_ended(ev->touches[0].pos_x, ev->touches[0].pos_y, now_time);
+        return;
+    }
+    if (ev->type == SAPP_EVENTTYPE_TOUCHES_CANCELLED) {
+        if (app_state == STATE_RUNNING) dng_touch_cancelled();
+        return;
+    }
+
+    if (ev->type != SAPP_EVENTTYPE_KEY_DOWN) return;
 
     /* ── Global keys ─────────────────────────────────────────── */
     if (ev->key_code == SAPP_KEYCODE_8 && (ev->modifiers & SAPP_MODIFIER_CTRL)) {
@@ -584,32 +655,23 @@ static void event(const sapp_event *ev) {
             dng_cfg.light_brightness -= 0.1f;
             if (dng_cfg.light_brightness < 0.0f) dng_cfg.light_brightness = 0.0f;
             break;
-        /* ── Movement ────────────────────────────────────────── */
         case SAPP_KEYCODE_W:
         case SAPP_KEYCODE_UP:
-            if (dng_play_state == DNG_STATE_PLAYING) {
-                dng_player_try_move(&dng_state.player, dng_state.dungeon,
-                                    dng_state.player.dir);
-            }
+            if (dng_play_state == DNG_STATE_PLAYING)
+                dng_player_try_move(&dng_state.player, dng_state.dungeon, dng_state.player.dir);
             break;
         case SAPP_KEYCODE_S:
         case SAPP_KEYCODE_DOWN:
-            if (dng_play_state == DNG_STATE_PLAYING) {
-                dng_player_try_move(&dng_state.player, dng_state.dungeon,
-                                    (dng_state.player.dir + 2) % 4);
-            }
+            if (dng_play_state == DNG_STATE_PLAYING)
+                dng_player_try_move(&dng_state.player, dng_state.dungeon, (dng_state.player.dir + 2) % 4);
             break;
         case SAPP_KEYCODE_A:
-            if (dng_play_state == DNG_STATE_PLAYING) {
-                dng_player_try_move(&dng_state.player, dng_state.dungeon,
-                                    (dng_state.player.dir + 3) % 4);
-            }
+            if (dng_play_state == DNG_STATE_PLAYING)
+                dng_player_try_move(&dng_state.player, dng_state.dungeon, (dng_state.player.dir + 3) % 4);
             break;
         case SAPP_KEYCODE_D:
-            if (dng_play_state == DNG_STATE_PLAYING) {
-                dng_player_try_move(&dng_state.player, dng_state.dungeon,
-                                    (dng_state.player.dir + 1) % 4);
-            }
+            if (dng_play_state == DNG_STATE_PLAYING)
+                dng_player_try_move(&dng_state.player, dng_state.dungeon, (dng_state.player.dir + 1) % 4);
             break;
         case SAPP_KEYCODE_LEFT:
         case SAPP_KEYCODE_Q:

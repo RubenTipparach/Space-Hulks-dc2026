@@ -387,7 +387,111 @@ static void combat_update(combat_state *cs) {
     }
 }
 
-/* ── Input handling ──────────────────────────────────────────────── */
+/* ── Shared actions (called by both key and touch) ───────────────── */
+
+static void combat_action_play(combat_state *cs) {
+    if (cs->phase != CPHASE_PLAYER_TURN || cs->hand_count <= 0) return;
+    combat_play_card(cs, cs->cursor);
+    if (combat_all_enemies_dead(cs)) {
+        cs->phase = CPHASE_RESULT;
+        cs->player_won = true;
+        cs->combat_over = true;
+        combat_set_message(cs, "VICTORY!");
+    }
+}
+
+static void combat_action_end_turn(combat_state *cs) {
+    if (cs->phase != CPHASE_PLAYER_TURN) return;
+    for (int i = 0; i < cs->hand_count; i++)
+        cs->discard[cs->discard_count++] = cs->hand[i];
+    cs->hand_count = 0;
+    cs->player_shield = 0;
+    cs->phase = CPHASE_ENEMY_TURN;
+    cs->anim_timer = 30;
+}
+
+/* ── Button layout constants (used by both render and touch) ─────── */
+
+#define BTN_PLAY_X   (FB_WIDTH - 78)
+#define BTN_PLAY_Y   135
+#define BTN_PLAY_W   70
+#define BTN_PLAY_H   18
+
+#define BTN_END_X    (FB_WIDTH - 78)
+#define BTN_END_Y    158
+#define BTN_END_W    70
+#define BTN_END_H    18
+
+/* ── Card layout helpers ─────────────────────────────────────────── */
+
+#define CARD_W  52
+#define CARD_H  44
+#define CARD_GAP 4
+
+static void combat_card_rect(const combat_state *cs, int i, int *ox, int *oy) {
+    int total_w = cs->hand_count * (CARD_W + CARD_GAP) - CARD_GAP;
+    int base_x = (FB_WIDTH - total_w) / 2;
+    int base_y = FB_HEIGHT - CARD_H - 8;
+    *ox = base_x + i * (CARD_W + CARD_GAP);
+    *oy = base_y;
+    if (i == cs->cursor && cs->phase == CPHASE_PLAYER_TURN) *oy -= 6;
+}
+
+/* ── Touch input ─────────────────────────────────────────────────── */
+
+static bool combat_handle_tap(combat_state *cs, float fx, float fy) {
+    /* Result screen — tap anywhere to continue */
+    if (cs->phase == CPHASE_RESULT) return true; /* handled in sr_main.c */
+
+    if (cs->phase != CPHASE_PLAYER_TURN) return false;
+
+    /* PLAY button */
+    if (fx >= BTN_PLAY_X && fx <= BTN_PLAY_X + BTN_PLAY_W &&
+        fy >= BTN_PLAY_Y && fy <= BTN_PLAY_Y + BTN_PLAY_H) {
+        combat_action_play(cs);
+        return true;
+    }
+
+    /* END TURN button */
+    if (fx >= BTN_END_X && fx <= BTN_END_X + BTN_END_W &&
+        fy >= BTN_END_Y && fy <= BTN_END_Y + BTN_END_H) {
+        combat_action_end_turn(cs);
+        return true;
+    }
+
+    /* Tap on a card — select it, tap again to play */
+    for (int i = 0; i < cs->hand_count; i++) {
+        int cx, cy;
+        combat_card_rect(cs, i, &cx, &cy);
+        if (fx >= cx && fx < cx + CARD_W && fy >= cy && fy < cy + CARD_H) {
+            if (cs->cursor == i) {
+                /* Already selected — play it */
+                combat_action_play(cs);
+            } else {
+                cs->cursor = i;
+            }
+            return true;
+        }
+    }
+
+    /* Tap on an enemy — target it */
+    if (cs->enemy_count > 0) {
+        int spacing = FB_WIDTH / (cs->enemy_count + 1);
+        for (int i = 0; i < cs->enemy_count; i++) {
+            if (!cs->enemies[i].alive) continue;
+            int ecx = spacing * (i + 1);
+            /* Hit area: 48x48 sprite area */
+            if (fx >= ecx - 24 && fx <= ecx + 24 && fy >= 10 && fy <= 80) {
+                cs->target = i;
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+/* ── Keyboard input ──────────────────────────────────────────────── */
 
 static void combat_handle_key(combat_state *cs, int key) {
     if (cs->phase == CPHASE_RESULT) return;
@@ -404,7 +508,6 @@ static void combat_handle_key(combat_state *cs, int key) {
             break;
         case SAPP_KEYCODE_UP:
         case SAPP_KEYCODE_W: {
-            /* Cycle target to next alive enemy */
             int start = cs->target;
             do {
                 cs->target = (cs->target + 1) % cs->enemy_count;
@@ -422,26 +525,11 @@ static void combat_handle_key(combat_state *cs, int key) {
         case SAPP_KEYCODE_ENTER:
         case SAPP_KEYCODE_KP_ENTER:
         case SAPP_KEYCODE_SPACE:
-            if (cs->hand_count > 0) {
-                combat_play_card(cs, cs->cursor);
-                /* Check for victory */
-                if (combat_all_enemies_dead(cs)) {
-                    cs->phase = CPHASE_RESULT;
-                    cs->player_won = true;
-                    cs->combat_over = true;
-                    combat_set_message(cs, "VICTORY!");
-                }
-            }
+            combat_action_play(cs);
             break;
         case SAPP_KEYCODE_TAB:
         case SAPP_KEYCODE_E:
-            /* End turn — discard remaining hand, start enemy turn */
-            for (int i = 0; i < cs->hand_count; i++)
-                cs->discard[cs->discard_count++] = cs->hand[i];
-            cs->hand_count = 0;
-            cs->player_shield = 0; /* shield resets each turn */
-            cs->phase = CPHASE_ENEMY_TURN;
-            cs->anim_timer = 30;
+            combat_action_end_turn(cs);
             break;
     }
 }
@@ -665,12 +753,21 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
         sr_draw_text_shadow(px, W, H, W - 50, 14, dbuf, dim, shadow);
     }
 
-    /* ── Controls hint ────────────────────────────────────────── */
+    /* ── Action buttons (touch-friendly) ─────────────────────── */
     if (combat.phase == CPHASE_PLAYER_TURN) {
-        sr_draw_text_shadow(px, W, H, W - 130, H - 30,
-                            "ENTER=PLAY TAB=END", dim, shadow);
-        sr_draw_text_shadow(px, W, H, W - 130, H - 20,
-                            "W/S=TARGET A/D=CARD", dim, shadow);
+        /* PLAY button */
+        uint32_t play_bg = combat.hand_count > 0 ? 0xFF224422 : 0xFF222222;
+        uint32_t play_border = combat.hand_count > 0 ? 0xFF44CC44 : 0xFF444444;
+        combat_draw_rect(px, W, H, BTN_PLAY_X, BTN_PLAY_Y, BTN_PLAY_W, BTN_PLAY_H, play_bg);
+        combat_draw_rect_outline(px, W, H, BTN_PLAY_X, BTN_PLAY_Y, BTN_PLAY_W, BTN_PLAY_H, play_border);
+        sr_draw_text_shadow(px, W, H, BTN_PLAY_X + 10, BTN_PLAY_Y + 5,
+                            "PLAY", play_border, shadow);
+
+        /* END TURN button */
+        combat_draw_rect(px, W, H, BTN_END_X, BTN_END_Y, BTN_END_W, BTN_END_H, 0xFF332222);
+        combat_draw_rect_outline(px, W, H, BTN_END_X, BTN_END_Y, BTN_END_W, BTN_END_H, 0xFFCC6644);
+        sr_draw_text_shadow(px, W, H, BTN_END_X + 4, BTN_END_Y + 5,
+                            "END TURN", 0xFFCC6644, shadow);
     }
 
     /* ── Message ──────────────────────────────────────────────── */
@@ -701,12 +798,15 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
             px[i] = (a << 24) | (b << 16) | (g << 8) | r;
         }
         if (combat.player_won) {
-            sr_draw_text_shadow(px, W, H, W/2 - 30, H/2 - 10, "VICTORY!", 0xFF00FF00, shadow);
+            sr_draw_text_shadow(px, W, H, W/2 - 30, H/2 - 20, "VICTORY!", 0xFF00FF00, shadow);
         } else {
-            sr_draw_text_shadow(px, W, H, W/2 - 30, H/2 - 10, "DEFEATED", 0xFF0000FF, shadow);
+            sr_draw_text_shadow(px, W, H, W/2 - 30, H/2 - 20, "DEFEATED", 0xFF0000FF, shadow);
         }
-        sr_draw_text_shadow(px, W, H, W/2 - 50, H/2 + 10,
-                            "ENTER TO CONTINUE", gray, shadow);
+        /* Tappable CONTINUE button */
+        int cb_x = W/2 - 40, cb_y = H/2 + 5, cb_w = 80, cb_h = 20;
+        combat_draw_rect(px, W, H, cb_x, cb_y, cb_w, cb_h, 0xFF333333);
+        combat_draw_rect_outline(px, W, H, cb_x, cb_y, cb_w, cb_h, white);
+        sr_draw_text_shadow(px, W, H, cb_x + 12, cb_y + 6, "CONTINUE", white, shadow);
     }
 }
 
