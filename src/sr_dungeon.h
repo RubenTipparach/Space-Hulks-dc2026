@@ -184,56 +184,106 @@ static void dng_generate(sr_dungeon *d, int w, int h, bool has_down_stairs, bool
         for (int x = 1; x <= w; x++)
             d->map[y][x] = 1;
 
-    /* Place rooms */
+    /* ── FTL-style ship layout ──────────────────────────────────
+     * Central corridor runs horizontally through the middle.
+     * Rooms branch off port (top) and starboard (bottom) sides.
+     * Layout: [Engines] -- [rooms] -- [rooms] -- [Bridge]
+     */
+
     dng_room rooms[12];
-    int num_rooms = 5 + dng_rng_int(4); /* 5-8 */
+    int num_rooms = 4 + dng_rng_int(4); /* 4-7 rooms */
     if (num_rooms > 12) num_rooms = 12;
 
+    int mid_y = h / 2;          /* central corridor Y */
+    int corridor_y1 = mid_y - 1;
+    int corridor_y2 = mid_y + 1;
+
+    /* Ship hull boundaries (leave margin) */
+    int ship_left = 3;
+    int ship_right = w - 2;
+    int ship_span = ship_right - ship_left;
+
+    /* Carve the central corridor */
+    for (int x = ship_left; x <= ship_right; x++) {
+        for (int y = corridor_y1; y <= corridor_y2; y++) {
+            if (y >= 1 && y <= h && x >= 1 && x <= w)
+                d->map[y][x] = 0;
+        }
+    }
+
+    /* Place rooms along the corridor, evenly spaced */
+    int spacing = ship_span / (num_rooms + 1);
+    if (spacing < 4) spacing = 4;
+
     for (int i = 0; i < num_rooms; i++) {
-        int rw = 2 + dng_rng_int(3);
-        int rh = 2 + dng_rng_int(3);
-        int rx = 2 + dng_rng_int(w - rw - 2);
-        int ry = 2 + dng_rng_int(h - rh - 2);
-        if (rx + rw > w) rx = w - rw;
-        if (ry + rh > h) ry = h - rh;
+        int rw = 3 + dng_rng_int(2);  /* 3-4 wide */
+        int rh = 3 + dng_rng_int(2);  /* 3-4 tall */
+
+        /* X position: evenly distributed left-to-right */
+        int rx = ship_left + spacing * (i + 1) - rw / 2;
         if (rx < 2) rx = 2;
-        if (ry < 2) ry = 2;
+        if (rx + rw > w) rx = w - rw;
+
+        /* Alternate rooms above/below corridor */
+        int ry;
+        if (i % 2 == 0) {
+            /* Port side (above corridor) */
+            ry = corridor_y1 - rh;
+            if (ry < 2) ry = 2;
+        } else {
+            /* Starboard side (below corridor) */
+            ry = corridor_y2 + 1;
+            if (ry + rh > h) ry = h - rh;
+        }
 
         rooms[i] = (dng_room){ rx, ry, rw, rh, rx + rw/2, ry + rh/2 };
 
+        /* Carve room */
         for (int py = ry; py < ry + rh; py++)
             for (int px = rx; px < rx + rw; px++)
-                d->map[py][px] = 0;
-    }
+                if (py >= 1 && py <= h && px >= 1 && px <= w)
+                    d->map[py][px] = 0;
 
-    /* Connect rooms sequentially */
-    for (int i = 1; i < num_rooms; i++)
-        dng_carve_corridor(d, rooms[i-1].cx, rooms[i-1].cy,
-                              rooms[i].cx, rooms[i].cy);
-    /* Extra corridor for loops */
-    if (num_rooms > 2)
-        dng_carve_corridor(d, rooms[0].cx, rooms[0].cy,
-                              rooms[num_rooms-1].cx, rooms[num_rooms-1].cy);
-
-    /* Spawn in room 1 */
-    d->spawn_gx = rooms[0].cx;
-    d->spawn_gy = rooms[0].cy;
-
-    /* Up-stairs in farthest room (skip on last floor) */
-    if (has_up_stairs) {
-        int best_idx = num_rooms - 1, best_dist = 0;
-        for (int i = 1; i < num_rooms; i++) {
-            int dist = abs(rooms[i].cx - rooms[0].cx) + abs(rooms[i].cy - rooms[0].cy);
-            if (dist > best_dist) { best_dist = dist; best_idx = i; }
+        /* Connect room to central corridor with a vertical passage */
+        int conn_x = rx + rw / 2;
+        if (i % 2 == 0) {
+            /* Room is above: carve down to corridor */
+            for (int y = ry + rh; y <= corridor_y1; y++)
+                if (y >= 1 && y <= h && conn_x >= 1 && conn_x <= w)
+                    d->map[y][conn_x] = 0;
+        } else {
+            /* Room is below: carve up to corridor */
+            for (int y = corridor_y2; y < ry; y++)
+                if (y >= 1 && y <= h && conn_x >= 1 && conn_x <= w)
+                    d->map[y][conn_x] = 0;
         }
-        dng_find_up_stairs(d, &rooms[best_idx],
-                           &d->stairs_gx, &d->stairs_gy, &d->stairs_dir);
     }
 
-    /* Down-stairs */
+    /* Spawn at leftmost corridor (airlock entry) */
+    d->spawn_gx = ship_left;
+    d->spawn_gy = mid_y;
+
+    /* Up-stairs at the far end (rightmost corridor) */
+    if (has_up_stairs) {
+        d->stairs_gx = ship_right;
+        d->stairs_gy = mid_y;
+        d->stairs_dir = 1; /* facing east */
+        /* Ensure the stairs cell and its entry are open */
+        if (d->stairs_gx >= 1 && d->stairs_gx <= w && d->stairs_gy >= 1 && d->stairs_gy <= h)
+            d->map[d->stairs_gy][d->stairs_gx] = 0;
+        int ex = d->stairs_gx - dng_dir_dx[1];
+        int ey = d->stairs_gy - dng_dir_dz[1];
+        if (ex >= 1 && ex <= w && ey >= 1 && ey <= h)
+            d->map[ey][ex] = 0;
+    }
+
+    /* Down-stairs near spawn */
     if (has_down_stairs) {
-        dng_find_down_stairs(d, &rooms[0], &d->down_gx, &d->down_gy);
-        d->down_dir = dng_rng_int(4);
+        d->down_gx = ship_left + 1;
+        d->down_gy = mid_y;
+        d->down_dir = 3; /* facing west */
+        if (d->down_gx >= 1 && d->down_gx <= w && d->down_gy >= 1 && d->down_gy <= h)
+            d->map[d->down_gy][d->down_gx] = 0;
     }
 
     /* Store room info for ship system */
@@ -245,11 +295,11 @@ static void dng_generate(sr_dungeon *d, int w, int h, bool has_down_stairs, bool
         d->room_y[i] = rooms[i].y;
         d->room_w[i] = rooms[i].w;
         d->room_h[i] = rooms[i].h;
-        d->room_ship_idx[i] = -1; /* set by ship system if applicable */
+        d->room_ship_idx[i] = -1;
     }
 
-    /* Place alien entities in open cells (not spawn, not stairs) */
-    for (int i = 1; i < num_rooms; i++) {
+    /* Place alien entities (not spawn, not stairs) */
+    for (int i = 0; i < num_rooms; i++) {
         int aliens_in_room = 1 + dng_rng_int(2);
         for (int a = 0; a < aliens_in_room; a++) {
             int ax = rooms[i].x + dng_rng_int(rooms[i].w);
@@ -259,7 +309,6 @@ static void dng_generate(sr_dungeon *d, int w, int h, bool has_down_stairs, bool
             if (ax == d->spawn_gx && ay == d->spawn_gy) continue;
             if (d->has_up && ax == d->stairs_gx && ay == d->stairs_gy) continue;
             if (d->has_down && ax == d->down_gx && ay == d->down_gy) continue;
-            /* Stronger aliens on deeper floors: floor 0-1 = lurker/brute, 2-3 add spitter, 4+ all */
             int max_type = (floor_num <= 1) ? 2 : (floor_num <= 3) ? 3 : 4;
             d->aliens[ay][ax] = 1 + (uint8_t)dng_rng_int(max_type);
         }
