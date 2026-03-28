@@ -98,15 +98,15 @@ typedef struct {
     const char *name;
     int hp_max;
     int damage;
-    int move_points;  /* how many move cards needed to reach for melee */
-    int ranged;       /* 1 = can shoot back */
+    int attack_range;  /* distance at which this enemy attacks */
+    int ranged;        /* 1 = ranged attack, 0 = melee */
 } enemy_template;
 
 static const enemy_template enemy_templates[] = {
-    [ENEMY_LURKER]    = { "LURKER",     8,  2, 1, 0 },
-    [ENEMY_BRUTE]     = { "BRUTE",     18,  5, 2, 0 },
-    [ENEMY_SPITTER]   = { "SPITTER",   10,  3, 3, 1 },
-    [ENEMY_HIVEGUARD] = { "HIVEGUARD", 24,  4, 2, 1 },
+    [ENEMY_LURKER]    = { "LURKER",     8,  2, 0, 0 },  /* melee: must be at dist 0 */
+    [ENEMY_BRUTE]     = { "BRUTE",     18,  5, 1, 0 },  /* melee: attacks at dist <= 1 */
+    [ENEMY_SPITTER]   = { "SPITTER",   10,  3, 3, 1 },  /* ranged: attacks at dist <= 3 */
+    [ENEMY_HIVEGUARD] = { "HIVEGUARD", 24,  4, 2, 1 },  /* ranged: attacks at dist <= 2 */
 };
 
 /* ── Combat state ────────────────────────────────────────────────── */
@@ -119,7 +119,7 @@ typedef struct {
     int type;
     int hp;
     int hp_max;
-    int move_points;  /* moves needed to melee */
+    int attack_range;  /* distance at which this enemy can attack */
     int damage;
     int ranged;
     int flash_timer;  /* > 0 = flashing white */
@@ -133,6 +133,7 @@ typedef struct {
     int player_hp_max;
     int player_shield;
     int player_distance;  /* steps to enemies (0 = melee range) */
+    int player_move_pts;  /* move points available to spend this turn */
     int energy;
     int energy_max;
 
@@ -304,7 +305,7 @@ static void combat_init(combat_state *cs, int player_class, int floor, int cell_
         cs->enemies[i].type = type;
         cs->enemies[i].hp = tmpl->hp_max;
         cs->enemies[i].hp_max = tmpl->hp_max;
-        cs->enemies[i].move_points = tmpl->move_points;
+        cs->enemies[i].attack_range = tmpl->attack_range;
         cs->enemies[i].damage = tmpl->damage;
         cs->enemies[i].ranged = tmpl->ranged;
         cs->enemies[i].flash_timer = 0;
@@ -405,14 +406,9 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
             break;
 
         case CARD_MOVE:
-            if (cs->player_distance > 0) {
-                cs->player_distance--;
-                snprintf(buf, sizeof(buf), "ADVANCE! DIST: %d", cs->player_distance);
-                combat_set_message(cs, buf);
-            } else {
-                combat_set_message(cs, "ALREADY IN MELEE RANGE");
-                cs->energy += cost; /* refund */
-            }
+            cs->player_move_pts += 2;
+            snprintf(buf, sizeof(buf), "+2 MOVE PTS (%d)", cs->player_move_pts);
+            combat_set_message(cs, buf);
             break;
 
         case CARD_MELEE:
@@ -468,20 +464,19 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
         }
 
         case CARD_DASH:
-            if (cs->player_distance > 0) cs->player_distance--;
-            if (cs->player_distance > 0) cs->player_distance--;
-            if (cs->player_distance <= 0) {
+            cs->player_move_pts += 3;
+            {
                 int t = cs->target;
                 while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
                 if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
                 if (t >= 0) {
                     combat_deal_damage_enemy(cs, t, 4);
-                    snprintf(buf, sizeof(buf), "DASH STRIKE %s -4HP!", enemy_templates[cs->enemies[t].type].name);
+                    snprintf(buf, sizeof(buf), "DASH +3MP %s -4HP!", enemy_templates[cs->enemies[t].type].name);
+                    combat_set_message(cs, buf);
+                } else {
+                    snprintf(buf, sizeof(buf), "DASH +3 MOVE PTS (%d)", cs->player_move_pts);
                     combat_set_message(cs, buf);
                 }
-            } else {
-                snprintf(buf, sizeof(buf), "DASH! DIST: %d", cs->player_distance);
-                combat_set_message(cs, buf);
             }
             break;
     }
@@ -504,12 +499,17 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
 #define ENEMY_ATK_HIT_FRAME      10  /* frame at which damage lands */
 #define ENEMY_ATK_TOTAL_FRAMES   30  /* total anim per enemy */
 
+/* Check if an enemy can attack at current distance */
+static bool combat_enemy_in_range(combat_state *cs, int idx) {
+    return cs->player_distance <= cs->enemies[idx].attack_range;
+}
+
 /* Find next enemy that will attack (alive, not stunned, in range) */
 static int combat_next_attacker(combat_state *cs, int from) {
     for (int i = from; i < cs->enemy_count; i++) {
         if (!cs->enemies[i].alive) continue;
         if (cs->enemies[i].flash_timer > 10) continue; /* stunned */
-        if (cs->enemies[i].ranged || cs->player_distance <= 0)
+        if (combat_enemy_in_range(cs, i))
             return i;
     }
     return -1; /* no more attackers */
@@ -517,6 +517,22 @@ static int combat_next_attacker(combat_state *cs, int from) {
 
 /* Start the sequential enemy attack phase */
 static void combat_begin_enemy_turn(combat_state *cs) {
+    /* All alive non-stunned enemies try to close distance */
+    for (int i = 0; i < cs->enemy_count; i++) {
+        combat_enemy *e = &cs->enemies[i];
+        if (!e->alive) continue;
+        if (e->flash_timer > 10) continue; /* stunned */
+        /* Advance if not yet in attack range */
+        if (cs->player_distance > e->attack_range) {
+            cs->player_distance--;
+            char buf[64];
+            snprintf(buf, sizeof(buf), "%s ADVANCES! DIST:%d",
+                     enemy_templates[e->type].name, cs->player_distance);
+            combat_set_message(cs, buf);
+            break; /* one enemy advances per turn */
+        }
+    }
+
     cs->enemy_atk_idx = combat_next_attacker(cs, 0);
     if (cs->enemy_atk_idx < 0) {
         /* No enemies can attack — skip straight to next draw phase */
@@ -623,8 +639,40 @@ static void combat_action_end_turn(combat_state *cs) {
         cs->discard[cs->discard_count++] = cs->hand[i];
     cs->hand_count = 0;
     cs->player_shield = 0;
+    cs->player_move_pts = 0; /* unspent move points are lost */
     cs->phase = CPHASE_ENEMY_TURN;
     combat_begin_enemy_turn(cs);
+}
+
+/* Spend 1 move point to change distance */
+static void combat_action_move_forward(combat_state *cs) {
+    if (cs->phase != CPHASE_PLAYER_TURN) return;
+    if (cs->player_move_pts <= 0) {
+        combat_set_message(cs, "NO MOVE POINTS");
+        return;
+    }
+    if (cs->player_distance <= 0) {
+        combat_set_message(cs, "ALREADY AT MELEE RANGE");
+        return;
+    }
+    cs->player_move_pts--;
+    cs->player_distance--;
+    char buf[64];
+    snprintf(buf, sizeof(buf), "ADVANCE! DIST:%d MP:%d", cs->player_distance, cs->player_move_pts);
+    combat_set_message(cs, buf);
+}
+
+static void combat_action_move_back(combat_state *cs) {
+    if (cs->phase != CPHASE_PLAYER_TURN) return;
+    if (cs->player_move_pts <= 0) {
+        combat_set_message(cs, "NO MOVE POINTS");
+        return;
+    }
+    cs->player_move_pts--;
+    cs->player_distance++;
+    char buf[64];
+    snprintf(buf, sizeof(buf), "RETREAT! DIST:%d MP:%d", cs->player_distance, cs->player_move_pts);
+    combat_set_message(cs, buf);
 }
 
 /* ── Button layout constants (used by both render and touch) ─────── */
@@ -641,8 +689,8 @@ static void combat_action_end_turn(combat_state *cs) {
 
 /* ── Card layout helpers ─────────────────────────────────────────── */
 
-#define CARD_W  52
-#define CARD_H  44
+#define CARD_W  36
+#define CARD_H  54
 #define CARD_GAP 4
 
 static void combat_card_rect(const combat_state *cs, int i, int *ox, int *oy) {
@@ -703,6 +751,19 @@ static void combat_touch_began(combat_state *cs, float fx, float fy) {
         fy >= BTN_END_Y && fy <= BTN_END_Y + BTN_END_H) {
         combat_action_end_turn(cs);
         return;
+    }
+
+    /* Check move buttons */
+    if (cs->player_move_pts > 0) {
+        int mb_y = 238;
+        if (fx >= 8 && fx <= 42 && fy >= mb_y && fy <= mb_y + 14) {
+            combat_action_move_forward(cs);
+            return;
+        }
+        if (fx >= 46 && fx <= 80 && fy >= mb_y && fy <= mb_y + 14) {
+            combat_action_move_back(cs);
+            return;
+        }
     }
 
     /* Tap on enemy to target */
@@ -818,6 +879,12 @@ static void combat_handle_key(combat_state *cs, int key) {
         case SAPP_KEYCODE_E:
             combat_action_end_turn(cs);
             break;
+        case SAPP_KEYCODE_Q:
+            combat_action_move_forward(cs);
+            break;
+        case SAPP_KEYCODE_R:
+            combat_action_move_back(cs);
+            break;
     }
 }
 
@@ -912,20 +979,20 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
 
                 /* Intent indicator: show planned damage during player turn */
                 if (combat.phase == CPHASE_PLAYER_TURN || combat.phase == CPHASE_DRAW) {
-                    bool can_attack = (e->ranged || combat.player_distance <= 0);
+                    bool in_range = combat_enemy_in_range(&combat, i);
                     bool stunned = (e->flash_timer > 10);
-                    if (can_attack && !stunned) {
+                    if (in_range && !stunned) {
                         char intent_buf[16];
-                        snprintf(intent_buf, sizeof(intent_buf), "-%d", e->damage);
-                        /* Red sword/damage icon */
+                        snprintf(intent_buf, sizeof(intent_buf), "-%d!", e->damage);
                         sr_draw_text_shadow(px, W, H, cx - 8, sprite_y - 10,
                                             intent_buf, 0xFF4444FF, shadow);
-                        /* Small attack icon (sword-like character) */
-                        sr_draw_text_shadow(px, W, H, cx + 6, sprite_y - 10,
-                                            "!", 0xFF4444FF, shadow);
                     } else if (stunned) {
                         sr_draw_text_shadow(px, W, H, cx - 10, sprite_y - 10,
                                             "STUN", 0xFFCCCC22, shadow);
+                    } else if (combat.player_distance > e->attack_range) {
+                        /* Enemy will advance toward player */
+                        sr_draw_text_shadow(px, W, H, cx - 6, sprite_y - 10,
+                                            ">>", 0xFFCC8844, shadow);
                     } else {
                         sr_draw_text_shadow(px, W, H, cx - 6, sprite_y - 10,
                                             "---", 0xFF666666, shadow);
@@ -949,11 +1016,11 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
                 sr_draw_text_shadow(px, W, H, cx - 10, sprite_y + 52, hpbuf, gray, shadow);
             }
 
-            /* Move points indicator */
+            /* Attack range indicator */
             if (e->alive) {
-                char mpbuf[16];
-                snprintf(mpbuf, sizeof(mpbuf), "MP:%d", e->move_points);
-                sr_draw_text_shadow(px, W, H, cx - 10, sprite_y + 62, mpbuf, dim, shadow);
+                char rngbuf[16];
+                snprintf(rngbuf, sizeof(rngbuf), "RNG:%d", e->attack_range);
+                sr_draw_text_shadow(px, W, H, cx - 12, sprite_y + 62, rngbuf, dim, shadow);
             }
         }
     }
@@ -1064,16 +1131,36 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
             uint32_t ecol = combat.energy > 0 ? 0xFF22CCEE : 0xFF444444;
             sr_draw_text_shadow(px, W, H, 8, 218, ebuf, ecol, shadow);
         }
+
+        /* Move points display */
+        if (combat.player_move_pts > 0) {
+            char mpbuf[16];
+            snprintf(mpbuf, sizeof(mpbuf), "MP  %d", combat.player_move_pts);
+            sr_draw_text_shadow(px, W, H, 8, 228, mpbuf, 0xFF22CC22, shadow);
+        }
     }
 
-    /* ── Hand of cards (bottom) ───────────────────────────────── */
+    /* ── Move buttons (when player has move points) ──────────── */
+    if (combat.phase == CPHASE_PLAYER_TURN && combat.player_move_pts > 0) {
+        int mb_y = 238;
+        /* Forward button */
+        combat_draw_rect(px, W, H, 8, mb_y, 34, 14, 0xFF223322);
+        combat_draw_rect_outline(px, W, H, 8, mb_y, 34, 14, 0xFF44CC44);
+        sr_draw_text_shadow(px, W, H, 11, mb_y + 3, "FWD", 0xFF44CC44, shadow);
+        /* Back button */
+        combat_draw_rect(px, W, H, 46, mb_y, 34, 14, 0xFF332222);
+        combat_draw_rect_outline(px, W, H, 46, mb_y, 34, 14, 0xFFCC6644);
+        sr_draw_text_shadow(px, W, H, 50, mb_y + 3, "BCK", 0xFFCC6644, shadow);
+    }
+
+    /* ── Hand of cards (bottom, 2:3 ratio) ─────────────────────── */
     {
-        int card_w = 52;
-        int card_h = 44;
-        int card_gap = 4;
+        int card_w = CARD_W;
+        int card_h = CARD_H;
+        int card_gap = CARD_GAP;
         int total_w = combat.hand_count * (card_w + card_gap) - card_gap;
         int base_x = (W - total_w) / 2;
-        int base_y = H - card_h - 8;
+        int base_y = H - card_h - 4;
 
         for (int i = 0; i < combat.hand_count; i++) {
             int card = combat.hand[i];
@@ -1096,10 +1183,7 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
             /* Card type color stripe at top */
             combat_draw_rect(px, W, H, cx + 1, cy + 1, card_w - 2, 3, card_colors[card]);
 
-            /* Card name */
-            sr_draw_text_shadow(px, W, H, cx + 4, cy + 8, card_names[card], white, shadow);
-
-            /* Energy cost */
+            /* Energy cost (top right) */
             {
                 int cost = card_energy_cost[card];
                 char cbuf[8];
@@ -1108,31 +1192,42 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
                 sr_draw_text_shadow(px, W, H, cx + card_w - 10, cy + 5, cbuf, ccol, shadow);
             }
 
+            /* Card name */
+            sr_draw_text_shadow(px, W, H, cx + 3, cy + 8, card_names[card], white, shadow);
+
             /* Card effect text */
             const char *effect = "";
             switch (card) {
                 case CARD_SHIELD:     effect = "+3 SH"; break;
                 case CARD_SHOOT:      effect = "3 DMG"; break;
                 case CARD_BURST:      effect = "2 ALL"; break;
-                case CARD_MOVE:       effect = "ADV 1"; break;
+                case CARD_MOVE:       effect = "+2 MP"; break;
                 case CARD_MELEE:      effect = "6 DMG"; break;
-                case CARD_OVERCHARGE: effect = "+2 NRG"; break;
+                case CARD_OVERCHARGE: effect = "+2NRG"; break;
                 case CARD_REPAIR:     effect = "+4 HP"; break;
                 case CARD_STUN:       effect = "STUN"; break;
                 case CARD_FORTIFY:    effect = "+6 SH"; break;
                 case CARD_DOUBLE_SHOT:effect = "5 DMG"; break;
-                case CARD_DASH:       effect = "RUSH"; break;
+                case CARD_DASH:       effect = "+3MP"; break;
             }
-            sr_draw_text_shadow(px, W, H, cx + 4, cy + 20, effect, gray, shadow);
+            sr_draw_text_shadow(px, W, H, cx + 3, cy + 22, effect, gray, shadow);
 
-            /* Extra info for melee */
+            /* Extra info line (uses the extra vertical space) */
             if (card == CARD_MELEE) {
-                const char *req = combat.player_distance <= 0 ? "READY" : "NEED MOVE";
+                const char *req = combat.player_distance <= 0 ? "READY" : "MOVE!";
                 uint32_t rc = combat.player_distance <= 0 ? 0xFF00CC00 : 0xFF4444CC;
-                sr_draw_text_shadow(px, W, H, cx + 4, cy + 30, req, rc, shadow);
+                sr_draw_text_shadow(px, W, H, cx + 3, cy + 34, req, rc, shadow);
             }
             if (card == CARD_BURST) {
-                sr_draw_text_shadow(px, W, H, cx + 4, cy + 30, "HIT ALL", 0xFF5588FF, shadow);
+                sr_draw_text_shadow(px, W, H, cx + 3, cy + 34, "ALL", 0xFF5588FF, shadow);
+            }
+            if (card == CARD_DASH) {
+                sr_draw_text_shadow(px, W, H, cx + 3, cy + 34, "4DMG", 0xFF44CCCC, shadow);
+            }
+            if (card == CARD_MOVE) {
+                char mpbuf[16];
+                snprintf(mpbuf, sizeof(mpbuf), "MP:%d", combat.player_move_pts);
+                sr_draw_text_shadow(px, W, H, cx + 3, cy + 34, mpbuf, 0xFF22CC22, shadow);
             }
         }
     }
