@@ -519,11 +519,15 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
                 float rx2 = cx + right_x * sprite_half;
                 float rz = cz + right_z * sprite_half;
 
+                /* Compute fog/light tint based on distance to player */
+                float fog_i = dng_fog_vertex_intensity(cx, 0, cz);
+                uint32_t tint = pal_intensity_color(fog_i);
+
                 sr_draw_quad_doublesided(fb_ptr,
-                    sr_vert(lx, bot_y, lz, 0, 1),
-                    sr_vert(rx2, bot_y, rz, 1, 1),
-                    sr_vert(rx2, top_y, rz, 1, 0),
-                    sr_vert(lx, top_y, lz, 0, 0),
+                    sr_vert_c(lx, bot_y, lz, 0, 1, tint),
+                    sr_vert_c(rx2, bot_y, rz, 1, 1, tint),
+                    sr_vert_c(rx2, top_y, rz, 1, 0, tint),
+                    sr_vert_c(lx, top_y, lz, 0, 0, tint),
                     stex, &mvp);
             }
         }

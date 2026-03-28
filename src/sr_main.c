@@ -51,9 +51,10 @@ static void check_random_encounter(void) {
     if (p->gx != last_player_gx || p->gy != last_player_gy) {
         last_player_gx = p->gx;
         last_player_gy = p->gy;
-        if (dng_state.dungeon->aliens[p->gy][p->gx] != 0) {
+        uint8_t alien = dng_state.dungeon->aliens[p->gy][p->gx];
+        if (alien != 0) {
             dng_state.dungeon->aliens[p->gy][p->gx] = 0;
-            combat_init(&combat, selected_class, dng_state.current_floor);
+            combat_init(&combat, selected_class, dng_state.current_floor, alien);
             app_state = STATE_COMBAT;
         }
     }
@@ -505,6 +506,7 @@ static void handle_screen_tap(float sx, float sy) {
             if (class_select_cursor == 0) {
                 /* Already selected — start */
                 selected_class = 0;
+                player_persist_init(selected_class);
                 dng_game_init(&dng_state);
                 dng_initialized = true;
                 last_player_gx = dng_state.player.gx;
@@ -520,6 +522,7 @@ static void handle_screen_tap(float sx, float sy) {
         if (fx >= mb_x && fx <= mb_x + 80 && fy >= mb_y && fy <= mb_y + 120) {
             if (class_select_cursor == 1) {
                 selected_class = 1;
+                player_persist_init(selected_class);
                 dng_game_init(&dng_state);
                 dng_initialized = true;
                 last_player_gx = dng_state.player.gx;
@@ -642,6 +645,7 @@ static void event(const sapp_event *ev) {
             case SAPP_KEYCODE_KP_ENTER:
             case SAPP_KEYCODE_SPACE:
                 selected_class = class_select_cursor;
+                player_persist_init(selected_class);
                 dng_game_init(&dng_state);
                 dng_initialized = true;
                 last_player_gx = dng_state.player.gx;
