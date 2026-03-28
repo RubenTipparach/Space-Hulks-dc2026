@@ -44,6 +44,8 @@
 #include "sr_menu.h"
 #include "sr_mobile_input.h"
 
+static void game_init_ship(void); /* forward decl */
+
 /* ── Save / Load ─────────────────────────────────────────────────── */
 
 typedef struct {
@@ -657,6 +659,36 @@ static void frame(void) {
         /* Ship HUD overlay */
         if (current_ship.initialized && current_ship.boarding_active) {
             draw_ship_hud(fb.color, fb.width, fb.height, &current_ship);
+
+            /* Recolor minimap cells by ship room type */
+            {
+                sr_dungeon *md = dng_state.dungeon;
+                int mscale = 2;
+                int mmx = fb.width - md->w * mscale - 4;
+                int mmy = 4;
+                for (int my = 1; my <= md->h; my++) {
+                    for (int mx = 1; mx <= md->w; mx++) {
+                        if (md->map[my][mx] == 1) continue;
+                        int ri = dng_room_at(md, mx, my);
+                        if (ri < 0 || ri >= md->room_count) continue;
+                        int sr = md->room_ship_idx[ri];
+                        if (sr < 0 || sr >= current_ship.room_count) continue;
+                        uint32_t rc = room_type_colors[current_ship.rooms[sr].type];
+                        int rr = ((rc >> 0) & 0xFF) / 3;
+                        int rg = ((rc >> 8) & 0xFF) / 3;
+                        int rb = ((rc >> 16) & 0xFF) / 3;
+                        uint32_t cell_col = 0xFF000000 | (rb << 16) | (rg << 8) | rr;
+                        int px0 = mmx + (mx - 1) * mscale;
+                        int py0 = mmy + (my - 1) * mscale;
+                        for (int dy = 0; dy < mscale; dy++)
+                            for (int dx = 0; dx < mscale; dx++) {
+                                int rx = px0 + dx, ry = py0 + dy;
+                                if (rx >= 0 && rx < fb.width && ry >= 0 && ry < fb.height)
+                                    fb.color[ry * fb.width + rx] = cell_col;
+                            }
+                    }
+                }
+            }
 
             /* Room label at bottom */
             dng_player *rp = &dng_state.player;
