@@ -37,6 +37,7 @@
 
 #include "sr_app.h"
 #include "sr_lighting.h"
+#include "sr_sprites.h"
 #include "sr_scene_dungeon.h"
 #include "sr_combat.h"
 #include "sr_menu.h"
