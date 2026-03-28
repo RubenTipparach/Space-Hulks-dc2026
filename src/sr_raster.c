@@ -249,6 +249,8 @@ static void rasterize_triangle(sr_framebuffer *fb,
             uint32_t color;
             if (tex && tex->pixels) {
                 color = sr_texture_sample(tex, u, v);
+                /* Alpha test — skip transparent pixels */
+                if ((color >> 24) < 128) continue;
             } else {
                 color = 0xFFFFFFFF;
             }

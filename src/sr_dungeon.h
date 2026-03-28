@@ -52,6 +52,8 @@ typedef struct {
     bool has_up;
     int down_gx, down_gy, down_dir;         /* down-stairs (-1 if none) */
     bool has_down;
+    /* Alien entities (for FPS view) */
+    uint8_t aliens[DNG_GRID_H + 1][DNG_GRID_W + 1]; /* 0=none, 1-4=enemy type (ENEMY_LURKER+1 etc) */
 } sr_dungeon;
 
 /* ── Simple RNG for dungeon generation ───────────────────────────── */
@@ -163,7 +165,7 @@ static void dng_find_down_stairs(sr_dungeon *d, const dng_room *room,
     *out_x = room->cx; *out_y = room->cy;
 }
 
-static void dng_generate(sr_dungeon *d, int w, int h, bool has_down_stairs, bool has_up_stairs, uint32_t seed) {
+static void dng_generate(sr_dungeon *d, int w, int h, bool has_down_stairs, bool has_up_stairs, uint32_t seed, int floor_num) {
     dng_rng_seed(seed);
     memset(d, 0, sizeof(*d));
     d->w = w; d->h = h;
@@ -227,6 +229,23 @@ static void dng_generate(sr_dungeon *d, int w, int h, bool has_down_stairs, bool
     if (has_down_stairs) {
         dng_find_down_stairs(d, &rooms[0], &d->down_gx, &d->down_gy);
         d->down_dir = dng_rng_int(4);
+    }
+
+    /* Place alien entities in open cells (not spawn, not stairs) */
+    for (int i = 1; i < num_rooms; i++) {
+        int aliens_in_room = 1 + dng_rng_int(2);
+        for (int a = 0; a < aliens_in_room; a++) {
+            int ax = rooms[i].x + dng_rng_int(rooms[i].w);
+            int ay = rooms[i].y + dng_rng_int(rooms[i].h);
+            if (ax < 1 || ax > w || ay < 1 || ay > h) continue;
+            if (d->map[ay][ax] != 0) continue;
+            if (ax == d->spawn_gx && ay == d->spawn_gy) continue;
+            if (d->has_up && ax == d->stairs_gx && ay == d->stairs_gy) continue;
+            if (d->has_down && ax == d->down_gx && ay == d->down_gy) continue;
+            /* Stronger aliens on deeper floors: floor 0-1 = lurker/brute, 2-3 add spitter, 4+ all */
+            int max_type = (floor_num <= 1) ? 2 : (floor_num <= 3) ? 3 : 4;
+            d->aliens[ay][ax] = 1 + (uint8_t)dng_rng_int(max_type);
+        }
     }
 }
 
@@ -366,7 +385,7 @@ static void dng_game_init(dng_game *g) {
 
     /* Generate floor 0 */
     dng_generate(&g->floors[0], DNG_GRID_W, DNG_GRID_H, false, true,
-                 g->seed_base);
+                 g->seed_base, 0);
     g->floor_generated[0] = true;
     g->dungeon = &g->floors[0];
 
@@ -380,7 +399,8 @@ static void dng_go_up(dng_game *g) {
     if (!g->floor_generated[g->current_floor]) {
         bool is_last = (g->current_floor >= DNG_MAX_FLOORS - 1);
         dng_generate(&g->floors[g->current_floor], DNG_GRID_W, DNG_GRID_H,
-                     true, !is_last, g->seed_base + (uint32_t)g->current_floor * 777);
+                     true, !is_last, g->seed_base + (uint32_t)g->current_floor * 777,
+                     g->current_floor);
         g->floor_generated[g->current_floor] = true;
     }
     g->dungeon = &g->floors[g->current_floor];

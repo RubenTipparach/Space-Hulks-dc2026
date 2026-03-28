@@ -37,9 +37,202 @@
 
 #include "sr_app.h"
 #include "sr_lighting.h"
+#include "sr_sprites.h"
 #include "sr_scene_dungeon.h"
+#include "sr_combat.h"
 #include "sr_menu.h"
 #include "sr_mobile_input.h"
+
+/* ── Save / Load ─────────────────────────────────────────────────── */
+
+typedef struct {
+    uint32_t magic;
+    int selected_class;
+    int current_floor;
+    int player_gx, player_gy, player_dir;
+    /* persistent player */
+    int hp, hp_max;
+    int persistent_deck_count;
+    int persistent_deck[COMBAT_DECK_MAX];
+    /* dungeon RNG seed */
+    uint32_t seed_base;
+    /* combat state (if in combat) */
+    int in_combat;
+} save_data;
+
+static void game_save(void) {
+    save_data sd;
+    memset(&sd, 0, sizeof(sd));
+    sd.magic = SAVE_MAGIC;
+    sd.selected_class = selected_class;
+    sd.current_floor = dng_state.current_floor;
+    sd.player_gx = dng_state.player.gx;
+    sd.player_gy = dng_state.player.gy;
+    sd.player_dir = dng_state.player.dir;
+    sd.hp = g_player.hp;
+    sd.hp_max = g_player.hp_max;
+    sd.persistent_deck_count = g_player.persistent_deck_count;
+    memcpy(sd.persistent_deck, g_player.persistent_deck,
+           sizeof(int) * g_player.persistent_deck_count);
+    sd.seed_base = dng_state.seed_base;
+    sd.in_combat = (app_state == STATE_COMBAT) ? 1 : 0;
+
+    FILE *f = fopen(SAVE_FILE, "wb");
+    if (f) {
+        fwrite(&sd, sizeof(sd), 1, f);
+        fclose(f);
+    }
+}
+
+static bool game_load(void) {
+    FILE *f = fopen(SAVE_FILE, "rb");
+    if (!f) return false;
+    save_data sd;
+    if (fread(&sd, sizeof(sd), 1, f) != 1 || sd.magic != SAVE_MAGIC) {
+        fclose(f); return false;
+    }
+    fclose(f);
+
+    selected_class = sd.selected_class;
+    player_persist_init(selected_class);
+    g_player.hp = sd.hp;
+    g_player.hp_max = sd.hp_max;
+    g_player.persistent_deck_count = sd.persistent_deck_count;
+    memcpy(g_player.persistent_deck, sd.persistent_deck,
+           sizeof(int) * sd.persistent_deck_count);
+
+    /* Regenerate dungeon with same seeds */
+    memset(&dng_state, 0, sizeof(dng_state));
+    dng_state.seed_base = sd.seed_base;
+    for (int fl = 0; fl <= sd.current_floor; fl++) {
+        bool is_last = (fl >= DNG_MAX_FLOORS - 1);
+        dng_generate(&dng_state.floors[fl], DNG_GRID_W, DNG_GRID_H,
+                     fl > 0, !is_last,
+                     dng_state.seed_base + (uint32_t)fl * 777, fl);
+        dng_state.floor_generated[fl] = true;
+    }
+    dng_state.current_floor = sd.current_floor;
+    dng_state.dungeon = &dng_state.floors[sd.current_floor];
+    dng_player_init(&dng_state.player, sd.player_gx, sd.player_gy, sd.player_dir);
+    dng_initialized = true;
+
+    return true;
+}
+
+static bool game_has_save(void) {
+    FILE *f = fopen(SAVE_FILE, "rb");
+    if (!f) return false;
+    uint32_t magic = 0;
+    bool ok = (fread(&magic, 4, 1, f) == 1 && magic == SAVE_MAGIC);
+    fclose(f);
+    return ok;
+}
+
+/* ── Title screen ────────────────────────────────────────────────── */
+
+static void draw_title_screen(sr_framebuffer *fb_ptr) {
+    int W = fb_ptr->width, H = fb_ptr->height;
+    uint32_t *px = fb_ptr->color;
+    uint32_t shadow = 0xFF000000;
+    uint32_t white = 0xFFFFFFFF;
+    uint32_t gray = 0xFF888888;
+    uint32_t yellow = 0xFF00DDDD;
+
+    for (int i = 0; i < W * H; i++) px[i] = 0xFF0D0D11;
+
+    sr_draw_text_shadow(px, W, H, W/2 - 45, 60, "SPACE HULKS", white, shadow);
+    sr_draw_text_shadow(px, W, H, W/2 - 50, 80, "DUNGEON CRAWLER", gray, shadow);
+
+    /* New Game button */
+    {
+        int bx = W/2 - 50, by = 120, bw = 100, bh = 22;
+        bool sel = (title_cursor == 0);
+        combat_draw_rect(px, W, H, bx, by, bw, bh, sel ? 0xFF222244 : 0xFF111122);
+        combat_draw_rect_outline(px, W, H, bx, by, bw, bh, sel ? yellow : gray);
+        sr_draw_text_shadow(px, W, H, bx + 22, by + 7, "NEW GAME", sel ? yellow : white, shadow);
+    }
+
+    /* Continue button */
+    {
+        int bx = W/2 - 50, by = 150, bw = 100, bh = 22;
+        bool sel = (title_cursor == 1);
+        uint32_t col = save_exists ? (sel ? yellow : white) : 0xFF444444;
+        combat_draw_rect(px, W, H, bx, by, bw, bh, sel ? 0xFF222244 : 0xFF111122);
+        combat_draw_rect_outline(px, W, H, bx, by, bw, bh, sel ? yellow : gray);
+        sr_draw_text_shadow(px, W, H, bx + 22, by + 7, "CONTINUE", col, shadow);
+        if (!save_exists)
+            sr_draw_text_shadow(px, W, H, bx + 12, by + bh + 4, "NO SAVE FOUND", 0xFF444444, shadow);
+    }
+}
+
+/* ── Track player movement for random encounters ─────────────────── */
+static int last_player_gx = -1, last_player_gy = -1;
+
+static void check_random_encounter(void) {
+    dng_player *p = &dng_state.player;
+    if (p->gx != last_player_gx || p->gy != last_player_gy) {
+        last_player_gx = p->gx;
+        last_player_gy = p->gy;
+        /* Auto-save on each step */
+        game_save();
+        uint8_t alien = dng_state.dungeon->aliens[p->gy][p->gx];
+        if (alien != 0) {
+            dng_state.dungeon->aliens[p->gy][p->gx] = 0;
+            combat_init(&combat, selected_class, dng_state.current_floor, alien);
+            app_state = STATE_COMBAT;
+        }
+    }
+}
+
+/* ── Class select screen ─────────────────────────────────────────── */
+static void draw_class_select(sr_framebuffer *fb_ptr) {
+    int W = fb_ptr->width, H = fb_ptr->height;
+    uint32_t *px = fb_ptr->color;
+    uint32_t shadow = 0xFF000000;
+    uint32_t white = 0xFFFFFFFF;
+    uint32_t gray = 0xFF888888;
+    uint32_t yellow = 0xFF00DDDD;
+
+    for (int i = 0; i < W * H; i++) px[i] = 0xFF0D0D11;
+
+    sr_draw_text_shadow(px, W, H, W/2 - 45, 30, "SPACE HULKS", white, shadow);
+    sr_draw_text_shadow(px, W, H, W/2 - 55, 50, "SELECT YOUR CLASS", gray, shadow);
+
+    /* Scout */
+    {
+        int bx = W/4 - 40, by = 80;
+        bool sel = (class_select_cursor == 0);
+        uint32_t border = sel ? yellow : gray;
+        combat_draw_rect_outline(px, W, H, bx, by, 80, 120, border);
+        if (sel) combat_draw_rect_outline(px, W, H, bx+1, by+1, 78, 118, border);
+
+        spr_draw(px, W, H, spr_scout, bx + 24, by + 8, 2);
+        sr_draw_text_shadow(px, W, H, bx + 24, by + 48, "SCOUT", sel ? yellow : white, shadow);
+        sr_draw_text_shadow(px, W, H, bx + 8, by + 62, "HP: 20", gray, shadow);
+        sr_draw_text_shadow(px, W, H, bx + 8, by + 74, "FAST", gray, shadow);
+        sr_draw_text_shadow(px, W, H, bx + 8, by + 86, "2 BURST", gray, shadow);
+        sr_draw_text_shadow(px, W, H, bx + 8, by + 98, "2 MOVE", gray, shadow);
+    }
+
+    /* Marine */
+    {
+        int bx = 3*W/4 - 40, by = 80;
+        bool sel = (class_select_cursor == 1);
+        uint32_t border = sel ? yellow : gray;
+        combat_draw_rect_outline(px, W, H, bx, by, 80, 120, border);
+        if (sel) combat_draw_rect_outline(px, W, H, bx+1, by+1, 78, 118, border);
+
+        spr_draw(px, W, H, spr_marine, bx + 24, by + 8, 2);
+        sr_draw_text_shadow(px, W, H, bx + 22, by + 48, "MARINE", sel ? yellow : white, shadow);
+        sr_draw_text_shadow(px, W, H, bx + 8, by + 62, "HP: 30", gray, shadow);
+        sr_draw_text_shadow(px, W, H, bx + 8, by + 74, "TOUGH", gray, shadow);
+        sr_draw_text_shadow(px, W, H, bx + 8, by + 86, "3 SHOOT", gray, shadow);
+        sr_draw_text_shadow(px, W, H, bx + 8, by + 98, "4 SHIELD", gray, shadow);
+    }
+
+    sr_draw_text_shadow(px, W, H, W/2 - 55, H - 20,
+                        "TAP TO SELECT  TAP AGAIN=GO", gray, shadow);
+}
 
 /* ── Shaders ─────────────────────────────────────────────────────── */
 
@@ -268,25 +461,23 @@ static void init(void) {
     itextures[ITEX_TILE]  = sr_indexed_load("assets/indexed/tile.idx");
     itextures[ITEX_STONE] = sr_indexed_load("assets/indexed/stone.idx");
 
+    stextures[STEX_LURKER]    = sr_texture_load("assets/sprites/lurker.png");
+    stextures[STEX_BRUTE]     = sr_texture_load("assets/sprites/brute.png");
+    stextures[STEX_SPITTER]   = sr_texture_load("assets/sprites/spitter.png");
+    stextures[STEX_HIVEGUARD] = sr_texture_load("assets/sprites/hiveguard.png");
+    stextures[STEX_SCOUT]     = sr_texture_load("assets/sprites/scout.png");
+    stextures[STEX_MARINE]    = sr_texture_load("assets/sprites/marine.png");
+
     sr_fog_set(FOG_COLOR, FOG_NEAR, FOG_FAR);
 
     dng_load_config();
-    dng_game_init(&dng_state);
-    dng_initialized = true;
 
 #ifdef _WIN32
     timeBeginPeriod(1);
 #endif
 
-    printf("Space Hulks — Dungeon Crawler initialized (%dx%d @ %dfps)\n", FB_WIDTH, FB_HEIGHT, TARGET_FPS);
-    printf("  WASD/Arrows = move/turn\n");
-    printf("  F           = toggle lighting mode\n");
-    printf("  I           = toggle info overlay\n");
-    printf("  +/-         = adjust torch brightness\n");
-    printf("  Ctrl+8      = start GIF recording (24fps)\n");
-    printf("  Ctrl+9      = stop & save GIF\n");
-    printf("  Ctrl+P      = save screenshot\n");
-    printf("  ESC         = quit\n");
+    save_exists = game_has_save();
+    printf("Space Hulks initialized (%dx%d @ %dfps)\n", FB_WIDTH, FB_HEIGHT, TARGET_FPS);
 }
 
 static void frame(void) {
@@ -302,49 +493,63 @@ static void frame(void) {
         fps_timer -= 1.0;
     }
 
-    sr_mat4 vp; /* unused — dungeon builds its own MVP */
-    (void)vp;
-
     /* ── CPU rasterize ───────────────────────────────────────── */
     sr_stats_reset();
     sr_framebuffer_clear(&fb, 0xFF000000, 1.0f);
-    sr_fog_disable();
 
-    /* Update dungeon game state */
-    if (dng_play_state == DNG_STATE_CLIMBING) {
-        if (dng_update_climb(&dng_state)) {
-            dng_play_state = DNG_STATE_PLAYING;
-        }
+    if (app_state == STATE_TITLE) {
+        draw_title_screen(&fb);
+    } else if (app_state == STATE_CLASS_SELECT) {
+        draw_class_select(&fb);
+    } else if (app_state == STATE_COMBAT) {
+        combat_update(&combat);
+        draw_combat_scene(&fb);
     } else {
-        sr_dungeon *dd = dng_state.dungeon;
-        dng_player *pp = &dng_state.player;
-        bool on_up = (dd->has_up && pp->gx == dd->stairs_gx && pp->gy == dd->stairs_gy);
-        bool on_down = (dd->has_down && pp->gx == dd->down_gx && pp->gy == dd->down_gy);
-        if (dng_state.on_stairs) {
-            if (!on_up && !on_down) dng_state.on_stairs = false;
+        sr_mat4 vp;
+        (void)vp;
+        sr_fog_disable();
+
+        /* Update dungeon game state */
+        if (dng_play_state == DNG_STATE_CLIMBING) {
+            if (dng_update_climb(&dng_state)) {
+                dng_play_state = DNG_STATE_PLAYING;
+            }
         } else {
-            if (on_up) {
-                dng_start_climb(&dng_state, true);
-                dng_play_state = DNG_STATE_CLIMBING;
-            } else if (on_down) {
-                dng_start_climb(&dng_state, false);
-                dng_play_state = DNG_STATE_CLIMBING;
+            sr_dungeon *dd = dng_state.dungeon;
+            dng_player *pp = &dng_state.player;
+            bool on_up = (dd->has_up && pp->gx == dd->stairs_gx && pp->gy == dd->stairs_gy);
+            bool on_down = (dd->has_down && pp->gx == dd->down_gx && pp->gy == dd->down_gy);
+            if (dng_state.on_stairs) {
+                if (!on_up && !on_down) dng_state.on_stairs = false;
+            } else {
+                if (on_up) {
+                    dng_start_climb(&dng_state, true);
+                    dng_play_state = DNG_STATE_CLIMBING;
+                } else if (on_down) {
+                    dng_start_climb(&dng_state, false);
+                    dng_play_state = DNG_STATE_CLIMBING;
+                }
             }
         }
-    }
-    dng_player_update(&dng_state.player);
-    draw_dungeon_scene(&fb, &vp);
-    draw_dungeon_minimap(&fb);
-    if (dng_show_info) {
-        static const char *dir_names[] = {"N","E","S","W"};
-        char ibuf[64];
-        dng_player *ip = &dng_state.player;
-        snprintf(ibuf, sizeof(ibuf), "F%d  %s  (%d,%d)",
-                 dng_state.current_floor + 1,
-                 dir_names[ip->dir],
-                 ip->gx, ip->gy);
-        sr_draw_text_shadow(fb.color, fb.width, fb.height,
-                            3, 3, ibuf, 0xFFFFFFFF, 0xFF000000);
+        dng_player_update(&dng_state.player);
+
+        /* Check for random encounter after moving */
+        if (dng_play_state == DNG_STATE_PLAYING)
+            check_random_encounter();
+
+        draw_dungeon_scene(&fb, &vp);
+        draw_dungeon_minimap(&fb);
+        if (dng_show_info) {
+            static const char *dir_names[] = {"N","E","S","W"};
+            char ibuf[64];
+            dng_player *ip = &dng_state.player;
+            snprintf(ibuf, sizeof(ibuf), "F%d  %s  (%d,%d)",
+                     dng_state.current_floor + 1,
+                     dir_names[ip->dir],
+                     ip->gx, ip->gy);
+            sr_draw_text_shadow(fb.color, fb.width, fb.height,
+                                3, 3, ibuf, 0xFFFFFFFF, 0xFF000000);
+        }
     }
 
     int tris = sr_stats_tri_count();
@@ -403,6 +608,8 @@ static void cleanup(void) {
         sr_texture_free(&textures[i]);
     for (int i = 0; i < ITEX_COUNT; i++)
         sr_indexed_free(&itextures[i]);
+    for (int i = 0; i < STEX_COUNT; i++)
+        sr_texture_free(&stextures[i]);
     sr_framebuffer_destroy(&fb);
     sr_framebuffer_destroy(&shadow_fb);
     sg_shutdown();
@@ -413,37 +620,141 @@ static void cleanup(void) {
 
 /* ── Event handler ───────────────────────────────────────────────── */
 
+/* ── Handle tap/click in screen coords ───────────────────────────── */
+
+static void handle_screen_tap(float sx, float sy) {
+    float fx, fy;
+    screen_to_fb(sx, sy, &fx, &fy);
+
+    if (app_state == STATE_TITLE) {
+        /* New Game button */
+        int bx = FB_WIDTH/2 - 50, bw = 100, bh = 22;
+        if (fx >= bx && fx <= bx + bw && fy >= 120 && fy <= 120 + bh) {
+            app_state = STATE_CLASS_SELECT;
+            return;
+        }
+        /* Continue button */
+        if (fx >= bx && fx <= bx + bw && fy >= 150 && fy <= 150 + bh && save_exists) {
+            if (game_load()) {
+                last_player_gx = dng_state.player.gx;
+                last_player_gy = dng_state.player.gy;
+                app_state = STATE_RUNNING;
+            }
+            return;
+        }
+        return;
+    }
+
+    if (app_state == STATE_CLASS_SELECT) {
+        /* Scout box: left quarter */
+        int sb_x = FB_WIDTH/4 - 40, sb_y = 80;
+        if (fx >= sb_x && fx <= sb_x + 80 && fy >= sb_y && fy <= sb_y + 120) {
+            if (class_select_cursor == 0) {
+                /* Already selected — start */
+                selected_class = 0;
+                player_persist_init(selected_class);
+                dng_game_init(&dng_state);
+                dng_initialized = true;
+                last_player_gx = dng_state.player.gx;
+                last_player_gy = dng_state.player.gy;
+                app_state = STATE_RUNNING;
+            } else {
+                class_select_cursor = 0;
+            }
+            return;
+        }
+        /* Marine box: right quarter */
+        int mb_x = 3*FB_WIDTH/4 - 40, mb_y = 80;
+        if (fx >= mb_x && fx <= mb_x + 80 && fy >= mb_y && fy <= mb_y + 120) {
+            if (class_select_cursor == 1) {
+                selected_class = 1;
+                player_persist_init(selected_class);
+                dng_game_init(&dng_state);
+                dng_initialized = true;
+                last_player_gx = dng_state.player.gx;
+                last_player_gy = dng_state.player.gy;
+                app_state = STATE_RUNNING;
+            } else {
+                class_select_cursor = 1;
+            }
+            return;
+        }
+        return;
+    }
+
+    if (app_state == STATE_COMBAT) {
+        /* Result screen — tap anywhere */
+        if (combat.phase == CPHASE_RESULT) {
+            app_state = STATE_RUNNING;
+            game_save();
+            return;
+        }
+        combat_touch_began(&combat, fx, fy);
+        return;
+    }
+}
+
+/* ── Event handler ───────────────────────────────────────────────── */
+
 static void event(const sapp_event *ev) {
     double now_time = sapp_frame_count() * sapp_frame_duration();
 
-    /* ── Touch / pointer for dungeon ────────────────────────── */
+    /* ── Mouse click / touch began → tap handling ────────────── */
     if (ev->type == SAPP_EVENTTYPE_MOUSE_DOWN && ev->mouse_button == SAPP_MOUSEBUTTON_LEFT) {
-        dng_touch_began(ev->mouse_x, ev->mouse_y, now_time);
-        return;
-    }
-    if (ev->type == SAPP_EVENTTYPE_MOUSE_MOVE) {
-        dng_touch_moved(ev->mouse_x, ev->mouse_y);
-        return;
-    }
-    if (ev->type == SAPP_EVENTTYPE_MOUSE_UP && ev->mouse_button == SAPP_MOUSEBUTTON_LEFT) {
-        dng_touch_ended(ev->mouse_x, ev->mouse_y, now_time);
+        if (app_state == STATE_RUNNING) {
+            dng_touch_began(ev->mouse_x, ev->mouse_y, now_time);
+        } else {
+            handle_screen_tap(ev->mouse_x, ev->mouse_y);
+        }
         return;
     }
     if (ev->type == SAPP_EVENTTYPE_TOUCHES_BEGAN && ev->num_touches > 0) {
         float sx = ev->touches[0].pos_x, sy = ev->touches[0].pos_y;
-        dng_touch_began(sx, sy, now_time);
+        if (app_state == STATE_RUNNING) {
+            dng_touch_began(sx, sy, now_time);
+        } else {
+            handle_screen_tap(sx, sy);
+        }
+        return;
+    }
+
+    /* ── Mouse move / touch move ─────────────────────────────── */
+    if (ev->type == SAPP_EVENTTYPE_MOUSE_MOVE) {
+        if (app_state == STATE_RUNNING) dng_touch_moved(ev->mouse_x, ev->mouse_y);
+        else if (app_state == STATE_COMBAT) {
+            float fx, fy; screen_to_fb(ev->mouse_x, ev->mouse_y, &fx, &fy);
+            combat_touch_moved(&combat, fx, fy);
+        }
         return;
     }
     if (ev->type == SAPP_EVENTTYPE_TOUCHES_MOVED && ev->num_touches > 0) {
-        dng_touch_moved(ev->touches[0].pos_x, ev->touches[0].pos_y);
+        if (app_state == STATE_RUNNING) dng_touch_moved(ev->touches[0].pos_x, ev->touches[0].pos_y);
+        else if (app_state == STATE_COMBAT) {
+            float fx, fy; screen_to_fb(ev->touches[0].pos_x, ev->touches[0].pos_y, &fx, &fy);
+            combat_touch_moved(&combat, fx, fy);
+        }
+        return;
+    }
+
+    /* ── Mouse up / touch end ────────────────────────────────── */
+    if (ev->type == SAPP_EVENTTYPE_MOUSE_UP && ev->mouse_button == SAPP_MOUSEBUTTON_LEFT) {
+        if (app_state == STATE_RUNNING) dng_touch_ended(ev->mouse_x, ev->mouse_y, now_time);
+        else if (app_state == STATE_COMBAT) {
+            float fx, fy; screen_to_fb(ev->mouse_x, ev->mouse_y, &fx, &fy);
+            combat_touch_ended(&combat, fx, fy);
+        }
         return;
     }
     if (ev->type == SAPP_EVENTTYPE_TOUCHES_ENDED && ev->num_touches > 0) {
-        dng_touch_ended(ev->touches[0].pos_x, ev->touches[0].pos_y, now_time);
+        if (app_state == STATE_RUNNING) dng_touch_ended(ev->touches[0].pos_x, ev->touches[0].pos_y, now_time);
+        else if (app_state == STATE_COMBAT) {
+            float fx, fy; screen_to_fb(ev->touches[0].pos_x, ev->touches[0].pos_y, &fx, &fy);
+            combat_touch_ended(&combat, fx, fy);
+        }
         return;
     }
     if (ev->type == SAPP_EVENTTYPE_TOUCHES_CANCELLED) {
-        dng_touch_cancelled();
+        if (app_state == STATE_RUNNING) dng_touch_cancelled();
         return;
     }
 
@@ -466,6 +777,72 @@ static void event(const sapp_event *ev) {
         return;
     }
 
+    /* ── Title screen ────────────────────────────────────────── */
+    if (app_state == STATE_TITLE) {
+        switch (ev->key_code) {
+            case SAPP_KEYCODE_UP:
+            case SAPP_KEYCODE_W:
+                title_cursor = 0;
+                break;
+            case SAPP_KEYCODE_DOWN:
+            case SAPP_KEYCODE_S:
+                title_cursor = 1;
+                break;
+            case SAPP_KEYCODE_ENTER:
+            case SAPP_KEYCODE_KP_ENTER:
+            case SAPP_KEYCODE_SPACE:
+                if (title_cursor == 0) {
+                    app_state = STATE_CLASS_SELECT;
+                } else if (save_exists && game_load()) {
+                    last_player_gx = dng_state.player.gx;
+                    last_player_gy = dng_state.player.gy;
+                    app_state = STATE_RUNNING;
+                }
+                break;
+            default: break;
+        }
+        return;
+    }
+
+    /* ── Class selection ─────────────────────────────────────── */
+    if (app_state == STATE_CLASS_SELECT) {
+        switch (ev->key_code) {
+            case SAPP_KEYCODE_LEFT:
+            case SAPP_KEYCODE_A:
+                class_select_cursor = 0;
+                break;
+            case SAPP_KEYCODE_RIGHT:
+            case SAPP_KEYCODE_D:
+                class_select_cursor = 1;
+                break;
+            case SAPP_KEYCODE_ENTER:
+            case SAPP_KEYCODE_KP_ENTER:
+            case SAPP_KEYCODE_SPACE:
+                selected_class = class_select_cursor;
+                player_persist_init(selected_class);
+                dng_game_init(&dng_state);
+                dng_initialized = true;
+                last_player_gx = dng_state.player.gx;
+                last_player_gy = dng_state.player.gy;
+                app_state = STATE_RUNNING;
+                break;
+            default: break;
+        }
+        return;
+    }
+
+    /* ── Combat state ────────────────────────────────────────── */
+    if (app_state == STATE_COMBAT) {
+        if (combat.phase == CPHASE_RESULT &&
+            (ev->key_code == SAPP_KEYCODE_ENTER || ev->key_code == SAPP_KEYCODE_SPACE)) {
+            app_state = STATE_RUNNING;
+            game_save();
+            return;
+        }
+        combat_handle_key(&combat, ev->key_code);
+        return;
+    }
+
     /* ── Dungeon keys ────────────────────────────────────────── */
     switch (ev->key_code) {
         case SAPP_KEYCODE_F:
@@ -484,32 +861,23 @@ static void event(const sapp_event *ev) {
             dng_cfg.light_brightness -= 0.1f;
             if (dng_cfg.light_brightness < 0.0f) dng_cfg.light_brightness = 0.0f;
             break;
-        /* ── Movement ────────────────────────────────────────── */
         case SAPP_KEYCODE_W:
         case SAPP_KEYCODE_UP:
-            if (dng_play_state == DNG_STATE_PLAYING) {
-                dng_player_try_move(&dng_state.player, dng_state.dungeon,
-                                    dng_state.player.dir);
-            }
+            if (dng_play_state == DNG_STATE_PLAYING)
+                dng_player_try_move(&dng_state.player, dng_state.dungeon, dng_state.player.dir);
             break;
         case SAPP_KEYCODE_S:
         case SAPP_KEYCODE_DOWN:
-            if (dng_play_state == DNG_STATE_PLAYING) {
-                dng_player_try_move(&dng_state.player, dng_state.dungeon,
-                                    (dng_state.player.dir + 2) % 4);
-            }
+            if (dng_play_state == DNG_STATE_PLAYING)
+                dng_player_try_move(&dng_state.player, dng_state.dungeon, (dng_state.player.dir + 2) % 4);
             break;
         case SAPP_KEYCODE_A:
-            if (dng_play_state == DNG_STATE_PLAYING) {
-                dng_player_try_move(&dng_state.player, dng_state.dungeon,
-                                    (dng_state.player.dir + 3) % 4);
-            }
+            if (dng_play_state == DNG_STATE_PLAYING)
+                dng_player_try_move(&dng_state.player, dng_state.dungeon, (dng_state.player.dir + 3) % 4);
             break;
         case SAPP_KEYCODE_D:
-            if (dng_play_state == DNG_STATE_PLAYING) {
-                dng_player_try_move(&dng_state.player, dng_state.dungeon,
-                                    (dng_state.player.dir + 1) % 4);
-            }
+            if (dng_play_state == DNG_STATE_PLAYING)
+                dng_player_try_move(&dng_state.player, dng_state.dungeon, (dng_state.player.dir + 1) % 4);
             break;
         case SAPP_KEYCODE_LEFT:
         case SAPP_KEYCODE_Q:

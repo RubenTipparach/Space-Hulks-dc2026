@@ -33,6 +33,13 @@ enum {
 };
 static sr_indexed_texture itextures[ITEX_COUNT];
 
+/* Sprite textures (loaded from PNG) */
+enum {
+    STEX_LURKER, STEX_BRUTE, STEX_SPITTER, STEX_HIVEGUARD,
+    STEX_SCOUT, STEX_MARINE, STEX_COUNT
+};
+static sr_texture stextures[STEX_COUNT];
+
 /* Timing */
 static double time_acc;
 static int    frame_counter;
@@ -44,8 +51,15 @@ static int    screenshot_counter;
 
 /* ── App state ─────────────────────────────────────────────────── */
 
-enum { STATE_RUNNING };
-static int app_state = STATE_RUNNING;
+enum { STATE_TITLE, STATE_CLASS_SELECT, STATE_RUNNING, STATE_COMBAT };
+static int app_state = STATE_TITLE;
+static int selected_class = 0;  /* 0=scout, 1=marine */
+static int class_select_cursor = 0;
+static int title_cursor = 0;
+static bool save_exists = false;
+
+#define SAVE_FILE "spacehulks.sav"
+#define SAVE_MAGIC 0x534B4C48  /* "HLKS" */
 
 /* ── Simple RNG (deterministic) ─────────────────────────────────── */
 

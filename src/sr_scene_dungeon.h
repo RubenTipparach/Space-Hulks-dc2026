@@ -489,6 +489,49 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
             }
         }
     }
+
+    /* ── Alien billboards (camera-facing textured quads) ──────── */
+    {
+        float cam_angle = p->angle * 6.28318f;
+        float right_x = cosf(cam_angle);
+        float right_z = sinf(cam_angle);
+        float sprite_half = 0.5f;  /* half-size of billboard quad in world units */
+
+        for (int bgy = gy0; bgy <= gy1; bgy++) {
+            for (int bgx = gx0; bgx <= gx1; bgx++) {
+                if (!dng_vis[bgy][bgx]) continue;
+                uint8_t alien_type = d->aliens[bgy][bgx];
+                if (alien_type == 0) continue;
+
+                int type_idx = alien_type - 1;
+                if (type_idx < 0 || type_idx >= STEX_COUNT) continue;
+                const sr_texture *stex = &stextures[type_idx];
+                if (!stex->pixels) continue;
+
+                float cx = (bgx - 0.5f) * DNG_CELL_SIZE;
+                float cz = (bgy - 0.5f) * DNG_CELL_SIZE;
+                float bot_y = -DNG_HALF_CELL;
+                float top_y = bot_y + sprite_half * 2.0f;
+
+                /* Quad corners: left-bottom, right-bottom, right-top, left-top */
+                float lx = cx - right_x * sprite_half;
+                float lz = cz - right_z * sprite_half;
+                float rx2 = cx + right_x * sprite_half;
+                float rz = cz + right_z * sprite_half;
+
+                /* Compute fog/light tint based on distance to player */
+                float fog_i = dng_fog_vertex_intensity(cx, 0, cz);
+                uint32_t tint = pal_intensity_color(fog_i);
+
+                sr_draw_quad_doublesided(fb_ptr,
+                    sr_vert_c(lx, bot_y, lz, 0, 1, tint),
+                    sr_vert_c(rx2, bot_y, rz, 1, 1, tint),
+                    sr_vert_c(rx2, top_y, rz, 1, 0, tint),
+                    sr_vert_c(lx, top_y, lz, 0, 0, tint),
+                    stex, &mvp);
+            }
+        }
+    }
 }
 
 /* ── Minimap ─────────────────────────────────────────────────────── */
