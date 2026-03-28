@@ -502,19 +502,16 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
             float wy = -DNG_HALF_CELL + 0.5f;  /* slightly above floor */
             float wz = (gy - 0.5f) * DNG_CELL_SIZE;
 
-            /* Project to screen using MVP */
-            float v[4] = { wx, wy, wz, 1.0f };
-            float clip[4];
-            clip[0] = mvp.m[0]*v[0] + mvp.m[4]*v[1] + mvp.m[8]*v[2] + mvp.m[12]*v[3];
-            clip[1] = mvp.m[1]*v[0] + mvp.m[5]*v[1] + mvp.m[9]*v[2] + mvp.m[13]*v[3];
-            clip[2] = mvp.m[2]*v[0] + mvp.m[6]*v[1] + mvp.m[10]*v[2] + mvp.m[14]*v[3];
-            clip[3] = mvp.m[3]*v[0] + mvp.m[7]*v[1] + mvp.m[11]*v[2] + mvp.m[15]*v[3];
+            /* Project to screen using MVP (column-major: m[col][row]) */
+            float cw = mvp.m[0][3]*wx + mvp.m[1][3]*wy + mvp.m[2][3]*wz + mvp.m[3][3];
+            if (cw <= 0.1f) continue; /* behind camera */
 
-            /* Behind camera or too close */
-            if (clip[3] <= 0.1f) continue;
+            float cx2 = mvp.m[0][0]*wx + mvp.m[1][0]*wy + mvp.m[2][0]*wz + mvp.m[3][0];
+            float cy2 = mvp.m[0][1]*wx + mvp.m[1][1]*wy + mvp.m[2][1]*wz + mvp.m[3][1];
+            float cz2 = mvp.m[0][2]*wx + mvp.m[1][2]*wy + mvp.m[2][2]*wz + mvp.m[3][2];
 
-            float ndcx = clip[0] / clip[3];
-            float ndcy = clip[1] / clip[3];
+            float ndcx = cx2 / cw;
+            float ndcy = cy2 / cw;
 
             /* NDC to screen */
             int sx = (int)((ndcx * 0.5f + 0.5f) * FB_WIDTH);
@@ -524,8 +521,7 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
             if (sx < -32 || sx > FB_WIDTH + 32 || sy < -32 || sy > FB_HEIGHT + 32) continue;
 
             /* Scale based on distance */
-            float dist = clip[3];
-            int sprite_scale = (int)(3.0f / dist + 0.5f);
+            int sprite_scale = (int)(3.0f / cw + 0.5f);
             if (sprite_scale < 1) sprite_scale = 1;
             if (sprite_scale > 4) sprite_scale = 4;
 
@@ -535,7 +531,7 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
 
             /* Depth check at center pixel */
             if (sx >= 0 && sx < FB_WIDTH && sy >= 0 && sy < FB_HEIGHT) {
-                float sprite_depth = clip[2] / clip[3];
+                float sprite_depth = cz2 / cw;
                 if (sprite_depth > fb_ptr->depth[sy * FB_WIDTH + sx]) continue;
             }
 
