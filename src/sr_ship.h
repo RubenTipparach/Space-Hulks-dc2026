@@ -612,15 +612,68 @@ static void draw_room_label(uint32_t *px, int W, int H,
     if (!room) return;
     uint32_t shadow = 0xFF000000;
     uint32_t col = room_type_colors[room->type];
-    int lx = W / 2 - 30;
-    int ly = H - 20;
+    uint32_t white = 0xFFFFFFFF;
+    uint32_t gray = 0xFF888888;
 
-    sr_draw_text_shadow(px, W, H, lx, ly, room_type_names[room->type], col, shadow);
+    /* Room name banner at bottom center */
+    int bw = 140, bh = 40;
+    int bx = W / 2 - bw / 2;
+    int by = H - bh - 68; /* above cards */
 
-    /* Show officer name if one is here */
+    /* Semi-transparent background */
+    for (int ry = by; ry < by + bh && ry < H; ry++)
+        for (int rx = bx; rx < bx + bw && rx < W; rx++) {
+            if (rx < 0 || ry < 0) continue;
+            uint32_t c = px[ry * W + rx];
+            int cr = ((c >> 0) & 0xFF) / 4;
+            int cg = ((c >> 8) & 0xFF) / 4;
+            int cb = ((c >> 16) & 0xFF) / 4;
+            px[ry * W + rx] = 0xFF000000 | (cb << 16) | (cg << 8) | cr;
+        }
+
+    /* Room type name */
+    sr_draw_text_shadow(px, W, H, bx + 4, by + 4,
+                        room_type_names[room->type], col, shadow);
+
+    /* Subsystem HP bar if applicable */
+    if (room->subsystem_hp_max > 0) {
+        char shpbuf[32];
+        snprintf(shpbuf, sizeof(shpbuf), "SYS %d/%d", room->subsystem_hp, room->subsystem_hp_max);
+        uint32_t shp_col = room->subsystem_hp > 0 ? col : 0xFF444444;
+        sr_draw_text_shadow(px, W, H, bx + 4, by + 14, shpbuf, shp_col, shadow);
+
+        /* HP bar */
+        int bar_x = bx + 4, bar_y = by + 24, bar_w = bw - 8, bar_h = 3;
+        for (int rx = bar_x; rx < bar_x + bar_w && rx < W; rx++)
+            if (bar_y >= 0 && bar_y < H && rx >= 0) px[bar_y * W + rx] = 0xFF333333;
+        int fill = room->subsystem_hp_max > 0 ?
+                   (bar_w * room->subsystem_hp / room->subsystem_hp_max) : 0;
+        for (int rx = bar_x; rx < bar_x + fill && rx < W; rx++)
+            if (bar_y >= 0 && bar_y < H && rx >= 0) px[bar_y * W + rx] = col;
+
+        /* Console prompt */
+        if (room->subsystem_hp > 0) {
+            sr_draw_text_shadow(px, W, H, bx + 4, by + 30,
+                                "[SPACE] SABOTAGE", 0xFF22CCEE, shadow);
+        } else {
+            sr_draw_text_shadow(px, W, H, bx + 4, by + 30,
+                                "DESTROYED", 0xFF444444, shadow);
+        }
+    } else if (room->type == ROOM_CARGO) {
+        sr_draw_text_shadow(px, W, H, bx + 4, by + 14, "CARGO BAY", gray, shadow);
+        if (!room->cleared) {
+            sr_draw_text_shadow(px, W, H, bx + 4, by + 24,
+                                "[SPACE] SEARCH", 0xFF22CCEE, shadow);
+        } else {
+            sr_draw_text_shadow(px, W, H, bx + 4, by + 24,
+                                "SEARCHED", 0xFF444444, shadow);
+        }
+    }
+
+    /* Show officers in this room */
     for (int o = 0; o < ship->officer_count; o++) {
         if (ship->officers[o].room_idx == room_ship_idx && ship->officers[o].alive) {
-            sr_draw_text_shadow(px, W, H, lx, ly - 10,
+            sr_draw_text_shadow(px, W, H, bx + 4, by - 12,
                                 ship->officers[o].name, 0xFF4444FF, shadow);
             break;
         }

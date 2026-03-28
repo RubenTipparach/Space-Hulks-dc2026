@@ -173,6 +173,7 @@ static void draw_title_screen(sr_framebuffer *fb_ptr) {
 
 static int last_player_gx = -1, last_player_gy = -1;
 static int current_combat_room = -1; /* ship room index of current combat */
+static bool console_combat = false;  /* true if combat was triggered by console sabotage */
 
 static void game_init_ship(void) {
     /* Generate ship based on current floor as difficulty */
@@ -217,7 +218,9 @@ static void handle_combat_end(void) {
     if (current_ship.initialized) {
         if (combat.player_won && current_combat_room >= 0) {
             current_ship.rooms[current_combat_room].cleared = true;
-            ship_damage_subsystem(&current_ship, current_combat_room, 5);
+            /* Console sabotage deals heavy subsystem damage */
+            int sub_dmg = console_combat ? 10 : 3;
+            ship_damage_subsystem(&current_ship, current_combat_room, sub_dmg);
 
             for (int o = 0; o < current_ship.officer_count; o++) {
                 if (current_ship.officers[o].room_idx == current_combat_room &&
@@ -228,6 +231,7 @@ static void handle_combat_end(void) {
             }
             ship_check_missions(&current_ship);
         }
+        console_combat = false;
 
         if (!combat.player_won) {
             g_player.hp = g_player.hp_max / 2;
@@ -267,6 +271,67 @@ static void handle_combat_end(void) {
         current_combat_room = -1;
     }
     app_state = STATE_RUNNING;
+    game_save();
+}
+
+/* ── Console sabotage (interact with room subsystem) ────────────── */
+
+static void try_console_sabotage(void) {
+    if (!current_ship.initialized || !current_ship.boarding_active) return;
+
+    dng_player *p = &dng_state.player;
+    int local_room = dng_room_at(dng_state.dungeon, p->gx, p->gy);
+    if (local_room < 0 || local_room >= dng_state.dungeon->room_count) return;
+
+    int sr_idx = dng_state.dungeon->room_ship_idx[local_room];
+    if (sr_idx < 0 || sr_idx >= current_ship.room_count) return;
+
+    ship_room *rm = &current_ship.rooms[sr_idx];
+
+    /* Can only sabotage rooms with active subsystems */
+    if (rm->subsystem_hp_max <= 0 || rm->subsystem_hp <= 0) {
+        /* Cargo rooms: search for artifacts */
+        if (rm->type == ROOM_CARGO && !rm->cleared) {
+            rm->cleared = true;
+            ship_check_missions(&current_ship);
+        }
+        return;
+    }
+
+    /* Trigger automated defense combat */
+    current_combat_room = sr_idx;
+    console_combat = true;
+
+    /* Automated defenses: 1-2 enemies scaled to room importance */
+    combat_init(&combat, selected_class, dng_state.current_floor, 0);
+
+    /* Override with defense drones based on room type */
+    int num_drones = 1;
+    int drone_type = ENEMY_LURKER;
+    switch (rm->type) {
+        case ROOM_BRIDGE:  num_drones = 2; drone_type = ENEMY_HIVEGUARD; break;
+        case ROOM_REACTOR: num_drones = 2; drone_type = ENEMY_SPITTER; break;
+        case ROOM_WEAPONS: num_drones = 1; drone_type = ENEMY_BRUTE; break;
+        case ROOM_ENGINES: num_drones = 1; drone_type = ENEMY_SPITTER; break;
+        case ROOM_SHIELDS: num_drones = 1; drone_type = ENEMY_BRUTE; break;
+        default: break;
+    }
+
+    combat.enemy_count = num_drones;
+    for (int i = 0; i < num_drones; i++) {
+        const enemy_template *tmpl = &enemy_templates[drone_type];
+        combat.enemies[i].type = drone_type;
+        combat.enemies[i].hp = tmpl->hp_max;
+        combat.enemies[i].hp_max = tmpl->hp_max;
+        combat.enemies[i].attack_range = tmpl->attack_range;
+        combat.enemies[i].damage = tmpl->damage;
+        combat.enemies[i].ranged = tmpl->ranged;
+        combat.enemies[i].flash_timer = 0;
+        combat.enemies[i].alive = true;
+    }
+
+    ship_tick_turn(&current_ship);
+    app_state = STATE_COMBAT;
     game_save();
 }
 
@@ -875,6 +940,15 @@ static void event(const sapp_event *ev) {
     /* ── Mouse click / touch began → tap handling ────────────── */
     if (ev->type == SAPP_EVENTTYPE_MOUSE_DOWN && ev->mouse_button == SAPP_MOUSEBUTTON_LEFT) {
         if (app_state == STATE_RUNNING) {
+            /* Check if tapping the console/sabotage button area */
+            float fx, fy; screen_to_fb(ev->mouse_x, ev->mouse_y, &fx, &fy);
+            int bw = 140, bh = 40;
+            int cbx = FB_WIDTH / 2 - bw / 2;
+            int cby = FB_HEIGHT - bh - 68;
+            if (fx >= cbx && fx <= cbx + bw && fy >= cby + 24 && fy <= cby + bh) {
+                try_console_sabotage();
+                if (app_state == STATE_COMBAT) return;
+            }
             dng_touch_began(ev->mouse_x, ev->mouse_y, now_time);
         } else {
             handle_screen_tap(ev->mouse_x, ev->mouse_y);
@@ -884,6 +958,14 @@ static void event(const sapp_event *ev) {
     if (ev->type == SAPP_EVENTTYPE_TOUCHES_BEGAN && ev->num_touches > 0) {
         float sx = ev->touches[0].pos_x, sy = ev->touches[0].pos_y;
         if (app_state == STATE_RUNNING) {
+            float fx, fy; screen_to_fb(sx, sy, &fx, &fy);
+            int bw = 140, bh = 40;
+            int cbx = FB_WIDTH / 2 - bw / 2;
+            int cby = FB_HEIGHT - bh - 68;
+            if (fx >= cbx && fx <= cbx + bw && fy >= cby + 24 && fy <= cby + bh) {
+                try_console_sabotage();
+                if (app_state == STATE_COMBAT) return;
+            }
             dng_touch_began(sx, sy, now_time);
         } else {
             handle_screen_tap(sx, sy);
@@ -1065,6 +1147,11 @@ static void event(const sapp_event *ev) {
                 dng_state.player.dir = (dng_state.player.dir + 1) % 4;
                 dng_state.player.target_angle += 0.25f;
             }
+            break;
+        case SAPP_KEYCODE_SPACE:
+        case SAPP_KEYCODE_ENTER:
+            if (dng_play_state == DNG_STATE_PLAYING)
+                try_console_sabotage();
             break;
         default: break;
     }
