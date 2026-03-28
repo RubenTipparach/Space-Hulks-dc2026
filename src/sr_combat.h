@@ -28,6 +28,17 @@ static const uint32_t card_colors[] = {
     0xFF22CCCC,  /* melee - yellow */
 };
 
+/* Card target types */
+enum { TARGET_ENEMY, TARGET_ALL_ENEMIES, TARGET_SELF };
+
+static const int card_targets[] = {
+    TARGET_SELF,          /* SHIELD - targets self */
+    TARGET_ENEMY,         /* SHOOT - targets one enemy */
+    TARGET_ALL_ENEMIES,   /* BURST - targets all enemies */
+    TARGET_SELF,          /* MOVE - targets self */
+    TARGET_ENEMY,         /* MELEE - targets one enemy */
+};
+
 /* ── Character classes ───────────────────────────────────────────── */
 
 enum { CLASS_SCOUT, CLASS_MARINE };
@@ -118,6 +129,12 @@ typedef struct {
     int anim_timer;       /* for animations */
     int message_timer;
     char message[64];
+
+    /* Drag state */
+    bool dragging;
+    int drag_card;         /* index in hand being dragged */
+    float drag_x, drag_y;  /* current drag position (framebuffer coords) */
+    float drag_start_x, drag_start_y;
 
     /* Result */
     bool combat_over;
@@ -437,58 +454,117 @@ static void combat_card_rect(const combat_state *cs, int i, int *ox, int *oy) {
     if (i == cs->cursor && cs->phase == CPHASE_PLAYER_TURN) *oy -= 6;
 }
 
-/* ── Touch input ─────────────────────────────────────────────────── */
+/* ── Touch drag input (Slay the Spire style) ─────────────────────── */
 
-static bool combat_handle_tap(combat_state *cs, float fx, float fy) {
-    /* Result screen — tap anywhere to continue */
-    if (cs->phase == CPHASE_RESULT) return true; /* handled in sr_main.c */
+static void combat_touch_began(combat_state *cs, float fx, float fy) {
+    if (cs->phase == CPHASE_RESULT) return;
+    if (cs->phase != CPHASE_PLAYER_TURN) return;
 
-    if (cs->phase != CPHASE_PLAYER_TURN) return false;
-
-    /* PLAY button */
-    if (fx >= BTN_PLAY_X && fx <= BTN_PLAY_X + BTN_PLAY_W &&
-        fy >= BTN_PLAY_Y && fy <= BTN_PLAY_Y + BTN_PLAY_H) {
-        combat_action_play(cs);
-        return true;
-    }
-
-    /* END TURN button */
-    if (fx >= BTN_END_X && fx <= BTN_END_X + BTN_END_W &&
-        fy >= BTN_END_Y && fy <= BTN_END_Y + BTN_END_H) {
-        combat_action_end_turn(cs);
-        return true;
-    }
-
-    /* Tap on a card — select it, tap again to play */
+    /* Check if tapping a card */
     for (int i = 0; i < cs->hand_count; i++) {
         int cx, cy;
         combat_card_rect(cs, i, &cx, &cy);
         if (fx >= cx && fx < cx + CARD_W && fy >= cy && fy < cy + CARD_H) {
-            if (cs->cursor == i) {
-                /* Already selected — play it */
-                combat_action_play(cs);
-            } else {
-                cs->cursor = i;
-            }
-            return true;
+            cs->dragging = true;
+            cs->drag_card = i;
+            cs->cursor = i;
+            cs->drag_x = fx;
+            cs->drag_y = fy;
+            cs->drag_start_x = fx;
+            cs->drag_start_y = fy;
+            return;
         }
     }
 
-    /* Tap on an enemy — target it */
+    /* Check END TURN button */
+    if (fx >= BTN_END_X && fx <= BTN_END_X + BTN_END_W &&
+        fy >= BTN_END_Y && fy <= BTN_END_Y + BTN_END_H) {
+        combat_action_end_turn(cs);
+        return;
+    }
+
+    /* Tap on enemy to target */
     if (cs->enemy_count > 0) {
         int spacing = FB_WIDTH / (cs->enemy_count + 1);
         for (int i = 0; i < cs->enemy_count; i++) {
             if (!cs->enemies[i].alive) continue;
             int ecx = spacing * (i + 1);
-            /* Hit area: 48x48 sprite area */
-            if (fx >= ecx - 24 && fx <= ecx + 24 && fy >= 10 && fy <= 80) {
+            if (fx >= ecx - 24 && fx <= ecx + 24 && fy >= 10 && fy <= 90) {
                 cs->target = i;
-                return true;
+                return;
             }
         }
     }
+}
 
-    return false;
+static void combat_touch_moved(combat_state *cs, float fx, float fy) {
+    if (!cs->dragging) return;
+    cs->drag_x = fx;
+    cs->drag_y = fy;
+}
+
+static void combat_touch_ended(combat_state *cs, float fx, float fy) {
+    if (cs->phase == CPHASE_RESULT) return;
+
+    if (!cs->dragging) return;
+    cs->dragging = false;
+
+    int card = cs->hand[cs->drag_card];
+    int target_type = card_targets[card];
+    float dy = cs->drag_start_y - fy;  /* positive = dragged upward */
+
+    /* Must drag upward at least 30px to play */
+    if (dy < 30.0f) return;
+
+    if (target_type == TARGET_SELF) {
+        /* Shield/Move: just drag upward to play on self */
+        combat_play_card(cs, cs->drag_card);
+        if (combat_all_enemies_dead(cs)) {
+            cs->phase = CPHASE_RESULT;
+            cs->player_won = true;
+            cs->combat_over = true;
+            combat_set_message(cs, "VICTORY!");
+        }
+    } else if (target_type == TARGET_ALL_ENEMIES) {
+        /* Burst: drag into enemy area (top half) */
+        if (fy < 130.0f) {
+            combat_play_card(cs, cs->drag_card);
+            if (combat_all_enemies_dead(cs)) {
+                cs->phase = CPHASE_RESULT;
+                cs->player_won = true;
+                cs->combat_over = true;
+                combat_set_message(cs, "VICTORY!");
+            }
+        }
+    } else {
+        /* Shoot/Melee: drag onto a specific enemy */
+        int hit_enemy = -1;
+        int spacing = FB_WIDTH / (cs->enemy_count + 1);
+        for (int i = 0; i < cs->enemy_count; i++) {
+            if (!cs->enemies[i].alive) continue;
+            int ecx = spacing * (i + 1);
+            if (fx >= ecx - 30 && fx <= ecx + 30 && fy < 130.0f) {
+                hit_enemy = i;
+                break;
+            }
+        }
+        if (hit_enemy >= 0) {
+            cs->target = hit_enemy;
+            combat_play_card(cs, cs->drag_card);
+            if (combat_all_enemies_dead(cs)) {
+                cs->phase = CPHASE_RESULT;
+                cs->player_won = true;
+                cs->combat_over = true;
+                combat_set_message(cs, "VICTORY!");
+            }
+        }
+    }
+}
+
+static bool combat_handle_tap(combat_state *cs, float fx, float fy) {
+    if (cs->phase == CPHASE_RESULT) return true;
+    combat_touch_began(cs, fx, fy);
+    return true;
 }
 
 /* ── Keyboard input ──────────────────────────────────────────────── */
@@ -738,6 +814,66 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
             }
             if (card == CARD_BURST) {
                 sr_draw_text_shadow(px, W, H, cx + 4, cy + 30, "HIT ALL", 0xFF5588FF, shadow);
+            }
+        }
+    }
+
+    /* ── Drag visualization ───────────────────────────────────── */
+    if (combat.dragging && combat.drag_card < combat.hand_count) {
+        int card = combat.hand[combat.drag_card];
+        int target_type = card_targets[card];
+
+        /* Draw line from card to drag position */
+        int cx, cy;
+        combat_card_rect(&combat, combat.drag_card, &cx, &cy);
+        int line_x0 = cx + CARD_W / 2;
+        int line_y0 = cy;
+        int line_x1 = (int)combat.drag_x;
+        int line_y1 = (int)combat.drag_y;
+
+        /* Simple line using Bresenham */
+        {
+            int dx = line_x1 - line_x0; if (dx < 0) dx = -dx;
+            int ddy = line_y1 - line_y0; if (ddy < 0) ddy = -ddy;
+            int sx2 = line_x0 < line_x1 ? 1 : -1;
+            int sy2 = line_y0 < line_y1 ? 1 : -1;
+            int err = dx - ddy;
+            int lx = line_x0, ly = line_y0;
+            uint32_t line_col = card_colors[card] | 0xFF000000;
+            for (int step = 0; step < 500; step++) {
+                if (lx >= 0 && lx < W && ly >= 0 && ly < H)
+                    px[ly * W + lx] = line_col;
+                if (lx == line_x1 && ly == line_y1) break;
+                int e2 = 2 * err;
+                if (e2 > -ddy) { err -= ddy; lx += sx2; }
+                if (e2 < dx) { err += dx; ly += sy2; }
+            }
+        }
+
+        /* Draw targeting reticle at drag position */
+        uint32_t ret_col = 0xFFFFFFFF;
+        int rx = line_x1, ry = line_y1;
+        combat_draw_rect_outline(px, W, H, rx - 6, ry - 6, 12, 12, ret_col);
+
+        /* Highlight valid drop zone */
+        if (target_type == TARGET_SELF) {
+            /* Highlight player area */
+            combat_draw_rect_outline(px, W, H, 4, 136, 80, 80, 0xFF44FF44);
+            sr_draw_text_shadow(px, W, H, 12, 220, "DROP ON SELF", 0xFF44FF44, shadow);
+        } else if (target_type == TARGET_ALL_ENEMIES) {
+            /* Highlight all enemies zone */
+            if (combat.drag_y < 130.0f)
+                combat_draw_rect_outline(px, W, H, 10, 10, W - 20, 120, 0xFF5588FF);
+            sr_draw_text_shadow(px, W, H, W/2 - 35, 95, "HIT ALL", 0xFF5588FF, shadow);
+        } else {
+            /* Highlight targeted enemy */
+            int spacing = W / (combat.enemy_count + 1);
+            for (int i = 0; i < combat.enemy_count; i++) {
+                if (!combat.enemies[i].alive) continue;
+                int ecx = spacing * (i + 1);
+                if (combat.drag_x >= ecx - 30 && combat.drag_x <= ecx + 30 && combat.drag_y < 130.0f) {
+                    combat_draw_rect_outline(px, W, H, ecx - 26, 14, 52, 84, yellow);
+                }
             }
         }
     }

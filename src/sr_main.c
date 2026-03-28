@@ -50,7 +50,8 @@ static void check_random_encounter(void) {
     if (p->gx != last_player_gx || p->gy != last_player_gy) {
         last_player_gx = p->gx;
         last_player_gy = p->gy;
-        if (dng_rng_int(100) < ENCOUNTER_CHANCE_PCT) {
+        if (dng_state.dungeon->aliens[p->gy][p->gx] != 0) {
+            dng_state.dungeon->aliens[p->gy][p->gx] = 0;
             combat_init(&combat, selected_class, dng_state.current_floor);
             app_state = STATE_COMBAT;
         }
@@ -528,7 +529,7 @@ static void handle_screen_tap(float sx, float sy) {
             app_state = STATE_RUNNING;
             return;
         }
-        combat_handle_tap(&combat, fx, fy);
+        combat_touch_began(&combat, fx, fy);
         return;
     }
 }
@@ -560,20 +561,36 @@ static void event(const sapp_event *ev) {
     /* ── Mouse move / touch move ─────────────────────────────── */
     if (ev->type == SAPP_EVENTTYPE_MOUSE_MOVE) {
         if (app_state == STATE_RUNNING) dng_touch_moved(ev->mouse_x, ev->mouse_y);
+        else if (app_state == STATE_COMBAT) {
+            float fx, fy; screen_to_fb(ev->mouse_x, ev->mouse_y, &fx, &fy);
+            combat_touch_moved(&combat, fx, fy);
+        }
         return;
     }
     if (ev->type == SAPP_EVENTTYPE_TOUCHES_MOVED && ev->num_touches > 0) {
         if (app_state == STATE_RUNNING) dng_touch_moved(ev->touches[0].pos_x, ev->touches[0].pos_y);
+        else if (app_state == STATE_COMBAT) {
+            float fx, fy; screen_to_fb(ev->touches[0].pos_x, ev->touches[0].pos_y, &fx, &fy);
+            combat_touch_moved(&combat, fx, fy);
+        }
         return;
     }
 
     /* ── Mouse up / touch end ────────────────────────────────── */
     if (ev->type == SAPP_EVENTTYPE_MOUSE_UP && ev->mouse_button == SAPP_MOUSEBUTTON_LEFT) {
         if (app_state == STATE_RUNNING) dng_touch_ended(ev->mouse_x, ev->mouse_y, now_time);
+        else if (app_state == STATE_COMBAT) {
+            float fx, fy; screen_to_fb(ev->mouse_x, ev->mouse_y, &fx, &fy);
+            combat_touch_ended(&combat, fx, fy);
+        }
         return;
     }
     if (ev->type == SAPP_EVENTTYPE_TOUCHES_ENDED && ev->num_touches > 0) {
         if (app_state == STATE_RUNNING) dng_touch_ended(ev->touches[0].pos_x, ev->touches[0].pos_y, now_time);
+        else if (app_state == STATE_COMBAT) {
+            float fx, fy; screen_to_fb(ev->touches[0].pos_x, ev->touches[0].pos_y, &fx, &fy);
+            combat_touch_ended(&combat, fx, fy);
+        }
         return;
     }
     if (ev->type == SAPP_EVENTTYPE_TOUCHES_CANCELLED) {

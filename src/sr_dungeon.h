@@ -52,6 +52,8 @@ typedef struct {
     bool has_up;
     int down_gx, down_gy, down_dir;         /* down-stairs (-1 if none) */
     bool has_down;
+    /* Alien entities (for FPS view) */
+    uint8_t aliens[DNG_GRID_H + 1][DNG_GRID_W + 1]; /* 0=none, 1-4=enemy type (ENEMY_LURKER+1 etc) */
 } sr_dungeon;
 
 /* ── Simple RNG for dungeon generation ───────────────────────────── */
@@ -227,6 +229,21 @@ static void dng_generate(sr_dungeon *d, int w, int h, bool has_down_stairs, bool
     if (has_down_stairs) {
         dng_find_down_stairs(d, &rooms[0], &d->down_gx, &d->down_gy);
         d->down_dir = dng_rng_int(4);
+    }
+
+    /* Place alien entities in open cells (not spawn, not stairs) */
+    for (int i = 1; i < num_rooms; i++) {
+        int aliens_in_room = 1 + dng_rng_int(2);
+        for (int a = 0; a < aliens_in_room; a++) {
+            int ax = rooms[i].x + dng_rng_int(rooms[i].w);
+            int ay = rooms[i].y + dng_rng_int(rooms[i].h);
+            if (ax < 1 || ax > w || ay < 1 || ay > h) continue;
+            if (d->map[ay][ax] != 0) continue;
+            if (ax == d->spawn_gx && ay == d->spawn_gy) continue;
+            if (d->has_up && ax == d->stairs_gx && ay == d->stairs_gy) continue;
+            if (d->has_down && ax == d->down_gx && ay == d->down_gy) continue;
+            d->aliens[ay][ax] = 1 + (uint8_t)dng_rng_int(4);
+        }
     }
 }
 

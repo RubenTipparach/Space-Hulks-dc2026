@@ -489,6 +489,65 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
             }
         }
     }
+
+    /* ── Alien billboards ───────────────────────────────────────── */
+    for (int gy = gy0; gy <= gy1; gy++) {
+        for (int gx = gx0; gx <= gx1; gx++) {
+            if (!dng_vis[gy][gx]) continue;
+            uint8_t alien_type = d->aliens[gy][gx];
+            if (alien_type == 0) continue;
+
+            /* World position: center of cell, at floor level */
+            float wx = (gx - 0.5f) * DNG_CELL_SIZE;
+            float wy = -DNG_HALF_CELL + 0.5f;  /* slightly above floor */
+            float wz = (gy - 0.5f) * DNG_CELL_SIZE;
+
+            /* Project to screen using MVP */
+            float v[4] = { wx, wy, wz, 1.0f };
+            float clip[4];
+            clip[0] = mvp.m[0]*v[0] + mvp.m[4]*v[1] + mvp.m[8]*v[2] + mvp.m[12]*v[3];
+            clip[1] = mvp.m[1]*v[0] + mvp.m[5]*v[1] + mvp.m[9]*v[2] + mvp.m[13]*v[3];
+            clip[2] = mvp.m[2]*v[0] + mvp.m[6]*v[1] + mvp.m[10]*v[2] + mvp.m[14]*v[3];
+            clip[3] = mvp.m[3]*v[0] + mvp.m[7]*v[1] + mvp.m[11]*v[2] + mvp.m[15]*v[3];
+
+            /* Behind camera or too close */
+            if (clip[3] <= 0.1f) continue;
+
+            float ndcx = clip[0] / clip[3];
+            float ndcy = clip[1] / clip[3];
+
+            /* NDC to screen */
+            int sx = (int)((ndcx * 0.5f + 0.5f) * FB_WIDTH);
+            int sy = (int)((0.5f - ndcy * 0.5f) * FB_HEIGHT);
+
+            /* Skip if off-screen */
+            if (sx < -32 || sx > FB_WIDTH + 32 || sy < -32 || sy > FB_HEIGHT + 32) continue;
+
+            /* Scale based on distance */
+            float dist = clip[3];
+            int sprite_scale = (int)(3.0f / dist + 0.5f);
+            if (sprite_scale < 1) sprite_scale = 1;
+            if (sprite_scale > 4) sprite_scale = 4;
+
+            int sprite_size = SPR_W * sprite_scale;
+            int draw_x = sx - sprite_size / 2;
+            int draw_y = sy - sprite_size;  /* bottom of sprite at feet position */
+
+            /* Depth check at center pixel */
+            if (sx >= 0 && sx < FB_WIDTH && sy >= 0 && sy < FB_HEIGHT) {
+                float sprite_depth = clip[2] / clip[3];
+                if (sprite_depth > fb_ptr->depth[sy * FB_WIDTH + sx]) continue;
+            }
+
+            /* Draw the sprite */
+            int type_idx = alien_type - 1;
+            if (type_idx >= 0 && type_idx < 4) {
+                const uint32_t *sprite = spr_enemy_table[type_idx];
+                spr_draw(fb_ptr->color, FB_WIDTH, FB_HEIGHT,
+                         sprite, draw_x, draw_y, sprite_scale);
+            }
+        }
+    }
 }
 
 /* ── Minimap ─────────────────────────────────────────────────────── */

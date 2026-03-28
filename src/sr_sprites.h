@@ -48,6 +48,26 @@ static void spr_draw_flash(uint32_t *px, int fb_w, int fb_h,
     }
 }
 
+/* Draw a sprite from an sr_texture (PNG-loaded) at framebuffer position, with scaling */
+static void spr_draw_tex(uint32_t *px, int fb_w, int fb_h,
+                         const sr_texture *tex, int dx, int dy, int scale) {
+    for (int sy = 0; sy < tex->height; sy++) {
+        for (int sx = 0; sx < tex->width; sx++) {
+            uint32_t c = tex->pixels[sy * tex->width + sx];
+            uint8_t a = (c >> 24) & 0xFF;
+            if (a < 128) continue;  /* skip transparent */
+            for (int j = 0; j < scale; j++) {
+                for (int i = 0; i < scale; i++) {
+                    int px2 = dx + sx * scale + i;
+                    int py2 = dy + sy * scale + j;
+                    if (px2 >= 0 && px2 < fb_w && py2 >= 0 && py2 < fb_h)
+                        px[py2 * fb_w + px2] = c;
+                }
+            }
+        }
+    }
+}
+
 /* ── Color shortcuts ─────────────────────────────────────────────── */
 
 #define _BK 0xFF000000   /* black */
