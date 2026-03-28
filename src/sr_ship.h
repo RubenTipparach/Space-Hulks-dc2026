@@ -618,7 +618,7 @@ static void draw_room_label(uint32_t *px, int W, int H,
     /* Room name banner at bottom center */
     int bw = 140, bh = 40;
     int bx = W / 2 - bw / 2;
-    int by = H - bh - 68; /* above cards */
+    int by = H - bh - 4; /* bottom of screen */
 
     /* Semi-transparent background */
     for (int ry = by; ry < by + bh && ry < H; ry++)

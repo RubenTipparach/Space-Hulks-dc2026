@@ -944,7 +944,7 @@ static void event(const sapp_event *ev) {
             float fx, fy; screen_to_fb(ev->mouse_x, ev->mouse_y, &fx, &fy);
             int bw = 140, bh = 40;
             int cbx = FB_WIDTH / 2 - bw / 2;
-            int cby = FB_HEIGHT - bh - 68;
+            int cby = FB_HEIGHT - bh - 4;
             if (fx >= cbx && fx <= cbx + bw && fy >= cby + 24 && fy <= cby + bh) {
                 try_console_sabotage();
                 if (app_state == STATE_COMBAT) return;
@@ -961,7 +961,7 @@ static void event(const sapp_event *ev) {
             float fx, fy; screen_to_fb(sx, sy, &fx, &fy);
             int bw = 140, bh = 40;
             int cbx = FB_WIDTH / 2 - bw / 2;
-            int cby = FB_HEIGHT - bh - 68;
+            int cby = FB_HEIGHT - bh - 4;
             if (fx >= cbx && fx <= cbx + bw && fy >= cby + 24 && fy <= cby + bh) {
                 try_console_sabotage();
                 if (app_state == STATE_COMBAT) return;
