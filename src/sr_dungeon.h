@@ -54,6 +54,11 @@ typedef struct {
     bool has_down;
     /* Alien entities (for FPS view) */
     uint8_t aliens[DNG_GRID_H + 1][DNG_GRID_W + 1]; /* 0=none, 1-4=enemy type (ENEMY_LURKER+1 etc) */
+    /* Room info for ship system */
+    int room_count;
+    int room_cx[12], room_cy[12];  /* room centers */
+    int room_x[12], room_y[12], room_w[12], room_h[12]; /* room bounds */
+    int room_ship_idx[12];         /* index into ship_room array (-1 = none) */
 } sr_dungeon;
 
 /* ── Simple RNG for dungeon generation ───────────────────────────── */
@@ -231,6 +236,18 @@ static void dng_generate(sr_dungeon *d, int w, int h, bool has_down_stairs, bool
         d->down_dir = dng_rng_int(4);
     }
 
+    /* Store room info for ship system */
+    d->room_count = num_rooms;
+    for (int i = 0; i < num_rooms; i++) {
+        d->room_cx[i] = rooms[i].cx;
+        d->room_cy[i] = rooms[i].cy;
+        d->room_x[i] = rooms[i].x;
+        d->room_y[i] = rooms[i].y;
+        d->room_w[i] = rooms[i].w;
+        d->room_h[i] = rooms[i].h;
+        d->room_ship_idx[i] = -1; /* set by ship system if applicable */
+    }
+
     /* Place alien entities in open cells (not spawn, not stairs) */
     for (int i = 1; i < num_rooms; i++) {
         int aliens_in_room = 1 + dng_rng_int(2);
@@ -247,6 +264,18 @@ static void dng_generate(sr_dungeon *d, int w, int h, bool has_down_stairs, bool
             d->aliens[ay][ax] = 1 + (uint8_t)dng_rng_int(max_type);
         }
     }
+}
+
+/* ── Room lookup ─────────────────────────────────────────────────── */
+
+/* Find which room index a grid position belongs to (-1 if none) */
+static int dng_room_at(const sr_dungeon *d, int gx, int gy) {
+    for (int i = 0; i < d->room_count; i++) {
+        if (gx >= d->room_x[i] && gx < d->room_x[i] + d->room_w[i] &&
+            gy >= d->room_y[i] && gy < d->room_y[i] + d->room_h[i])
+            return i;
+    }
+    return -1;
 }
 
 /* ── Player ──────────────────────────────────────────────────────── */

@@ -569,9 +569,25 @@ static void draw_dungeon_minimap(sr_framebuffer *fb_ptr) {
             if (d->map[y][x] == 1) continue;
             int px0 = mx + (x - 1) * scale;
             int py0 = my + (y - 1) * scale;
+            /* Color by ship room type if available */
+            uint32_t cell_col = 0xFF444444;
+            if (current_ship.initialized && current_ship.boarding_active) {
+                int ri = dng_room_at(d, x, y);
+                if (ri >= 0 && ri < d->room_count && d->room_ship_idx[ri] >= 0) {
+                    int sr = d->room_ship_idx[ri];
+                    if (sr < current_ship.room_count) {
+                        /* Dim the room type color for minimap */
+                        uint32_t rc = room_type_colors[current_ship.rooms[sr].type];
+                        int rr = ((rc >> 0) & 0xFF) / 3;
+                        int rg = ((rc >> 8) & 0xFF) / 3;
+                        int rb = ((rc >> 16) & 0xFF) / 3;
+                        cell_col = 0xFF000000 | (rb << 16) | (rg << 8) | rr;
+                    }
+                }
+            }
             for (int dy = 0; dy < scale; dy++)
                 for (int dx = 0; dx < scale; dx++)
-                    minimap_pixel(px, px0 + dx, py0 + dy, 0xFF444444);
+                    minimap_pixel(px, px0 + dx, py0 + dy, cell_col);
         }
     }
 
