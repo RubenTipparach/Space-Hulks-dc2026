@@ -51,13 +51,15 @@ static int    screenshot_counter;
 
 /* ── App state ─────────────────────────────────────────────────── */
 
-enum { STATE_CLASS_SELECT, STATE_RUNNING, STATE_COMBAT };
-static int app_state = STATE_CLASS_SELECT;
+enum { STATE_TITLE, STATE_CLASS_SELECT, STATE_RUNNING, STATE_COMBAT };
+static int app_state = STATE_TITLE;
 static int selected_class = 0;  /* 0=scout, 1=marine */
 static int class_select_cursor = 0;
+static int title_cursor = 0;
+static bool save_exists = false;
 
-/* Combat encounter chance (checked on each step) */
-#define ENCOUNTER_CHANCE_PCT 15
+#define SAVE_FILE "spacehulks.sav"
+#define SAVE_MAGIC 0x534B4C48  /* "HLKS" */
 
 /* ── Simple RNG (deterministic) ─────────────────────────────────── */
 

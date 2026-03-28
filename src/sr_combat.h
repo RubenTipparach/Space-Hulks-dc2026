@@ -533,6 +533,7 @@ static void combat_update(combat_state *cs) {
         } else {
             combat_enemy_turn(cs);
             if (cs->player_hp <= 0) {
+                g_player.hp = 0;
                 cs->phase = CPHASE_RESULT;
                 cs->player_won = false;
                 cs->combat_over = true;
@@ -564,6 +565,10 @@ static void combat_action_play(combat_state *cs) {
     if (cs->phase != CPHASE_PLAYER_TURN || cs->hand_count <= 0) return;
     combat_play_card(cs, cs->cursor);
     combat_check_victory(cs);
+    /* Auto-end turn when hand is empty */
+    if (cs->phase == CPHASE_PLAYER_TURN && cs->hand_count <= 0) {
+        combat_action_end_turn(cs);
+    }
 }
 
 static void combat_action_end_turn(combat_state *cs) {
@@ -687,23 +692,16 @@ static void combat_touch_ended(combat_state *cs, float fx, float fy) {
     /* Must drag upward at least 30px to play */
     if (dy < 30.0f) return;
 
+    bool played = false;
     if (target_type == TARGET_SELF) {
-        /* Shield/Move: just drag upward to play on self */
         combat_play_card(cs, cs->drag_card);
-        combat_check_victory(cs);
+        played = true;
     } else if (target_type == TARGET_ALL_ENEMIES) {
-        /* Burst: drag into enemy area (top half) */
         if (fy < 130.0f) {
             combat_play_card(cs, cs->drag_card);
-            if (combat_all_enemies_dead(cs)) {
-                cs->phase = CPHASE_RESULT;
-                cs->player_won = true;
-                cs->combat_over = true;
-                combat_set_message(cs, "VICTORY!");
-            }
+            played = true;
         }
     } else {
-        /* Shoot/Melee: drag onto a specific enemy */
         int hit_enemy = -1;
         int spacing = FB_WIDTH / (cs->enemy_count + 1);
         for (int i = 0; i < cs->enemy_count; i++) {
@@ -717,13 +715,14 @@ static void combat_touch_ended(combat_state *cs, float fx, float fy) {
         if (hit_enemy >= 0) {
             cs->target = hit_enemy;
             combat_play_card(cs, cs->drag_card);
-            if (combat_all_enemies_dead(cs)) {
-                cs->phase = CPHASE_RESULT;
-                cs->player_won = true;
-                cs->combat_over = true;
-                combat_set_message(cs, "VICTORY!");
-            }
+            played = true;
         }
+    }
+    if (played) {
+        combat_check_victory(cs);
+        /* Auto-end turn when hand is empty */
+        if (cs->phase == CPHASE_PLAYER_TURN && cs->hand_count <= 0)
+            combat_action_end_turn(cs);
     }
 }
 

@@ -43,6 +43,128 @@
 #include "sr_menu.h"
 #include "sr_mobile_input.h"
 
+/* ── Save / Load ─────────────────────────────────────────────────── */
+
+typedef struct {
+    uint32_t magic;
+    int selected_class;
+    int current_floor;
+    int player_gx, player_gy, player_dir;
+    /* persistent player */
+    int hp, hp_max;
+    int persistent_deck_count;
+    int persistent_deck[COMBAT_DECK_MAX];
+    /* dungeon RNG seed */
+    uint32_t seed_base;
+    /* combat state (if in combat) */
+    int in_combat;
+} save_data;
+
+static void game_save(void) {
+    save_data sd;
+    memset(&sd, 0, sizeof(sd));
+    sd.magic = SAVE_MAGIC;
+    sd.selected_class = selected_class;
+    sd.current_floor = dng_state.current_floor;
+    sd.player_gx = dng_state.player.gx;
+    sd.player_gy = dng_state.player.gy;
+    sd.player_dir = dng_state.player.dir;
+    sd.hp = g_player.hp;
+    sd.hp_max = g_player.hp_max;
+    sd.persistent_deck_count = g_player.persistent_deck_count;
+    memcpy(sd.persistent_deck, g_player.persistent_deck,
+           sizeof(int) * g_player.persistent_deck_count);
+    sd.seed_base = dng_state.seed_base;
+    sd.in_combat = (app_state == STATE_COMBAT) ? 1 : 0;
+
+    FILE *f = fopen(SAVE_FILE, "wb");
+    if (f) {
+        fwrite(&sd, sizeof(sd), 1, f);
+        fclose(f);
+    }
+}
+
+static bool game_load(void) {
+    FILE *f = fopen(SAVE_FILE, "rb");
+    if (!f) return false;
+    save_data sd;
+    if (fread(&sd, sizeof(sd), 1, f) != 1 || sd.magic != SAVE_MAGIC) {
+        fclose(f); return false;
+    }
+    fclose(f);
+
+    selected_class = sd.selected_class;
+    player_persist_init(selected_class);
+    g_player.hp = sd.hp;
+    g_player.hp_max = sd.hp_max;
+    g_player.persistent_deck_count = sd.persistent_deck_count;
+    memcpy(g_player.persistent_deck, sd.persistent_deck,
+           sizeof(int) * sd.persistent_deck_count);
+
+    /* Regenerate dungeon with same seeds */
+    memset(&dng_state, 0, sizeof(dng_state));
+    dng_state.seed_base = sd.seed_base;
+    for (int fl = 0; fl <= sd.current_floor; fl++) {
+        bool is_last = (fl >= DNG_MAX_FLOORS - 1);
+        dng_generate(&dng_state.floors[fl], DNG_GRID_W, DNG_GRID_H,
+                     fl > 0, !is_last,
+                     dng_state.seed_base + (uint32_t)fl * 777, fl);
+        dng_state.floor_generated[fl] = true;
+    }
+    dng_state.current_floor = sd.current_floor;
+    dng_state.dungeon = &dng_state.floors[sd.current_floor];
+    dng_player_init(&dng_state.player, sd.player_gx, sd.player_gy, sd.player_dir);
+    dng_initialized = true;
+
+    return true;
+}
+
+static bool game_has_save(void) {
+    FILE *f = fopen(SAVE_FILE, "rb");
+    if (!f) return false;
+    uint32_t magic = 0;
+    bool ok = (fread(&magic, 4, 1, f) == 1 && magic == SAVE_MAGIC);
+    fclose(f);
+    return ok;
+}
+
+/* ── Title screen ────────────────────────────────────────────────── */
+
+static void draw_title_screen(sr_framebuffer *fb_ptr) {
+    int W = fb_ptr->width, H = fb_ptr->height;
+    uint32_t *px = fb_ptr->color;
+    uint32_t shadow = 0xFF000000;
+    uint32_t white = 0xFFFFFFFF;
+    uint32_t gray = 0xFF888888;
+    uint32_t yellow = 0xFF00DDDD;
+
+    for (int i = 0; i < W * H; i++) px[i] = 0xFF0D0D11;
+
+    sr_draw_text_shadow(px, W, H, W/2 - 45, 60, "SPACE HULKS", white, shadow);
+    sr_draw_text_shadow(px, W, H, W/2 - 50, 80, "DUNGEON CRAWLER", gray, shadow);
+
+    /* New Game button */
+    {
+        int bx = W/2 - 50, by = 120, bw = 100, bh = 22;
+        bool sel = (title_cursor == 0);
+        combat_draw_rect(px, W, H, bx, by, bw, bh, sel ? 0xFF222244 : 0xFF111122);
+        combat_draw_rect_outline(px, W, H, bx, by, bw, bh, sel ? yellow : gray);
+        sr_draw_text_shadow(px, W, H, bx + 22, by + 7, "NEW GAME", sel ? yellow : white, shadow);
+    }
+
+    /* Continue button */
+    {
+        int bx = W/2 - 50, by = 150, bw = 100, bh = 22;
+        bool sel = (title_cursor == 1);
+        uint32_t col = save_exists ? (sel ? yellow : white) : 0xFF444444;
+        combat_draw_rect(px, W, H, bx, by, bw, bh, sel ? 0xFF222244 : 0xFF111122);
+        combat_draw_rect_outline(px, W, H, bx, by, bw, bh, sel ? yellow : gray);
+        sr_draw_text_shadow(px, W, H, bx + 22, by + 7, "CONTINUE", col, shadow);
+        if (!save_exists)
+            sr_draw_text_shadow(px, W, H, bx + 12, by + bh + 4, "NO SAVE FOUND", 0xFF444444, shadow);
+    }
+}
+
 /* ── Track player movement for random encounters ─────────────────── */
 static int last_player_gx = -1, last_player_gy = -1;
 
@@ -51,6 +173,8 @@ static void check_random_encounter(void) {
     if (p->gx != last_player_gx || p->gy != last_player_gy) {
         last_player_gx = p->gx;
         last_player_gy = p->gy;
+        /* Auto-save on each step */
+        game_save();
         uint8_t alien = dng_state.dungeon->aliens[p->gy][p->gx];
         if (alien != 0) {
             dng_state.dungeon->aliens[p->gy][p->gx] = 0;
@@ -352,6 +476,7 @@ static void init(void) {
     timeBeginPeriod(1);
 #endif
 
+    save_exists = game_has_save();
     printf("Space Hulks initialized (%dx%d @ %dfps)\n", FB_WIDTH, FB_HEIGHT, TARGET_FPS);
 }
 
@@ -372,7 +497,9 @@ static void frame(void) {
     sr_stats_reset();
     sr_framebuffer_clear(&fb, 0xFF000000, 1.0f);
 
-    if (app_state == STATE_CLASS_SELECT) {
+    if (app_state == STATE_TITLE) {
+        draw_title_screen(&fb);
+    } else if (app_state == STATE_CLASS_SELECT) {
         draw_class_select(&fb);
     } else if (app_state == STATE_COMBAT) {
         combat_update(&combat);
@@ -499,6 +626,25 @@ static void handle_screen_tap(float sx, float sy) {
     float fx, fy;
     screen_to_fb(sx, sy, &fx, &fy);
 
+    if (app_state == STATE_TITLE) {
+        /* New Game button */
+        int bx = FB_WIDTH/2 - 50, bw = 100, bh = 22;
+        if (fx >= bx && fx <= bx + bw && fy >= 120 && fy <= 120 + bh) {
+            app_state = STATE_CLASS_SELECT;
+            return;
+        }
+        /* Continue button */
+        if (fx >= bx && fx <= bx + bw && fy >= 150 && fy <= 150 + bh && save_exists) {
+            if (game_load()) {
+                last_player_gx = dng_state.player.gx;
+                last_player_gy = dng_state.player.gy;
+                app_state = STATE_RUNNING;
+            }
+            return;
+        }
+        return;
+    }
+
     if (app_state == STATE_CLASS_SELECT) {
         /* Scout box: left quarter */
         int sb_x = FB_WIDTH/4 - 40, sb_y = 80;
@@ -540,6 +686,7 @@ static void handle_screen_tap(float sx, float sy) {
         /* Result screen — tap anywhere */
         if (combat.phase == CPHASE_RESULT) {
             app_state = STATE_RUNNING;
+            game_save();
             return;
         }
         combat_touch_began(&combat, fx, fy);
@@ -630,6 +777,33 @@ static void event(const sapp_event *ev) {
         return;
     }
 
+    /* ── Title screen ────────────────────────────────────────── */
+    if (app_state == STATE_TITLE) {
+        switch (ev->key_code) {
+            case SAPP_KEYCODE_UP:
+            case SAPP_KEYCODE_W:
+                title_cursor = 0;
+                break;
+            case SAPP_KEYCODE_DOWN:
+            case SAPP_KEYCODE_S:
+                title_cursor = 1;
+                break;
+            case SAPP_KEYCODE_ENTER:
+            case SAPP_KEYCODE_KP_ENTER:
+            case SAPP_KEYCODE_SPACE:
+                if (title_cursor == 0) {
+                    app_state = STATE_CLASS_SELECT;
+                } else if (save_exists && game_load()) {
+                    last_player_gx = dng_state.player.gx;
+                    last_player_gy = dng_state.player.gy;
+                    app_state = STATE_RUNNING;
+                }
+                break;
+            default: break;
+        }
+        return;
+    }
+
     /* ── Class selection ─────────────────────────────────────── */
     if (app_state == STATE_CLASS_SELECT) {
         switch (ev->key_code) {
@@ -662,6 +836,7 @@ static void event(const sapp_event *ev) {
         if (combat.phase == CPHASE_RESULT &&
             (ev->key_code == SAPP_KEYCODE_ENTER || ev->key_code == SAPP_KEYCODE_SPACE)) {
             app_state = STATE_RUNNING;
+            game_save();
             return;
         }
         combat_handle_key(&combat, ev->key_code);
