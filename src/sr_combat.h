@@ -161,6 +161,14 @@ typedef struct {
     int message_timer;
     char message[64];
 
+    /* Sequential enemy attack state */
+    int enemy_atk_idx;    /* which enemy is currently attacking (-1 = none) */
+    int enemy_atk_timer;  /* countdown for current enemy's wiggle+attack */
+
+    /* Player visual feedback */
+    int player_flash_timer;       /* > 0 = player flickers red (took damage) */
+    int player_shield_flash_timer;/* > 0 = blue sphere (shield absorbed) */
+
     /* Drag state */
     bool dragging;
     int drag_card;         /* index in hand being dragged */
@@ -348,8 +356,12 @@ static void combat_deal_damage_player(combat_state *cs, int dmg) {
     int absorbed = dmg < cs->player_shield ? dmg : cs->player_shield;
     cs->player_shield -= absorbed;
     dmg -= absorbed;
-    cs->player_hp -= dmg;
-    if (cs->player_hp <= 0) cs->player_hp = 0;
+    if (absorbed > 0) cs->player_shield_flash_timer = 20;
+    if (dmg > 0) {
+        cs->player_hp -= dmg;
+        if (cs->player_hp <= 0) cs->player_hp = 0;
+        cs->player_flash_timer = 16;
+    }
 }
 
 static void combat_play_card(combat_state *cs, int hand_idx) {
@@ -486,24 +498,34 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
         cs->cursor = cs->hand_count - 1;
 }
 
-/* ── Enemy turn ──────────────────────────────────────────────────── */
+/* ── Enemy turn (sequential) ─────────────────────────────────────── */
 
-static void combat_enemy_turn(combat_state *cs) {
-    for (int i = 0; i < cs->enemy_count; i++) {
+#define ENEMY_ATK_WIGGLE_FRAMES  20  /* wiggle before strike */
+#define ENEMY_ATK_HIT_FRAME      10  /* frame at which damage lands */
+#define ENEMY_ATK_TOTAL_FRAMES   30  /* total anim per enemy */
+
+/* Find next enemy that will attack (alive, not stunned, in range) */
+static int combat_next_attacker(combat_state *cs, int from) {
+    for (int i = from; i < cs->enemy_count; i++) {
         if (!cs->enemies[i].alive) continue;
-        combat_enemy *e = &cs->enemies[i];
-
-        /* Stunned enemies skip attack (flash_timer > 10 = stunned) */
-        if (e->flash_timer > 10) continue;
-
-        if (e->ranged || cs->player_distance <= 0) {
-            combat_deal_damage_player(cs, e->damage);
-            char buf[64];
-            snprintf(buf, sizeof(buf), "%s ATTACKS -%dHP",
-                     enemy_templates[e->type].name, e->damage);
-            combat_set_message(cs, buf);
-        }
+        if (cs->enemies[i].flash_timer > 10) continue; /* stunned */
+        if (cs->enemies[i].ranged || cs->player_distance <= 0)
+            return i;
     }
+    return -1; /* no more attackers */
+}
+
+/* Start the sequential enemy attack phase */
+static void combat_begin_enemy_turn(combat_state *cs) {
+    cs->enemy_atk_idx = combat_next_attacker(cs, 0);
+    if (cs->enemy_atk_idx < 0) {
+        /* No enemies can attack — skip straight to next draw phase */
+        cs->turn++;
+        cs->phase = CPHASE_DRAW;
+        cs->anim_timer = 20;
+        return;
+    }
+    cs->enemy_atk_timer = ENEMY_ATK_TOTAL_FRAMES;
 }
 
 /* ── Update ──────────────────────────────────────────────────────── */
@@ -511,6 +533,8 @@ static void combat_enemy_turn(combat_state *cs) {
 static void combat_update(combat_state *cs) {
     /* Decrement timers */
     if (cs->message_timer > 0) cs->message_timer--;
+    if (cs->player_flash_timer > 0) cs->player_flash_timer--;
+    if (cs->player_shield_flash_timer > 0) cs->player_shield_flash_timer--;
     for (int i = 0; i < cs->enemy_count; i++)
         if (cs->enemies[i].flash_timer > 0) cs->enemies[i].flash_timer--;
 
@@ -528,10 +552,8 @@ static void combat_update(combat_state *cs) {
     }
 
     if (cs->phase == CPHASE_ENEMY_TURN) {
-        if (cs->anim_timer > 0) {
-            cs->anim_timer--;
-        } else {
-            combat_enemy_turn(cs);
+        if (cs->enemy_atk_idx < 0) {
+            /* All enemies done — advance to next turn */
             if (cs->player_hp <= 0) {
                 g_player.hp = 0;
                 cs->phase = CPHASE_RESULT;
@@ -543,6 +565,29 @@ static void combat_update(combat_state *cs) {
                 cs->phase = CPHASE_DRAW;
                 cs->anim_timer = 20;
             }
+            return;
+        }
+
+        cs->enemy_atk_timer--;
+
+        /* Damage lands at the hit frame */
+        if (cs->enemy_atk_timer == ENEMY_ATK_HIT_FRAME) {
+            combat_enemy *e = &cs->enemies[cs->enemy_atk_idx];
+            combat_deal_damage_player(cs, e->damage);
+            char buf[64];
+            snprintf(buf, sizeof(buf), "%s ATTACKS -%dHP",
+                     enemy_templates[e->type].name, e->damage);
+            combat_set_message(cs, buf);
+        }
+
+        /* When this enemy's anim is done, move to next attacker */
+        if (cs->enemy_atk_timer <= 0) {
+            int next = combat_next_attacker(cs, cs->enemy_atk_idx + 1);
+            cs->enemy_atk_idx = next;
+            if (next >= 0) {
+                cs->enemy_atk_timer = ENEMY_ATK_TOTAL_FRAMES;
+            }
+            /* if next < 0, the top-of-function check handles end-of-phase next frame */
         }
     }
 }
@@ -561,6 +606,7 @@ static void combat_check_victory(combat_state *cs) {
     }
 }
 
+static void combat_action_end_turn(combat_state *cs); /* forward decl */
 static void combat_action_play(combat_state *cs) {
     if (cs->phase != CPHASE_PLAYER_TURN || cs->hand_count <= 0) return;
     combat_play_card(cs, cs->cursor);
@@ -578,7 +624,7 @@ static void combat_action_end_turn(combat_state *cs) {
     cs->hand_count = 0;
     cs->player_shield = 0;
     cs->phase = CPHASE_ENEMY_TURN;
-    cs->anim_timer = 30;
+    combat_begin_enemy_turn(cs);
 }
 
 /* ── Button layout constants (used by both render and touch) ─────── */
@@ -844,14 +890,46 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
 
             if (e->alive) {
                 const uint32_t *sprite = spr_enemy_table[e->type];
+
+                /* Wiggle offset during this enemy's attack animation */
+                int wiggle_x = 0;
+                if (combat.phase == CPHASE_ENEMY_TURN &&
+                    combat.enemy_atk_idx == i &&
+                    combat.enemy_atk_timer > ENEMY_ATK_HIT_FRAME) {
+                    /* Wiggle side-to-side before the hit */
+                    wiggle_x = ((combat.enemy_atk_timer % 4) < 2) ? 3 : -3;
+                }
+
                 if (e->flash_timer > 0 && (e->flash_timer & 2))
-                    spr_draw_flash(px, W, H, sprite, sprite_x, sprite_y, 2);
+                    spr_draw_flash(px, W, H, sprite, sprite_x + wiggle_x, sprite_y, 2);
                 else
-                    spr_draw(px, W, H, sprite, sprite_x, sprite_y, 2);
+                    spr_draw(px, W, H, sprite, sprite_x + wiggle_x, sprite_y, 2);
 
                 /* Target indicator */
                 if (i == combat.target && combat.phase == CPHASE_PLAYER_TURN) {
                     sr_draw_text_shadow(px, W, H, cx - 3, sprite_y - 10, "V", yellow, shadow);
+                }
+
+                /* Intent indicator: show planned damage during player turn */
+                if (combat.phase == CPHASE_PLAYER_TURN || combat.phase == CPHASE_DRAW) {
+                    bool can_attack = (e->ranged || combat.player_distance <= 0);
+                    bool stunned = (e->flash_timer > 10);
+                    if (can_attack && !stunned) {
+                        char intent_buf[16];
+                        snprintf(intent_buf, sizeof(intent_buf), "-%d", e->damage);
+                        /* Red sword/damage icon */
+                        sr_draw_text_shadow(px, W, H, cx - 8, sprite_y - 10,
+                                            intent_buf, 0xFF4444FF, shadow);
+                        /* Small attack icon (sword-like character) */
+                        sr_draw_text_shadow(px, W, H, cx + 6, sprite_y - 10,
+                                            "!", 0xFF4444FF, shadow);
+                    } else if (stunned) {
+                        sr_draw_text_shadow(px, W, H, cx - 10, sprite_y - 10,
+                                            "STUN", 0xFFCCCC22, shadow);
+                    } else {
+                        sr_draw_text_shadow(px, W, H, cx - 6, sprite_y - 10,
+                                            "---", 0xFF666666, shadow);
+                    }
                 }
             } else {
                 sr_draw_text_shadow(px, W, H, cx - 12, sprite_y + 12, "DEAD", 0xFF444444, shadow);
@@ -904,8 +982,61 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
     {
         const char_class *cc = &char_classes[combat.player_class];
 
-        /* Player sprite */
-        spr_draw(px, W, H, cc->sprite, 8, 140, 2);
+        /* Player sprite (flicker when hit) */
+        bool show_player = true;
+        if (combat.player_flash_timer > 0 && (combat.player_flash_timer & 2))
+            show_player = false; /* skip drawing = flicker effect */
+
+        if (show_player)
+            spr_draw(px, W, H, cc->sprite, 8, 140, 2);
+
+        /* Red tint on visible flicker frames */
+        if (combat.player_flash_timer > 0 && show_player) {
+            for (int ry = 140; ry < 140 + 32 && ry < H; ry++)
+                for (int rx = 8; rx < 8 + 32 && rx < W; rx++) {
+                    uint32_t c = px[ry * W + rx];
+                    if ((c & 0x00FFFFFF) != (0xFF0D0D11 & 0x00FFFFFF)) {
+                        /* Tint toward red */
+                        int r = (c >> 0) & 0xFF;
+                        int g = (c >> 8) & 0xFF;
+                        int b = (c >> 16) & 0xFF;
+                        r = r + (255 - r) / 2;
+                        g = g / 2;
+                        b = b / 2;
+                        px[ry * W + rx] = 0xFF000000 | (b << 16) | (g << 8) | r;
+                    }
+                }
+        }
+
+        /* Blue shield sphere when shield absorbs damage */
+        if (combat.player_shield_flash_timer > 0) {
+            int scx = 8 + 16, scy = 140 + 16; /* center of player sprite */
+            int radius = 18;
+            int alpha_fade = combat.player_shield_flash_timer * 6; /* 0..120 */
+            if (alpha_fade > 120) alpha_fade = 120;
+            for (int ry = scy - radius; ry <= scy + radius; ry++) {
+                for (int rx = scx - radius; rx <= scx + radius; rx++) {
+                    if (rx < 0 || rx >= W || ry < 0 || ry >= H) continue;
+                    int dx = rx - scx, dy = ry - scy;
+                    int dist2 = dx * dx + dy * dy;
+                    int r2 = radius * radius;
+                    if (dist2 > r2) continue;
+                    /* Only draw shell (outer 40%) for sphere look */
+                    int inner_r2 = (radius * 6 / 10) * (radius * 6 / 10);
+                    if (dist2 < inner_r2) continue;
+                    uint32_t c = px[ry * W + rx];
+                    int cr = (c >> 0) & 0xFF;
+                    int cg = (c >> 8) & 0xFF;
+                    int cb = (c >> 16) & 0xFF;
+                    /* Blend toward blue (ABGR: high B channel = bits 16-23) */
+                    int a = alpha_fade;
+                    cr = (cr * (255 - a) + 80 * a) / 255;
+                    cg = (cg * (255 - a) + 160 * a) / 255;
+                    cb = (cb * (255 - a) + 255 * a) / 255;
+                    px[ry * W + rx] = 0xFF000000 | (cb << 16) | (cg << 8) | cr;
+                }
+            }
+        }
 
         /* Class name */
         sr_draw_text_shadow(px, W, H, 8, 175, cc->name, white, shadow);

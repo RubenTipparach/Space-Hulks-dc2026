@@ -289,7 +289,7 @@ static sg_image    fb_image;
 static sg_view     fb_view;
 static sg_sampler  fb_sampler;
 static sg_pipeline pip;
-static sg_bindings bind;
+static sg_bindings sr_bind;
 static sg_buffer   vbuf;
 
 /* ── Frame limiter ───────────────────────────────────────────────── */
@@ -444,9 +444,9 @@ static void init(void) {
         },
     });
 
-    bind.vertex_buffers[0] = vbuf;
-    bind.views[0]     = fb_view;
-    bind.samplers[0]  = fb_sampler;
+    sr_bind.vertex_buffers[0] = vbuf;
+    sr_bind.views[0]     = fb_view;
+    sr_bind.samplers[0]  = fb_sampler;
 
     textures[TEX_BRICK] = sr_texture_load("assets/bricks.png");
     textures[TEX_GRASS] = sr_texture_load("assets/grass.png");
@@ -592,7 +592,7 @@ static void frame(void) {
         .swapchain = sglue_swapchain(),
     });
     sg_apply_pipeline(pip);
-    sg_apply_bindings(&bind);
+    sg_apply_bindings(&sr_bind);
     sg_apply_uniforms(0, &(sg_range){ &scale, sizeof(scale) });
     sg_draw(0, 6, 1);
     sg_end_pass();
