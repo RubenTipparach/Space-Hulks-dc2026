@@ -1369,10 +1369,11 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
                 sr_draw_text_shadow(px, W, H, cx + card_w - 10, cy + 5, cbuf, ccol, shadow);
             }
 
-            /* Card name */
-            sr_draw_text_shadow(px, W, H, cx + 3, cy + 8, card_names[card], white, shadow);
+            /* Card name (word-wrapped) */
+            sr_draw_text_wrap(px, W, H, cx + 3, cy + 5, card_names[card],
+                              card_w - 6, 8, white, shadow);
 
-            /* Card effect text */
+            /* Card effect text (word-wrapped) */
             const char *effect = "";
             switch (card) {
                 case CARD_SHIELD:     effect = "+3 SH"; break;
@@ -1391,7 +1392,8 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
                 case CARD_FIRE:       effect = "BURN"; break;
                 case CARD_LIGHTNING:  effect = "ZAP"; break;
             }
-            sr_draw_text_shadow(px, W, H, cx + 3, cy + 22, effect, gray, shadow);
+            sr_draw_text_wrap(px, W, H, cx + 3, cy + 18, effect,
+                              card_w - 6, 8, gray, shadow);
 
             /* Extra info line (uses the extra vertical space) */
             if (card == CARD_MELEE) {

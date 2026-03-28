@@ -148,4 +148,45 @@ static inline void sr_draw_text_shadow(uint32_t *pixels, int fb_w, int fb_h,
     sr_draw_text(pixels, fb_w, fb_h, x, y, str, color);
 }
 
+/* Draw text with word wrap within a max pixel width. Returns final Y. */
+static inline int sr_draw_text_wrap(uint32_t *pixels, int fb_w, int fb_h,
+                                    int x, int y, const char *str,
+                                    int max_w, int line_h,
+                                    uint32_t color, uint32_t shadow)
+{
+    int char_w = SR_FONT_W + 1;
+    int max_chars = max_w / char_w;
+    if (max_chars < 1) max_chars = 1;
+    int len = (int)strlen(str);
+    int pos = 0;
+    while (pos < len) {
+        /* Find how many chars fit on this line */
+        int line_len = len - pos;
+        if (line_len > max_chars) {
+            /* Try to break at a space */
+            line_len = max_chars;
+            int brk = line_len;
+            for (int i = line_len - 1; i > 0; i--) {
+                if (str[pos + i] == ' ') { brk = i; break; }
+            }
+            line_len = brk;
+        }
+        /* Draw this line */
+        char line[64];
+        int copy = line_len < 63 ? line_len : 63;
+        memcpy(line, str + pos, copy);
+        line[copy] = '\0';
+        /* Skip leading space on wrapped lines */
+        const char *lp = line;
+        int lx = x;
+        if (pos > 0 && *lp == ' ') { lp++; }
+        sr_draw_text(pixels, fb_w, fb_h, lx+1, y+1, lp, shadow);
+        sr_draw_text(pixels, fb_w, fb_h, lx, y, lp, color);
+        pos += line_len;
+        if (pos < len && str[pos] == ' ') pos++; /* skip space at break */
+        y += line_h;
+    }
+    return y;
+}
+
 #endif /* SR_FONT_H_INCLUDED */
