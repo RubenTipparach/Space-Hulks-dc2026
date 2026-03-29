@@ -214,7 +214,7 @@ static void dng_generate(sr_dungeon *d, int w, int h, bool has_down_stairs, bool
      */
 
     dng_room rooms[12];
-    int num_rooms = 4 + dng_rng_int(4); /* 4-7 rooms */
+    int num_rooms = 5 + dng_rng_int(4); /* 5-8 rooms */
     if (num_rooms > 12) num_rooms = 12;
 
     int mid_y = h / 2;          /* central corridor Y */
@@ -234,7 +234,7 @@ static void dng_generate(sr_dungeon *d, int w, int h, bool has_down_stairs, bool
         }
     }
 
-    /* Place rooms along the corridor, evenly spaced */
+    /* Place rooms along the corridor, set back 1 tile with a 1-wide doorway */
     int spacing = ship_span / (num_rooms + 1);
     if (spacing < 4) spacing = 4;
 
@@ -247,15 +247,15 @@ static void dng_generate(sr_dungeon *d, int w, int h, bool has_down_stairs, bool
         if (rx < 2) rx = 2;
         if (rx + rw > w) rx = w - rw;
 
-        /* Alternate rooms above/below corridor */
+        /* Alternate rooms above/below corridor, with 1-tile gap for doorway */
         int ry;
         if (i % 2 == 0) {
-            /* Port side (above corridor) */
-            ry = corridor_y1 - rh;
+            /* Port side (above corridor): room sits 1 tile above corridor */
+            ry = corridor_y1 - rh - 1;
             if (ry < 2) ry = 2;
         } else {
-            /* Starboard side (below corridor) */
-            ry = corridor_y2 + 1;
+            /* Starboard side (below corridor): room sits 1 tile below corridor */
+            ry = corridor_y2 + 2;
             if (ry + rh > h) ry = h - rh;
         }
 
@@ -267,16 +267,16 @@ static void dng_generate(sr_dungeon *d, int w, int h, bool has_down_stairs, bool
                 if (py >= 1 && py <= h && px >= 1 && px <= w)
                     d->map[py][px] = 0;
 
-        /* Connect room to central corridor with a vertical passage */
+        /* Connect room to corridor with a 1-wide doorway through the gap */
         int conn_x = rx + rw / 2;
         if (i % 2 == 0) {
-            /* Room is above: carve down to corridor */
+            /* Room is above: carve single-tile doorway down to corridor */
             for (int y = ry + rh; y <= corridor_y1; y++)
                 if (y >= 1 && y <= h && conn_x >= 1 && conn_x <= w)
                     d->map[y][conn_x] = 0;
         } else {
-            /* Room is below: carve up to corridor */
-            for (int y = corridor_y2; y < ry; y++)
+            /* Room is below: carve single-tile doorway up to corridor */
+            for (int y = corridor_y2 + 1; y < ry; y++)
                 if (y >= 1 && y <= h && conn_x >= 1 && conn_x <= w)
                     d->map[y][conn_x] = 0;
         }
@@ -479,6 +479,7 @@ typedef struct {
     dng_climb climb;
     bool on_stairs;        /* suppress re-trigger after climb */
     uint32_t seed_base;
+    int max_floors;        /* set to ship num_decks; caps stair generation */
 } dng_game;
 
 static void dng_game_init(dng_game *g) {
@@ -496,11 +497,12 @@ static void dng_game_init(dng_game *g) {
 }
 
 static void dng_go_up(dng_game *g) {
+    int cap = g->max_floors > 0 ? g->max_floors : DNG_MAX_FLOORS;
     g->current_floor++;
-    if (g->current_floor >= DNG_MAX_FLOORS) { g->current_floor--; return; }
+    if (g->current_floor >= cap) { g->current_floor--; return; }
 
     if (!g->floor_generated[g->current_floor]) {
-        bool is_last = (g->current_floor >= DNG_MAX_FLOORS - 1);
+        bool is_last = (g->current_floor >= cap - 1);
         dng_generate(&g->floors[g->current_floor], DNG_GRID_W, DNG_GRID_H,
                      true, !is_last, g->seed_base + (uint32_t)g->current_floor * 777,
                      g->current_floor);

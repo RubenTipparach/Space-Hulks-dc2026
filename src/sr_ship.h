@@ -194,18 +194,19 @@ static void ship_generate(ship_state *ship, int difficulty, uint32_t seed) {
     /* Generate rooms per deck */
     ship->room_count = 0;
 
-    /* Required rooms: BRIDGE, ENGINES always present */
-    /* Layout: each deck gets 2-4 rooms */
+    /* Core rooms every ship must have (first 4 are mandatory on deck 0) */
     int required_rooms[] = {
-        ROOM_BRIDGE, ROOM_ENGINES, ROOM_REACTOR, ROOM_WEAPONS,
-        ROOM_SHIELDS, ROOM_MEDBAY, ROOM_CARGO, ROOM_BARRACKS
+        ROOM_BRIDGE, ROOM_ENGINES, ROOM_SHIELDS, ROOM_WEAPONS,
+        ROOM_REACTOR, ROOM_MEDBAY, ROOM_CARGO, ROOM_BARRACKS
     };
     int num_required = 8;
     int assigned = 0;
 
     for (int deck = 0; deck < ship->num_decks; deck++) {
         ship->deck_room_start[deck] = ship->room_count;
-        int rooms_on_deck = 2 + dng_rng_int(3); /* 2-4 rooms per deck */
+        int rooms_on_deck = 4 + dng_rng_int(3); /* 4-6 rooms per deck */
+        /* First deck must have at least the 4 core rooms */
+        if (deck == 0 && rooms_on_deck < 4) rooms_on_deck = 4;
         if (rooms_on_deck + ship->room_count > SHIP_MAX_ROOMS)
             rooms_on_deck = SHIP_MAX_ROOMS - ship->room_count;
 

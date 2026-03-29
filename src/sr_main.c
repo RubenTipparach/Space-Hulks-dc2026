@@ -108,7 +108,7 @@ static bool game_load(void) {
     memset(&dng_state, 0, sizeof(dng_state));
     dng_state.seed_base = sd.seed_base;
     for (int fl = 0; fl <= sd.current_floor; fl++) {
-        bool is_last = (fl >= DNG_MAX_FLOORS - 1);
+        bool is_last = (fl >= current_ship.num_decks - 1);
         dng_generate(&dng_state.floors[fl], DNG_GRID_W, DNG_GRID_H,
                      fl > 0, !is_last,
                      dng_state.seed_base + (uint32_t)fl * 777, fl);
@@ -180,6 +180,17 @@ static void game_init_ship(void) {
     int difficulty = dng_state.current_floor;
     uint32_t ship_seed = dng_state.seed_base + 9999;
     ship_generate(&current_ship, difficulty, ship_seed);
+    dng_state.max_floors = current_ship.num_decks;
+
+    /* Regenerate all existing floors with correct stair flags for num_decks */
+    for (int fl = 0; fl < current_ship.num_decks && fl < DNG_MAX_FLOORS; fl++) {
+        if (!dng_state.floor_generated[fl]) continue;
+        bool is_last = (fl >= current_ship.num_decks - 1);
+        dng_generate(&dng_state.floors[fl], DNG_GRID_W, DNG_GRID_H,
+                     fl > 0, !is_last,
+                     dng_state.seed_base + (uint32_t)fl * 777, fl);
+    }
+    dng_state.dungeon = &dng_state.floors[dng_state.current_floor];
 
     /* For each deck, populate the dungeon floor with ship room data */
     for (int deck = 0; deck < current_ship.num_decks && deck < DNG_MAX_FLOORS; deck++) {
