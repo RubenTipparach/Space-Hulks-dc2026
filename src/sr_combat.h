@@ -521,6 +521,7 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
                 snprintf(buf, sizeof(buf), "TOO FAR! DIST: %d", cs->player_distance);
                 combat_set_message(cs, buf);
                 cs->energy += cost; /* refund */
+                return; /* don't consume card */
             }
             break;
 
@@ -1186,10 +1187,11 @@ static void combat_draw_bar(uint32_t *px, int W, int H,
 static void combat_draw_card_content(uint32_t *px, int W, int H,
                                      int cx, int cy, int cw, int ch,
                                      int card_type, bool selected,
-                                     uint32_t shadow)
+                                     uint32_t shadow, int energy_available)
 {
-    uint32_t white = 0xFFFFFFFF;
-    uint32_t gray = 0xFF888888;
+    bool affordable = (energy_available < 0 || energy_available >= card_energy_cost[card_type]);
+    uint32_t white = affordable ? 0xFFFFFFFF : 0xFF555555;
+    uint32_t gray = affordable ? 0xFF888888 : 0xFF444444;
     uint32_t yellow = 0xFF00DDDD;
 
     /* Background */
@@ -1197,20 +1199,22 @@ static void combat_draw_card_content(uint32_t *px, int W, int H,
     combat_draw_rect(px, W, H, cx, cy, cw, ch, bg);
 
     /* Border */
-    uint32_t border = selected ? yellow : card_colors[card_type];
+    uint32_t card_col = affordable ? card_colors[card_type] : 0xFF333333;
+    uint32_t border = selected ? yellow : card_col;
     combat_draw_rect_outline(px, W, H, cx, cy, cw, ch, border);
     if (selected)
         combat_draw_rect_outline(px, W, H, cx+1, cy+1, cw-2, ch-2, border);
 
     /* Color stripe */
-    combat_draw_rect(px, W, H, cx + 1, cy + 1, cw - 2, 3, card_colors[card_type]);
+    combat_draw_rect(px, W, H, cx + 1, cy + 1, cw - 2, 3, card_col);
 
     /* Energy cost (top right) */
     {
         int cost = card_energy_cost[card_type];
         char cbuf[8];
         snprintf(cbuf, sizeof(cbuf), "%d", cost);
-        sr_draw_text_shadow(px, W, H, cx + cw - 10, cy + 5, cbuf, 0xFF22CCEE, shadow);
+        uint32_t cost_color = affordable ? 0xFF22CCEE : 0xFF444466;
+        sr_draw_text_shadow(px, W, H, cx + cw - 10, cy + 5, cbuf, cost_color, shadow);
     }
 
     /* Card name (word-wrapped, returns Y after last line) */
@@ -1520,7 +1524,7 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
             bool selected = (i == combat.cursor && combat.phase == CPHASE_PLAYER_TURN);
             if (selected) cy -= 6;
             combat_draw_card_content(px, W, H, cx, cy, card_w, card_h,
-                                     card, selected, shadow);
+                                     card, selected, shadow, combat.energy);
         }
     }
 
@@ -1642,7 +1646,7 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
             int ry = rbase_y;
             bool rsel = (i == combat.reward_cursor);
             combat_draw_card_content(px, W, H, rx, ry, rw, rh,
-                                     rc, rsel, shadow);
+                                     rc, rsel, shadow, -1);
         }
 
         sr_draw_text_shadow(px, W, H, W/2 - 35, rbase_y + rh + 10,
