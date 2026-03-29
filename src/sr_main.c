@@ -219,10 +219,26 @@ static void game_init_ship(void) {
             if (rm->subsystem_hp_max > 0 && rm->subsystem_hp <= 0) continue;
             if (rm->type == ROOM_CARGO && rm->cleared) continue;
             int cx = dd->room_cx[r], cy = dd->room_cy[r];
+            /* Find an open cell in the room for the console (avoid aliens) */
             if (cx >= 1 && cx <= dd->w && cy >= 1 && cy <= dd->h) {
-                /* Don't place on top of aliens — offset if needed */
-                if (dd->aliens[cy][cx] == 0)
+                if (dd->aliens[cy][cx] == 0) {
                     dd->consoles[cy][cx] = (uint8_t)rm->type;
+                } else {
+                    /* Officer at center — try adjacent cells within room bounds */
+                    bool placed = false;
+                    static const int off_dx[] = {1, -1, 0, 0};
+                    static const int off_dy[] = {0, 0, 1, -1};
+                    for (int d = 0; d < 4 && !placed; d++) {
+                        int nx = cx + off_dx[d], ny = cy + off_dy[d];
+                        if (nx >= dd->room_x[r] && nx < dd->room_x[r] + dd->room_w[r] &&
+                            ny >= dd->room_y[r] && ny < dd->room_y[r] + dd->room_h[r] &&
+                            nx >= 1 && nx <= dd->w && ny >= 1 && ny <= dd->h &&
+                            dd->map[ny][nx] == 0 && dd->aliens[ny][nx] == 0) {
+                            dd->consoles[ny][nx] = (uint8_t)rm->type;
+                            placed = true;
+                        }
+                    }
+                }
             }
         }
     }

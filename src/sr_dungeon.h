@@ -197,8 +197,8 @@ static void dng_generate(sr_dungeon *d, int w, int h, bool has_down_stairs, bool
     if (num_rooms > 12) num_rooms = 12;
 
     int mid_y = h / 2;          /* central corridor Y */
-    int corridor_y1 = mid_y - 1;
-    int corridor_y2 = mid_y + 1;
+    int corridor_y1 = mid_y;
+    int corridor_y2 = mid_y;
 
     /* Ship hull boundaries (leave margin) */
     int ship_left = 3;
