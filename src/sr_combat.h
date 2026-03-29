@@ -1553,7 +1553,8 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
                 combat_draw_rect_outline(px, W, H, rx+1, ry+1, rw-2, rh-2, rborder);
 
             combat_draw_rect(px, W, H, rx+1, ry+1, rw-2, 3, card_colors[rc]);
-            sr_draw_text_shadow(px, W, H, rx+4, ry+8, card_names[rc], white, shadow);
+            sr_draw_text_wrap(px, W, H, rx+4, ry+8, card_names[rc],
+                              rw - 24, 8, white, shadow);
 
             /* Cost */
             char costbuf[8];
@@ -1574,7 +1575,8 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
                 case CARD_FIRE:       desc = "BURN 3T\nSPREADS"; break;
                 case CARD_LIGHTNING:  desc = "STUN 1-2T\n2 DMG"; break;
             }
-            sr_draw_text_shadow(px, W, H, rx+4, ry+28, desc, gray, shadow);
+            sr_draw_text_wrap(px, W, H, rx+4, ry+28, desc,
+                              rw - 8, 10, gray, shadow);
 
             /* Target type label */
             const char *tgt = "";

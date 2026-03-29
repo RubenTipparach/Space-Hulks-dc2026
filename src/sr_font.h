@@ -148,7 +148,8 @@ static inline void sr_draw_text_shadow(uint32_t *pixels, int fb_w, int fb_h,
     sr_draw_text(pixels, fb_w, fb_h, x, y, str, color);
 }
 
-/* Draw text with word wrap within a max pixel width. Returns final Y. */
+/* Draw text with word wrap within a max pixel width. Handles \n as forced
+   line break. Returns final Y position after all lines. */
 static inline int sr_draw_text_wrap(uint32_t *pixels, int fb_w, int fb_h,
                                     int x, int y, const char *str,
                                     int max_w, int line_h,
@@ -160,16 +161,25 @@ static inline int sr_draw_text_wrap(uint32_t *pixels, int fb_w, int fb_h,
     int len = (int)strlen(str);
     int pos = 0;
     while (pos < len) {
-        /* Find how many chars fit on this line */
-        int line_len = len - pos;
-        if (line_len > max_chars) {
-            /* Try to break at a space */
-            line_len = max_chars;
-            int brk = line_len;
-            for (int i = line_len - 1; i > 0; i--) {
-                if (str[pos + i] == ' ') { brk = i; break; }
+        /* Check for explicit newline first */
+        int nl = -1;
+        for (int i = 0; i < len - pos && i < max_chars; i++) {
+            if (str[pos + i] == '\n') { nl = i; break; }
+        }
+        int line_len;
+        if (nl >= 0) {
+            line_len = nl; /* break at newline */
+        } else {
+            line_len = len - pos;
+            if (line_len > max_chars) {
+                /* Try to break at a space */
+                line_len = max_chars;
+                int brk = line_len;
+                for (int i = line_len - 1; i > 0; i--) {
+                    if (str[pos + i] == ' ') { brk = i; break; }
+                }
+                line_len = brk;
             }
-            line_len = brk;
         }
         /* Draw this line */
         char line[64];
@@ -178,12 +188,12 @@ static inline int sr_draw_text_wrap(uint32_t *pixels, int fb_w, int fb_h,
         line[copy] = '\0';
         /* Skip leading space on wrapped lines */
         const char *lp = line;
-        int lx = x;
-        if (pos > 0 && *lp == ' ') { lp++; }
-        sr_draw_text(pixels, fb_w, fb_h, lx+1, y+1, lp, shadow);
-        sr_draw_text(pixels, fb_w, fb_h, lx, y, lp, color);
+        if (pos > 0 && *lp == ' ') lp++;
+        sr_draw_text(pixels, fb_w, fb_h, x+1, y+1, lp, shadow);
+        sr_draw_text(pixels, fb_w, fb_h, x, y, lp, color);
         pos += line_len;
-        if (pos < len && str[pos] == ' ') pos++; /* skip space at break */
+        /* Skip the delimiter (space or newline) */
+        if (pos < len && (str[pos] == ' ' || str[pos] == '\n')) pos++;
         y += line_h;
     }
     return y;
