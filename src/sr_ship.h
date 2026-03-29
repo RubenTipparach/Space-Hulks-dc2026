@@ -345,7 +345,8 @@ static void ship_populate_deck(ship_state *ship, sr_dungeon *d,
         ship->rooms[start + i].room_idx = i;
     }
 
-    /* Place officers as aliens in their assigned rooms on this deck */
+    /* Place officers as aliens in their assigned rooms on this deck.
+     * Avoid console positions — try adjacent cells if center is taken. */
     for (int o = 0; o < ship->officer_count; o++) {
         ship_officer *off = &ship->officers[o];
         if (!off->alive || off->captured) continue;
@@ -353,18 +354,36 @@ static void ship_populate_deck(ship_state *ship, sr_dungeon *d,
         int sr_idx = off->room_idx;
         if (sr_idx < start || sr_idx >= start + count) continue;
 
-        /* Place in the center of the corresponding dng_room */
         int local_room = sr_idx - start;
         if (local_room >= 0 && local_room < num_rooms) {
             int cx = dng_rooms[local_room].cx;
             int cy = dng_rooms[local_room].cy;
-            /* Officer as combat type + 1 (1-indexed alien encoding) */
-            if (cx >= 1 && cx <= d->w && cy >= 1 && cy <= d->h)
+            /* Try center first, then adjacent cells if console is there */
+            int placed = 0;
+            if (cx >= 1 && cx <= d->w && cy >= 1 && cy <= d->h &&
+                d->consoles[cy][cx] == 0 && d->aliens[cy][cx] == 0) {
                 d->aliens[cy][cx] = (uint8_t)(off->combat_type + 1);
+                snprintf(d->alien_names[cy][cx], 16, "%s", off->name);
+                placed = 1;
+            }
+            if (!placed) {
+                static const int odx[] = {1, -1, 0, 0, 1, -1, 1, -1};
+                static const int ody[] = {0, 0, 1, -1, 1, 1, -1, -1};
+                for (int dd = 0; dd < 8 && !placed; dd++) {
+                    int nx = cx + odx[dd], ny = cy + ody[dd];
+                    if (nx < 1 || nx > d->w || ny < 1 || ny > d->h) continue;
+                    if (d->map[ny][nx] != 0) continue;
+                    if (d->consoles[ny][nx] != 0 || d->aliens[ny][nx] != 0) continue;
+                    d->aliens[ny][nx] = (uint8_t)(off->combat_type + 1);
+                    snprintf(d->alien_names[ny][nx], 16, "%s", off->name);
+                    placed = 1;
+                }
+            }
         }
     }
 
-    /* Place additional enemies in rooms based on difficulty */
+    /* Place additional enemies in rooms based on difficulty.
+     * Never place on consoles. */
     for (int i = 0; i < count && i < num_rooms; i++) {
         ship_room *rm = &ship->rooms[start + i];
         if (rm->cleared) continue;
@@ -384,9 +403,11 @@ static void ship_populate_deck(ship_state *ship, sr_dungeon *d,
             if (ax < 1 || ax > d->w || ay < 1 || ay > d->h) continue;
             if (d->map[ay][ax] != 0) continue;
             if (d->aliens[ay][ax] != 0) continue;
+            if (d->consoles[ay][ax] != 0) continue; /* avoid consoles */
             if (ax == d->spawn_gx && ay == d->spawn_gy) continue;
             int max_type = (rm->type == ROOM_BRIDGE) ? 4 : 3;
             d->aliens[ay][ax] = 1 + (uint8_t)dng_rng_int(max_type);
+            dng_gen_alien_name(d->alien_names[ay][ax], 16);
         }
     }
 }
