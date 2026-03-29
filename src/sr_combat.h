@@ -285,11 +285,18 @@ static void combat_draw_hand(combat_state *cs) {
 /* ── Combat initialization ───────────────────────────────────────── */
 
 static void combat_generate_rewards(combat_state *cs) {
-    /* Pick 3 droppable card types (CARD_OVERCHARGE through CARD_DASH) */
+    /* Pick 3 unique droppable card types (CARD_OVERCHARGE through CARD_LIGHTNING) */
     int droppable_start = CARD_OVERCHARGE;
     int droppable_count = CARD_TYPE_COUNT - droppable_start;
     for (int i = 0; i < 3; i++) {
-        cs->reward_choices[i] = droppable_start + dng_rng_int(droppable_count);
+        int attempts = 0;
+        do {
+            cs->reward_choices[i] = droppable_start + dng_rng_int(droppable_count);
+            attempts++;
+        } while (attempts < 20 && (
+            (i > 0 && cs->reward_choices[i] == cs->reward_choices[0]) ||
+            (i > 1 && cs->reward_choices[i] == cs->reward_choices[1])
+        ));
     }
     cs->reward_cursor = 0;
 }
@@ -1062,6 +1069,73 @@ static void combat_draw_bar(uint32_t *px, int W, int H,
     }
 }
 
+/* ── Shared card rendering ───────────────────────────────────────── */
+
+static void combat_draw_card_content(uint32_t *px, int W, int H,
+                                     int cx, int cy, int cw, int ch,
+                                     int card_type, bool selected,
+                                     uint32_t shadow)
+{
+    uint32_t white = 0xFFFFFFFF;
+    uint32_t gray = 0xFF888888;
+    uint32_t yellow = 0xFF00DDDD;
+
+    /* Background */
+    uint32_t bg = selected ? 0xFF222233 : 0xFF111122;
+    combat_draw_rect(px, W, H, cx, cy, cw, ch, bg);
+
+    /* Border */
+    uint32_t border = selected ? yellow : card_colors[card_type];
+    combat_draw_rect_outline(px, W, H, cx, cy, cw, ch, border);
+    if (selected)
+        combat_draw_rect_outline(px, W, H, cx+1, cy+1, cw-2, ch-2, border);
+
+    /* Color stripe */
+    combat_draw_rect(px, W, H, cx + 1, cy + 1, cw - 2, 3, card_colors[card_type]);
+
+    /* Energy cost (top right) */
+    {
+        int cost = card_energy_cost[card_type];
+        char cbuf[8];
+        snprintf(cbuf, sizeof(cbuf), "%d", cost);
+        sr_draw_text_shadow(px, W, H, cx + cw - 10, cy + 5, cbuf, 0xFF22CCEE, shadow);
+    }
+
+    /* Card name (word-wrapped, returns Y after last line) */
+    int ty = sr_draw_text_wrap(px, W, H, cx + 3, cy + 5, card_names[card_type],
+                               cw - 16, 8, white, shadow);
+
+    /* Card effect text */
+    const char *effect = "";
+    switch (card_type) {
+        case CARD_SHIELD:     effect = "+3 SHIELD"; break;
+        case CARD_SHOOT:      effect = "3 DMG"; break;
+        case CARD_BURST:      effect = "2 DMG ALL"; break;
+        case CARD_MOVE:       effect = "+2 MOVE"; break;
+        case CARD_MELEE:      effect = "6 DMG MELEE"; break;
+        case CARD_OVERCHARGE: effect = "+2 ENERGY"; break;
+        case CARD_REPAIR:     effect = "+4 HP"; break;
+        case CARD_STUN:       effect = "SKIP ENEMY\nATTACKS"; break;
+        case CARD_FORTIFY:    effect = "+6 SHIELD"; break;
+        case CARD_DOUBLE_SHOT:effect = "5 DMG"; break;
+        case CARD_DASH:       effect = "+3 MOVE\n4 DMG"; break;
+        case CARD_ICE:        effect = "FREEZE 3T\nSLOW+DMG"; break;
+        case CARD_ACID:       effect = "STACK DOT\n1/STACK"; break;
+        case CARD_FIRE:       effect = "BURN 3T\nSPREADS"; break;
+        case CARD_LIGHTNING:  effect = "STUN 1-2T\n2 DMG"; break;
+    }
+    ty = sr_draw_text_wrap(px, W, H, cx + 3, ty + 2, effect,
+                           cw - 6, 8, gray, shadow);
+
+    /* Target type at bottom */
+    const char *tgt = "";
+    int tt = card_targets[card_type];
+    if (tt == TARGET_SELF) tgt = "SELF";
+    else if (tt == TARGET_ENEMY) tgt = "1 ENEMY";
+    else tgt = "ALL";
+    sr_draw_text_shadow(px, W, H, cx + 3, cy + ch - 10, tgt, 0xFF555555, shadow);
+}
+
 /* ── Main combat render ──────────────────────────────────────────── */
 
 static void draw_combat_scene(sr_framebuffer *fb_ptr) {
@@ -1330,7 +1404,7 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
         sr_draw_text_shadow(px, W, H, 50, mb_y + 3, "BCK", 0xFFCC6644, shadow);
     }
 
-    /* ── Hand of cards (bottom, 2:3 ratio) ─────────────────────── */
+    /* ── Hand of cards (bottom) ───────────────────────────────── */
     {
         int card_w = CARD_W;
         int card_h = CARD_H;
@@ -1344,86 +1418,9 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
             int cx = base_x + i * (card_w + card_gap);
             int cy = base_y;
             bool selected = (i == combat.cursor && combat.phase == CPHASE_PLAYER_TURN);
-
             if (selected) cy -= 6;
-
-            /* Card background */
-            uint32_t bg = selected ? 0xFF222233 : 0xFF111122;
-            combat_draw_rect(px, W, H, cx, cy, card_w, card_h, bg);
-
-            /* Card border */
-            uint32_t border = selected ? yellow : card_colors[card];
-            combat_draw_rect_outline(px, W, H, cx, cy, card_w, card_h, border);
-            if (selected)
-                combat_draw_rect_outline(px, W, H, cx+1, cy+1, card_w-2, card_h-2, border);
-
-            /* Card type color stripe at top */
-            combat_draw_rect(px, W, H, cx + 1, cy + 1, card_w - 2, 3, card_colors[card]);
-
-            /* Energy cost (top right) */
-            {
-                int cost = card_energy_cost[card];
-                char cbuf[8];
-                snprintf(cbuf, sizeof(cbuf), "%d", cost);
-                uint32_t ccol = combat.energy >= cost ? 0xFF22CCEE : 0xFF4444CC;
-                sr_draw_text_shadow(px, W, H, cx + card_w - 10, cy + 5, cbuf, ccol, shadow);
-            }
-
-            /* Card name (word-wrapped) */
-            sr_draw_text_wrap(px, W, H, cx + 3, cy + 5, card_names[card],
-                              card_w - 6, 8, white, shadow);
-
-            /* Card effect text (word-wrapped) */
-            const char *effect = "";
-            switch (card) {
-                case CARD_SHIELD:     effect = "+3 SH"; break;
-                case CARD_SHOOT:      effect = "3 DMG"; break;
-                case CARD_BURST:      effect = "2 ALL"; break;
-                case CARD_MOVE:       effect = "+2 MP"; break;
-                case CARD_MELEE:      effect = "6 DMG"; break;
-                case CARD_OVERCHARGE: effect = "+2NRG"; break;
-                case CARD_REPAIR:     effect = "+4 HP"; break;
-                case CARD_STUN:       effect = "STUN"; break;
-                case CARD_FORTIFY:    effect = "+6 SH"; break;
-                case CARD_DOUBLE_SHOT:effect = "5 DMG"; break;
-                case CARD_DASH:       effect = "+3MP"; break;
-                case CARD_ICE:        effect = "FREEZE"; break;
-                case CARD_ACID:       effect = "CORR."; break;
-                case CARD_FIRE:       effect = "BURN"; break;
-                case CARD_LIGHTNING:  effect = "ZAP"; break;
-            }
-            sr_draw_text_wrap(px, W, H, cx + 3, cy + 18, effect,
-                              card_w - 6, 8, gray, shadow);
-
-            /* Extra info line (uses the extra vertical space) */
-            if (card == CARD_MELEE) {
-                const char *req = combat.player_distance <= 0 ? "READY" : "MOVE!";
-                uint32_t rc = combat.player_distance <= 0 ? 0xFF00CC00 : 0xFF4444CC;
-                sr_draw_text_shadow(px, W, H, cx + 3, cy + 34, req, rc, shadow);
-            }
-            if (card == CARD_BURST) {
-                sr_draw_text_shadow(px, W, H, cx + 3, cy + 34, "ALL", 0xFF5588FF, shadow);
-            }
-            if (card == CARD_DASH) {
-                sr_draw_text_shadow(px, W, H, cx + 3, cy + 34, "4DMG", 0xFF44CCCC, shadow);
-            }
-            if (card == CARD_MOVE) {
-                char mpbuf[16];
-                snprintf(mpbuf, sizeof(mpbuf), "MP:%d", combat.player_move_pts);
-                sr_draw_text_shadow(px, W, H, cx + 3, cy + 34, mpbuf, 0xFF22CC22, shadow);
-            }
-            if (card == CARD_ICE) {
-                sr_draw_text_shadow(px, W, H, cx + 3, cy + 34, "3T", 0xFFFFCC44, shadow);
-            }
-            if (card == CARD_ACID) {
-                sr_draw_text_shadow(px, W, H, cx + 3, cy + 34, "STACK", 0xFF22CCAA, shadow);
-            }
-            if (card == CARD_FIRE) {
-                sr_draw_text_shadow(px, W, H, cx + 3, cy + 34, "SPRD", 0xFF2244FF, shadow);
-            }
-            if (card == CARD_LIGHTNING) {
-                sr_draw_text_shadow(px, W, H, cx + 3, cy + 34, "1-2T", 0xFFEEEE44, shadow);
-            }
+            combat_draw_card_content(px, W, H, cx, cy, card_w, card_h,
+                                     card, selected, shadow);
         }
     }
 
@@ -1544,47 +1541,8 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
             int rx = rbase_x + i * (rw + rgap);
             int ry = rbase_y;
             bool rsel = (i == combat.reward_cursor);
-
-            uint32_t rbg = rsel ? 0xFF222244 : 0xFF111122;
-            uint32_t rborder = rsel ? yellow : card_colors[rc];
-            combat_draw_rect(px, W, H, rx, ry, rw, rh, rbg);
-            combat_draw_rect_outline(px, W, H, rx, ry, rw, rh, rborder);
-            if (rsel)
-                combat_draw_rect_outline(px, W, H, rx+1, ry+1, rw-2, rh-2, rborder);
-
-            combat_draw_rect(px, W, H, rx+1, ry+1, rw-2, 3, card_colors[rc]);
-            sr_draw_text_wrap(px, W, H, rx+4, ry+8, card_names[rc],
-                              rw - 24, 8, white, shadow);
-
-            /* Cost */
-            char costbuf[8];
-            snprintf(costbuf, sizeof(costbuf), "%dE", card_energy_cost[rc]);
-            sr_draw_text_shadow(px, W, H, rx+rw-18, ry+8, costbuf, 0xFF22CCEE, shadow);
-
-            /* Effect description */
-            const char *desc = "";
-            switch (rc) {
-                case CARD_OVERCHARGE: desc = "+2 ENERGY\nTHIS TURN"; break;
-                case CARD_REPAIR:     desc = "HEAL 4 HP"; break;
-                case CARD_STUN:       desc = "SKIP ENEMY\nATTACKS"; break;
-                case CARD_FORTIFY:    desc = "+6 SHIELD"; break;
-                case CARD_DOUBLE_SHOT:desc = "5 DMG\nSINGLE"; break;
-                case CARD_DASH:       desc = "ADV 2 +\n4 DMG"; break;
-                case CARD_ICE:        desc = "FREEZE 3T\nSLOW+DMG"; break;
-                case CARD_ACID:       desc = "STACK DOT\n1/STACK"; break;
-                case CARD_FIRE:       desc = "BURN 3T\nSPREADS"; break;
-                case CARD_LIGHTNING:  desc = "STUN 1-2T\n2 DMG"; break;
-            }
-            sr_draw_text_wrap(px, W, H, rx+4, ry+28, desc,
-                              rw - 8, 10, gray, shadow);
-
-            /* Target type label */
-            const char *tgt = "";
-            int tt = card_targets[rc];
-            if (tt == TARGET_SELF) tgt = "SELF";
-            else if (tt == TARGET_ENEMY) tgt = "1 ENEMY";
-            else tgt = "ALL";
-            sr_draw_text_shadow(px, W, H, rx+4, ry+rh-14, tgt, dim, shadow);
+            combat_draw_card_content(px, W, H, rx, ry, rw, rh,
+                                     rc, rsel, shadow);
         }
 
         sr_draw_text_shadow(px, W, H, W/2 - 35, rbase_y + rh + 10,
