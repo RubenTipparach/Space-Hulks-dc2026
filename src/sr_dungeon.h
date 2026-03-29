@@ -54,6 +54,8 @@ typedef struct {
     bool has_down;
     /* Alien entities (for FPS view) */
     uint8_t aliens[DNG_GRID_H + 1][DNG_GRID_W + 1]; /* 0=none, 1-4=enemy type (ENEMY_LURKER+1 etc) */
+    /* Console entities — interactable objects at room centers */
+    uint8_t consoles[DNG_GRID_H + 1][DNG_GRID_W + 1]; /* 0=none, room_type (ROOM_BRIDGE etc) */
     /* Room info for ship system */
     int room_count;
     int room_cx[12], room_cy[12];  /* room centers */

@@ -40,6 +40,10 @@ enum {
 };
 static sr_texture stextures[STEX_COUNT];
 
+/* Console textures (built from embedded sprite data at runtime) */
+#define CONSOLE_TEX_COUNT 9 /* matches ROOM_TYPE_COUNT */
+static sr_texture console_textures[CONSOLE_TEX_COUNT]; /* indexed by room type */
+
 /* Timing */
 static double time_acc;
 static int    frame_counter;

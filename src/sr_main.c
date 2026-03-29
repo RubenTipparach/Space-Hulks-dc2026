@@ -186,8 +186,9 @@ static void game_init_ship(void) {
         if (!dng_state.floor_generated[deck]) continue;
         sr_dungeon *dd = &dng_state.floors[deck];
 
-        /* Clear existing aliens (ship_populate_deck will place them) */
+        /* Clear existing aliens and consoles (will be re-placed below) */
         memset(dd->aliens, 0, sizeof(dd->aliens));
+        memset(dd->consoles, 0, sizeof(dd->consoles));
 
         /* Build dng_room array from stored room info */
         dng_room rooms[12];
@@ -209,6 +210,21 @@ static void game_init_ship(void) {
 
         /* Populate with officers and enemies */
         ship_populate_deck(&current_ship, dd, deck, dd->room_count, rooms);
+
+        /* Place consoles at room centers for rooms with active subsystems or cargo */
+        for (int r = 0; r < count && r < dd->room_count; r++) {
+            ship_room *rm = &current_ship.rooms[start + r];
+            if (rm->type == ROOM_CORRIDOR) continue;
+            /* Only place console if subsystem is active or it's unsearched cargo */
+            if (rm->subsystem_hp_max > 0 && rm->subsystem_hp <= 0) continue;
+            if (rm->type == ROOM_CARGO && rm->cleared) continue;
+            int cx = dd->room_cx[r], cy = dd->room_cy[r];
+            if (cx >= 1 && cx <= dd->w && cy >= 1 && cy <= dd->h) {
+                /* Don't place on top of aliens — offset if needed */
+                if (dd->aliens[cy][cx] == 0)
+                    dd->consoles[cy][cx] = (uint8_t)rm->type;
+            }
+        }
     }
 }
 
@@ -274,77 +290,6 @@ static void handle_combat_end(void) {
     game_save();
 }
 
-/* ── Console sabotage (interact with room subsystem) ────────────── */
-
-static void try_console_sabotage(void) {
-    if (!current_ship.initialized || !current_ship.boarding_active) return;
-
-    dng_player *p = &dng_state.player;
-    int local_room = dng_room_at(dng_state.dungeon, p->gx, p->gy);
-    if (local_room < 0 || local_room >= dng_state.dungeon->room_count) return;
-
-    int sr_idx = dng_state.dungeon->room_ship_idx[local_room];
-    if (sr_idx < 0 || sr_idx >= current_ship.room_count) return;
-
-    ship_room *rm = &current_ship.rooms[sr_idx];
-
-    /* Can only sabotage if no enemies remain in THIS room */
-    {
-        sr_dungeon *d = dng_state.dungeon;
-        bool has_enemies = false;
-        for (int ry = d->room_y[local_room]; ry < d->room_y[local_room] + d->room_h[local_room]; ry++)
-            for (int rx = d->room_x[local_room]; rx < d->room_x[local_room] + d->room_w[local_room]; rx++)
-                if (d->aliens[ry][rx] > 0) has_enemies = true;
-        if (has_enemies) return; /* enemies still in room — can't use console */
-    }
-
-    /* Can only sabotage rooms with active subsystems */
-    if (rm->subsystem_hp_max <= 0 || rm->subsystem_hp <= 0) {
-        /* Cargo rooms: search for artifacts */
-        if (rm->type == ROOM_CARGO && !rm->cleared) {
-            rm->cleared = true;
-            ship_check_missions(&current_ship);
-        }
-        return;
-    }
-
-    /* Trigger automated defense combat */
-    current_combat_room = sr_idx;
-    console_combat = true;
-
-    /* Automated defenses: 1-2 enemies scaled to room importance */
-    combat_init(&combat, selected_class, dng_state.current_floor, 0);
-
-    /* Override with defense drones based on room type */
-    int num_drones = 1;
-    int drone_type = ENEMY_LURKER;
-    switch (rm->type) {
-        case ROOM_BRIDGE:  num_drones = 2; drone_type = ENEMY_HIVEGUARD; break;
-        case ROOM_REACTOR: num_drones = 2; drone_type = ENEMY_SPITTER; break;
-        case ROOM_WEAPONS: num_drones = 1; drone_type = ENEMY_BRUTE; break;
-        case ROOM_ENGINES: num_drones = 1; drone_type = ENEMY_SPITTER; break;
-        case ROOM_SHIELDS: num_drones = 1; drone_type = ENEMY_BRUTE; break;
-        default: break;
-    }
-
-    combat.enemy_count = num_drones;
-    for (int i = 0; i < num_drones; i++) {
-        const enemy_template *tmpl = &enemy_templates[drone_type];
-        combat.enemies[i].type = drone_type;
-        combat.enemies[i].hp = tmpl->hp_max;
-        combat.enemies[i].hp_max = tmpl->hp_max;
-        combat.enemies[i].attack_range = tmpl->attack_range;
-        combat.enemies[i].damage = tmpl->damage;
-        combat.enemies[i].ranged = tmpl->ranged;
-        combat.enemies[i].flash_timer = 0;
-        combat.enemies[i].alive = true;
-    }
-
-    ship_tick_turn(&current_ship);
-    app_state = STATE_COMBAT;
-    game_save();
-}
-
 /* ── Track player movement for random encounters ─────────────────── */
 
 static void check_random_encounter(void) {
@@ -371,6 +316,57 @@ static void check_random_encounter(void) {
 
             combat_init(&combat, selected_class, dng_state.current_floor, alien);
             app_state = STATE_COMBAT;
+            return;
+        }
+
+        /* Check for console interaction — sentinel defense combat */
+        uint8_t con_type = dng_state.dungeon->consoles[p->gy][p->gx];
+        if (con_type != 0 && current_ship.initialized && current_ship.boarding_active) {
+            /* Remove the console from the map */
+            dng_state.dungeon->consoles[p->gy][p->gx] = 0;
+
+            /* Find which ship room this console belongs to */
+            int local_room = dng_room_at(dng_state.dungeon, p->gx, p->gy);
+            if (local_room >= 0 && local_room < dng_state.dungeon->room_count) {
+                int sr_idx = dng_state.dungeon->room_ship_idx[local_room];
+                if (sr_idx >= 0 && sr_idx < current_ship.room_count) {
+                    current_combat_room = sr_idx;
+                    console_combat = true;
+                    ship_room *rm = &current_ship.rooms[sr_idx];
+
+                    /* Sentinel defense combat based on room type */
+                    combat_init(&combat, selected_class, dng_state.current_floor, 0);
+
+                    int num_drones = 1;
+                    int drone_type = ENEMY_LURKER;
+                    switch (rm->type) {
+                        case ROOM_BRIDGE:  num_drones = 2; drone_type = ENEMY_HIVEGUARD; break;
+                        case ROOM_REACTOR: num_drones = 2; drone_type = ENEMY_SPITTER; break;
+                        case ROOM_WEAPONS: num_drones = 1; drone_type = ENEMY_BRUTE; break;
+                        case ROOM_ENGINES: num_drones = 1; drone_type = ENEMY_SPITTER; break;
+                        case ROOM_SHIELDS: num_drones = 1; drone_type = ENEMY_BRUTE; break;
+                        case ROOM_CARGO:   num_drones = 1; drone_type = ENEMY_LURKER; break;
+                        default: break;
+                    }
+
+                    combat.enemy_count = num_drones;
+                    for (int i = 0; i < num_drones; i++) {
+                        const enemy_template *tmpl = &enemy_templates[drone_type];
+                        combat.enemies[i].type = drone_type;
+                        combat.enemies[i].hp = tmpl->hp_max;
+                        combat.enemies[i].hp_max = tmpl->hp_max;
+                        combat.enemies[i].attack_range = tmpl->attack_range;
+                        combat.enemies[i].damage = tmpl->damage;
+                        combat.enemies[i].ranged = tmpl->ranged;
+                        combat.enemies[i].flash_timer = 0;
+                        combat.enemies[i].alive = true;
+                    }
+
+                    ship_tick_turn(&current_ship);
+                    app_state = STATE_COMBAT;
+                    game_save();
+                }
+            }
         }
     }
 }
@@ -659,6 +655,17 @@ static void init(void) {
     stextures[STEX_SCOUT]     = sr_texture_load("assets/sprites/scout.png");
     stextures[STEX_MARINE]    = sr_texture_load("assets/sprites/marine.png");
 
+    /* Build console textures from embedded sprite data for 3D billboard rendering */
+    for (int rt = 1; rt < CONSOLE_TEX_COUNT && rt < ROOM_TYPE_COUNT; rt++) {
+        const uint32_t *src = spr_console_table[rt];
+        if (!src) continue;
+        console_textures[rt].width = 16;
+        console_textures[rt].height = 16;
+        console_textures[rt].pixels = (uint32_t *)malloc(16 * 16 * sizeof(uint32_t));
+        if (console_textures[rt].pixels)
+            memcpy(console_textures[rt].pixels, src, 16 * 16 * sizeof(uint32_t));
+    }
+
     sr_fog_set(FOG_COLOR, FOG_NEAR, FOG_FAR);
 
     dng_load_config();
@@ -888,6 +895,9 @@ static void cleanup(void) {
         sr_indexed_free(&itextures[i]);
     for (int i = 0; i < STEX_COUNT; i++)
         sr_texture_free(&stextures[i]);
+    for (int i = 0; i < CONSOLE_TEX_COUNT; i++) {
+        if (console_textures[i].pixels) { free(console_textures[i].pixels); console_textures[i].pixels = NULL; }
+    }
     sr_framebuffer_destroy(&fb);
     sr_framebuffer_destroy(&shadow_fb);
     sg_shutdown();
@@ -981,15 +991,6 @@ static void event(const sapp_event *ev) {
     /* ── Mouse click / touch began → tap handling ────────────── */
     if (ev->type == SAPP_EVENTTYPE_MOUSE_DOWN && ev->mouse_button == SAPP_MOUSEBUTTON_LEFT) {
         if (app_state == STATE_RUNNING) {
-            /* Check if tapping the console/sabotage button area */
-            float fx, fy; screen_to_fb(ev->mouse_x, ev->mouse_y, &fx, &fy);
-            int bw = 140, bh = 40;
-            int cbx = FB_WIDTH / 2 - bw / 2;
-            int cby = FB_HEIGHT - bh - 4;
-            if (fx >= cbx && fx <= cbx + bw && fy >= cby + 24 && fy <= cby + bh) {
-                try_console_sabotage();
-                if (app_state == STATE_COMBAT) return;
-            }
             dng_touch_began(ev->mouse_x, ev->mouse_y, now_time);
         } else {
             handle_screen_tap(ev->mouse_x, ev->mouse_y);
@@ -999,14 +1000,6 @@ static void event(const sapp_event *ev) {
     if (ev->type == SAPP_EVENTTYPE_TOUCHES_BEGAN && ev->num_touches > 0) {
         float sx = ev->touches[0].pos_x, sy = ev->touches[0].pos_y;
         if (app_state == STATE_RUNNING) {
-            float fx, fy; screen_to_fb(sx, sy, &fx, &fy);
-            int bw = 140, bh = 40;
-            int cbx = FB_WIDTH / 2 - bw / 2;
-            int cby = FB_HEIGHT - bh - 4;
-            if (fx >= cbx && fx <= cbx + bw && fy >= cby + 24 && fy <= cby + bh) {
-                try_console_sabotage();
-                if (app_state == STATE_COMBAT) return;
-            }
             dng_touch_began(sx, sy, now_time);
         } else {
             handle_screen_tap(sx, sy);
@@ -1201,11 +1194,6 @@ static void event(const sapp_event *ev) {
                 dng_state.player.dir = (dng_state.player.dir + 1) % 4;
                 dng_state.player.target_angle += 0.25f;
             }
-            break;
-        case SAPP_KEYCODE_SPACE:
-        case SAPP_KEYCODE_ENTER:
-            if (dng_play_state == DNG_STATE_PLAYING)
-                try_console_sabotage();
             break;
         default: break;
     }

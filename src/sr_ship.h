@@ -651,10 +651,10 @@ static void draw_room_label(uint32_t *px, int W, int H,
         for (int rx = bar_x; rx < bar_x + fill && rx < W; rx++)
             if (bar_y >= 0 && bar_y < H && rx >= 0) px[bar_y * W + rx] = col;
 
-        /* Console prompt */
+        /* Console status */
         if (room->subsystem_hp > 0) {
             sr_draw_text_shadow(px, W, H, bx + 4, by + 30,
-                                "[SPACE] SABOTAGE", 0xFF22CCEE, shadow);
+                                "CONSOLE ACTIVE", 0xFF22CCEE, shadow);
         } else {
             sr_draw_text_shadow(px, W, H, bx + 4, by + 30,
                                 "DESTROYED", 0xFF444444, shadow);
@@ -663,7 +663,7 @@ static void draw_room_label(uint32_t *px, int W, int H,
         sr_draw_text_shadow(px, W, H, bx + 4, by + 14, "CARGO BAY", gray, shadow);
         if (!room->cleared) {
             sr_draw_text_shadow(px, W, H, bx + 4, by + 24,
-                                "[SPACE] SEARCH", 0xFF22CCEE, shadow);
+                                "APPROACH CONSOLE", 0xFF22CCEE, shadow);
         } else {
             sr_draw_text_shadow(px, W, H, bx + 4, by + 24,
                                 "SEARCHED", 0xFF444444, shadow);
@@ -677,6 +677,103 @@ static void draw_room_label(uint32_t *px, int W, int H,
                                 ship->officers[o].name, 0xFF4444FF, shadow);
             break;
         }
+    }
+}
+
+/* ── Expanded map ship overlay ─────────────────────────────────── */
+
+/* Recolor expanded map cells by ship room type + draw room names.
+ * Called from sr_main.c after draw_expanded_map when ship is active. */
+static void expanded_map_ship_overlay(sr_framebuffer *fb_ptr, const ship_state *ship) {
+    if (!ship || !ship->initialized) return;
+
+    sr_dungeon *d = dng_state.dungeon;
+    uint32_t *px = fb_ptr->color;
+    int W = fb_ptr->width, H = fb_ptr->height;
+
+    /* Recompute layout (must match draw_expanded_map) */
+    int margin = 20;
+    int avail_w = W - margin * 2;
+    int avail_h = H - margin * 2 - 16;
+    int scale_x = avail_w / d->w;
+    int scale_y = avail_h / d->h;
+    int scale = scale_x < scale_y ? scale_x : scale_y;
+    if (scale < 3) scale = 3;
+    if (scale > 12) scale = 12;
+
+    int map_w = d->w * scale;
+    int ox = (W - map_w) / 2;
+    int oy = (H - d->h * scale) / 2 + 8;
+
+    /* Recolor cells by room type */
+    for (int gy = 1; gy <= d->h; gy++) {
+        for (int gx = 1; gx <= d->w; gx++) {
+            if (d->map[gy][gx] == 1) continue;
+            int ri = dng_room_at(d, gx, gy);
+            if (ri < 0 || ri >= d->room_count) continue;
+            int si = d->room_ship_idx[ri];
+            if (si < 0 || si >= ship->room_count) continue;
+
+            uint32_t rc = room_type_colors[ship->rooms[si].type];
+            int rr = ((rc >> 0) & 0xFF) * 2 / 5;
+            int rg = ((rc >> 8) & 0xFF) * 2 / 5;
+            int rb = ((rc >> 16) & 0xFF) * 2 / 5;
+            uint32_t cell_col = 0xFF000000 | (rb << 16) | (rg << 8) | rr;
+
+            int px0 = ox + (gx - 1) * scale;
+            int py0 = oy + (gy - 1) * scale;
+            for (int dy = 0; dy < scale - 1; dy++)
+                for (int dx = 0; dx < scale - 1; dx++) {
+                    int rx = px0 + dx, ry = py0 + dy;
+                    if (rx >= 0 && rx < W && ry >= 0 && ry < H)
+                        px[ry * W + rx] = cell_col;
+                }
+        }
+    }
+
+    /* Redraw player on top of recolored cells */
+    {
+        dng_player *p = &dng_state.player;
+        int px0 = ox + (p->gx - 1) * scale;
+        int py0 = oy + (p->gy - 1) * scale;
+        for (int dy = 0; dy < scale - 1; dy++)
+            for (int dx = 0; dx < scale - 1; dx++) {
+                int rx = px0 + dx, ry = py0 + dy;
+                if (rx >= 0 && rx < W && ry >= 0 && ry < H)
+                    px[ry * W + rx] = 0xFF00FFFF;
+            }
+    }
+
+    /* Draw room names at room centers */
+    for (int ri = 0; ri < d->room_count; ri++) {
+        int si = d->room_ship_idx[ri];
+        if (si < 0 || si >= ship->room_count) continue;
+
+        const char *name = room_type_names[ship->rooms[si].type];
+        int cx = ox + (d->room_cx[ri] - 1) * scale + scale / 2;
+        int cy = oy + (d->room_cy[ri] - 1) * scale + scale / 2;
+
+        /* Center text (each char is 6px wide in the bitmap font) */
+        int name_len = 0;
+        while (name[name_len]) name_len++;
+        int text_w = name_len * 6;
+        int tx = cx - text_w / 2;
+        int ty = cy - 3; /* center vertically (font is ~7px tall) */
+
+        uint32_t col = room_type_colors[ship->rooms[si].type];
+        sr_draw_text_shadow(px, W, H, tx, ty, name, col, 0xFF000000);
+    }
+
+    /* Stairs labels */
+    if (d->has_up) {
+        int cx = ox + (d->stairs_gx - 1) * scale + scale / 2;
+        int cy = oy + (d->stairs_gy - 1) * scale + scale / 2;
+        sr_draw_text_shadow(px, W, H, cx - 6, cy - 3, "UP", 0xFF00CC00, 0xFF000000);
+    }
+    if (d->has_down) {
+        int cx = ox + (d->down_gx - 1) * scale + scale / 2;
+        int cy = oy + (d->down_gy - 1) * scale + scale / 2;
+        sr_draw_text_shadow(px, W, H, cx - 12, cy - 3, "DOWN", 0xFF4444FF, 0xFF000000);
     }
 }
 
