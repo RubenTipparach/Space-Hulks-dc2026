@@ -174,6 +174,8 @@ static void draw_title_screen(sr_framebuffer *fb_ptr) {
 static int last_player_gx = -1, last_player_gy = -1;
 static int current_combat_room = -1; /* ship room index of current combat */
 static bool console_combat = false;  /* true if combat was triggered by console sabotage */
+static char dng_hud_msg[64];         /* temporary HUD message for dungeon scene */
+static int  dng_hud_msg_timer = 0;   /* frames remaining to show message */
 
 static void game_init_ship(void) {
     /* Generate ship based on current floor as difficulty */
@@ -305,6 +307,7 @@ static void handle_combat_end(void) {
 static void check_random_encounter(void) {
     dng_player *p = &dng_state.player;
     if (p->gx != last_player_gx || p->gy != last_player_gy) {
+        int prev_gx = last_player_gx, prev_gy = last_player_gy;
         last_player_gx = p->gx;
         last_player_gy = p->gy;
         /* Auto-save on each step */
@@ -332,6 +335,36 @@ static void check_random_encounter(void) {
         /* Check for console interaction — sentinel defense combat */
         uint8_t con_type = dng_state.dungeon->consoles[p->gy][p->gx];
         if (con_type != 0 && current_ship.initialized && current_ship.boarding_active) {
+            /* Block console access if enemies remain in this room — bounce back */
+            int con_room = dng_room_at(dng_state.dungeon, p->gx, p->gy);
+            if (con_room >= 0) {
+                sr_dungeon *dd = dng_state.dungeon;
+                int rx = dd->room_x[con_room], ry = dd->room_y[con_room];
+                int rw = dd->room_w[con_room], rh = dd->room_h[con_room];
+                bool has_enemies = false;
+                for (int cy = ry; cy < ry + rh && !has_enemies; cy++)
+                    for (int cx = rx; cx < rx + rw && !has_enemies; cx++)
+                        if (dd->aliens[cy][cx] != 0) has_enemies = true;
+                if (has_enemies) {
+                    /* Remember the console tile for the bounce midpoint */
+                    float mid_x = (p->gx - 0.5f) * DNG_CELL_SIZE;
+                    float mid_z = (p->gy - 0.5f) * DNG_CELL_SIZE;
+                    /* Snap grid position back to previous tile */
+                    p->gx = prev_gx;
+                    p->gy = prev_gy;
+                    last_player_gx = prev_gx;
+                    last_player_gy = prev_gy;
+                    p->target_x = (p->gx - 0.5f) * DNG_CELL_SIZE;
+                    p->target_z = (p->gy - 0.5f) * DNG_CELL_SIZE;
+                    /* Start bounce animation */
+                    p->bounce_mid_x = mid_x;
+                    p->bounce_mid_z = mid_z;
+                    p->bounce_timer = 12;
+                    snprintf(dng_hud_msg, sizeof(dng_hud_msg), "CLEAR ENEMIES FIRST");
+                    dng_hud_msg_timer = 90;
+                    goto skip_console;
+                }
+            }
             /* Remove the console from the map */
             dng_state.dungeon->consoles[p->gy][p->gx] = 0;
 
@@ -378,6 +411,7 @@ static void check_random_encounter(void) {
                 }
             }
         }
+        skip_console: (void)0;
     }
 }
 
@@ -863,6 +897,16 @@ static void frame(void) {
                 sr_draw_text_shadow(fb.color, fb.width, fb.height,
                                     fb.width - 60, 4, deckbuf, 0xFF888888, 0xFF000000);
             }
+        }
+
+        /* HUD message (e.g. "CLEAR ENEMIES FIRST") */
+        if (dng_hud_msg_timer > 0) {
+            dng_hud_msg_timer--;
+            uint32_t msg_col = (dng_hud_msg_timer < 20) ? 0xFF555555 : 0xFFFF4444;
+            int mlen = 0; for (const char *c = dng_hud_msg; *c; c++) mlen++;
+            int mx = fb.width / 2 - mlen * 3;
+            sr_draw_text_shadow(fb.color, fb.width, fb.height,
+                                mx, fb.height / 2 - 4, dng_hud_msg, msg_col, 0xFF000000);
         }
 
         if (dng_show_info) {
