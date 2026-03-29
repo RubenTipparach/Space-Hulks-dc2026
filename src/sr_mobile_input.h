@@ -42,6 +42,28 @@ static void dng_touch_ended(float sx, float sy, double time) {
     double duration = time - touch_start_time;
 
     if (dist < TOUCH_SWIPE_MIN_DIST && duration < TOUCH_TAP_MAX_TIME) {
+        /* If expanded map is open, any tap closes it */
+        if (dng_expanded_map) {
+            dng_expanded_map = false;
+            return;
+        }
+
+        /* Check if tap is on the minimap area — open expanded map */
+        {
+            float fbx, fby;
+            screen_to_fb(sx, sy, &fbx, &fby);
+            sr_dungeon *md = dng_state.dungeon;
+            int mscale = 2;
+            int mmx = FB_WIDTH - md->w * mscale - 4;
+            int mmy = 4;
+            int mmw = md->w * mscale;
+            int mmh = md->h * mscale;
+            if (fbx >= mmx && fbx <= mmx + mmw && fby >= mmy && fby <= mmy + mmh) {
+                dng_expanded_map = true;
+                return;
+            }
+        }
+
         /* Short tap — strafe based on screen half */
         float mid_x = sapp_widthf() * 0.5f;
         if (sx < mid_x) {
