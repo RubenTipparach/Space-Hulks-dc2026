@@ -186,8 +186,9 @@ static void game_init_ship(void) {
         if (!dng_state.floor_generated[deck]) continue;
         sr_dungeon *dd = &dng_state.floors[deck];
 
-        /* Clear existing aliens and consoles (will be re-placed below) */
+        /* Clear existing entities (will be re-placed below) */
         memset(dd->aliens, 0, sizeof(dd->aliens));
+        memset(dd->alien_names, 0, sizeof(dd->alien_names));
         memset(dd->consoles, 0, sizeof(dd->consoles));
 
         /* Build dng_room array from stored room info */
@@ -208,39 +209,21 @@ static void game_init_ship(void) {
             dd->room_ship_idx[r] = start + r;
         }
 
-        /* Populate with officers and enemies */
-        ship_populate_deck(&current_ship, dd, deck, dd->room_count, rooms);
-
-        /* Place consoles at room centers for rooms with active subsystems or cargo */
+        /* Place consoles FIRST at room centers */
         for (int r = 0; r < count && r < dd->room_count; r++) {
             ship_room *rm = &current_ship.rooms[start + r];
             if (rm->type == ROOM_CORRIDOR) continue;
-            /* Only place console if subsystem is active or it's unsearched cargo */
             if (rm->subsystem_hp_max > 0 && rm->subsystem_hp <= 0) continue;
             if (rm->type == ROOM_CARGO && rm->cleared) continue;
             int cx = dd->room_cx[r], cy = dd->room_cy[r];
-            /* Find an open cell in the room for the console (avoid aliens) */
-            if (cx >= 1 && cx <= dd->w && cy >= 1 && cy <= dd->h) {
-                if (dd->aliens[cy][cx] == 0) {
-                    dd->consoles[cy][cx] = (uint8_t)rm->type;
-                } else {
-                    /* Officer at center — try adjacent cells within room bounds */
-                    bool placed = false;
-                    static const int off_dx[] = {1, -1, 0, 0};
-                    static const int off_dy[] = {0, 0, 1, -1};
-                    for (int d = 0; d < 4 && !placed; d++) {
-                        int nx = cx + off_dx[d], ny = cy + off_dy[d];
-                        if (nx >= dd->room_x[r] && nx < dd->room_x[r] + dd->room_w[r] &&
-                            ny >= dd->room_y[r] && ny < dd->room_y[r] + dd->room_h[r] &&
-                            nx >= 1 && nx <= dd->w && ny >= 1 && ny <= dd->h &&
-                            dd->map[ny][nx] == 0 && dd->aliens[ny][nx] == 0) {
-                            dd->consoles[ny][nx] = (uint8_t)rm->type;
-                            placed = true;
-                        }
-                    }
-                }
+            if (cx >= 1 && cx <= dd->w && cy >= 1 && cy <= dd->h &&
+                dd->map[cy][cx] == 0) {
+                dd->consoles[cy][cx] = (uint8_t)rm->type;
             }
         }
+
+        /* Then populate aliens (officers + enemies) — they avoid consoles */
+        ship_populate_deck(&current_ship, dd, deck, dd->room_count, rooms);
     }
 }
 
@@ -812,14 +795,52 @@ static void frame(void) {
             /* Redraw player dot + FOV cone on top of recolored cells */
             draw_minimap_player(&fb);
 
-            /* Room label at bottom */
-            dng_player *rp = &dng_state.player;
-            int local_room = dng_room_at(dng_state.dungeon, rp->gx, rp->gy);
-            if (local_room >= 0 && local_room < dng_state.dungeon->room_count) {
-                int sr_idx = dng_state.dungeon->room_ship_idx[local_room];
-                if (sr_idx >= 0 && sr_idx < current_ship.room_count) {
-                    draw_room_label(fb.color, fb.width, fb.height,
-                                    &current_ship.rooms[sr_idx], sr_idx, &current_ship);
+            /* Console label — show subsystem name when facing a console */
+            {
+                dng_player *rp = &dng_state.player;
+                int look_gx = rp->gx + dng_dir_dx[rp->dir];
+                int look_gy = rp->gy + dng_dir_dz[rp->dir];
+                /* Check the cell player is facing, and also current cell */
+                uint8_t con = 0;
+                if (look_gx >= 1 && look_gx <= dng_state.dungeon->w &&
+                    look_gy >= 1 && look_gy <= dng_state.dungeon->h)
+                    con = dng_state.dungeon->consoles[look_gy][look_gx];
+                if (con == 0)
+                    con = dng_state.dungeon->consoles[rp->gy][rp->gx];
+                if (con > 0 && con < ROOM_TYPE_COUNT) {
+                    uint32_t col = room_type_colors[con];
+                    const char *name = room_type_names[con];
+                    /* Find subsystem HP for this console type */
+                    int sys_hp = -1, sys_max = -1;
+                    for (int ri = 0; ri < current_ship.room_count; ri++) {
+                        if (current_ship.rooms[ri].type == (int)con) {
+                            sys_hp = current_ship.rooms[ri].subsystem_hp;
+                            sys_max = current_ship.rooms[ri].subsystem_hp_max;
+                            break;
+                        }
+                    }
+                    char cbuf[48];
+                    if (sys_max > 0)
+                        snprintf(cbuf, sizeof(cbuf), "%s  SYS %d/%d", name, sys_hp, sys_max);
+                    else
+                        snprintf(cbuf, sizeof(cbuf), "%s", name);
+                    int tw = 0; for (const char *c = cbuf; *c; c++) tw++;
+                    int tx = fb.width / 2 - tw * 3;
+                    sr_draw_text_shadow(fb.color, fb.width, fb.height,
+                                        tx, fb.height - 14, cbuf, col, 0xFF000000);
+                }
+
+                /* Show alien name when facing one */
+                if (look_gx >= 1 && look_gx <= dng_state.dungeon->w &&
+                    look_gy >= 1 && look_gy <= dng_state.dungeon->h) {
+                    uint8_t alien = dng_state.dungeon->aliens[look_gy][look_gx];
+                    if (alien > 0 && dng_state.dungeon->alien_names[look_gy][look_gx][0]) {
+                        const char *aname = dng_state.dungeon->alien_names[look_gy][look_gx];
+                        int alen = 0; for (const char *c = aname; *c; c++) alen++;
+                        int ax = fb.width / 2 - alen * 3;
+                        sr_draw_text_shadow(fb.color, fb.width, fb.height,
+                                            ax, fb.height - 24, aname, 0xFFFF4444, 0xFF000000);
+                    }
                 }
             }
 

@@ -54,6 +54,7 @@ typedef struct {
     bool has_down;
     /* Alien entities (for FPS view) */
     uint8_t aliens[DNG_GRID_H + 1][DNG_GRID_W + 1]; /* 0=none, 1-4=enemy type (ENEMY_LURKER+1 etc) */
+    char alien_names[DNG_GRID_H + 1][DNG_GRID_W + 1][16]; /* individual name per alien */
     /* Console entities — interactable objects at room centers */
     uint8_t consoles[DNG_GRID_H + 1][DNG_GRID_W + 1]; /* 0=none, room_type (ROOM_BRIDGE etc) */
     /* Room info for ship system */
@@ -72,6 +73,26 @@ static void dng_rng_seed(uint32_t seed) { dng_rng_state = seed; }
 static int dng_rng_int(int max) {
     dng_rng_state = dng_rng_state * 1103515245u + 12345u;
     return (int)(((dng_rng_state >> 16) & 0x7FFF) % (uint32_t)max);
+}
+
+/* ── Alien name generation ───────────────────────────────────────── */
+
+static const char *dng_alien_prefixes[] = {
+    "ZR", "KR", "VX", "GH", "SK", "BL", "TR", "NX", "QZ", "XL",
+    "DR", "MK", "PH", "SN", "GL", "FL", "TH", "CH", "WR", "SH",
+};
+#define DNG_ALIEN_PREFIX_COUNT 20
+
+static const char *dng_alien_suffixes[] = {
+    "AAK", "IKS", "ULL", "ORM", "AXE", "ENT", "IRE", "OKK", "URG", "ASH",
+    "ILK", "UNG", "ARN", "EEL", "OOZ", "AWN", "IPP", "UTH", "AGG", "ISS",
+};
+#define DNG_ALIEN_SUFFIX_COUNT 20
+
+static void dng_gen_alien_name(char *out, int max_len) {
+    int pi = dng_rng_int(DNG_ALIEN_PREFIX_COUNT);
+    int si = dng_rng_int(DNG_ALIEN_SUFFIX_COUNT);
+    snprintf(out, max_len, "%s'%s", dng_alien_prefixes[pi], dng_alien_suffixes[si]);
 }
 
 /* ── Dungeon queries ─────────────────────────────────────────────── */
@@ -198,7 +219,7 @@ static void dng_generate(sr_dungeon *d, int w, int h, bool has_down_stairs, bool
 
     int mid_y = h / 2;          /* central corridor Y */
     int corridor_y1 = mid_y;
-    int corridor_y2 = mid_y;
+    int corridor_y2 = mid_y + 1;  /* 2 tiles wide */
 
     /* Ship hull boundaries (leave margin) */
     int ship_left = 3;
@@ -311,8 +332,10 @@ static void dng_generate(sr_dungeon *d, int w, int h, bool has_down_stairs, bool
             if (ax == d->spawn_gx && ay == d->spawn_gy) continue;
             if (d->has_up && ax == d->stairs_gx && ay == d->stairs_gy) continue;
             if (d->has_down && ax == d->down_gx && ay == d->down_gy) continue;
+            if (d->consoles[ay][ax] != 0) continue; /* don't place on consoles */
             int max_type = (floor_num <= 1) ? 2 : (floor_num <= 3) ? 3 : 4;
             d->aliens[ay][ax] = 1 + (uint8_t)dng_rng_int(max_type);
+            dng_gen_alien_name(d->alien_names[ay][ax], 16);
         }
     }
 }
