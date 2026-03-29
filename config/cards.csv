@@ -1,0 +1,16 @@
+card_name,card_type,card_color,energy_cost,card_text,pool,scout_count,marine_count,extra_notes
+SHIELD,TARGET_SELF,0xFFCC8822 (blue),1,+3 SH,starter,3,4,Shield persists through enemy turn then clears next draw.
+SHOOT,TARGET_ENEMY,0xFF2222CC (red),1,3 DMG,starter,2,3,Single target ranged.
+BURST,TARGET_ALL_ENEMIES,0xFF2266FF (orange),2,2 ALL,starter,2,1,Hits all enemies.
+MOVE,TARGET_SELF,0xFF22CC22 (green),1,+2 MP,starter,2,1,Grants 2 move points to spend freely (Q=fwd R=back).
+MELEE,TARGET_ENEMY,0xFF22CCCC (yellow),1,6 DMG,starter,1,1,Requires distance 0. High damage but positional.
+OVERCHRG,TARGET_SELF,0xFFEECC22 (cyan),0,+2 NRG,droppable,,,Free energy boost for the turn.
+REPAIR,TARGET_SELF,0xFF22CC88 (teal),2,+4 HP,droppable,,,Heals up to max HP.
+STUN,TARGET_ALL_ENEMIES,0xFFCC22CC (magenta),1,STUN,droppable,,,All enemies skip their next attack. +1 shield bonus.
+FORTIFY,TARGET_SELF,0xFFFFAA22 (bright blue),2,+6 SH,droppable,,,Double shield value vs SHIELD card.
+DBL SHOT,TARGET_ENEMY,0xFF4444FF (bright red),2,5 DMG,droppable,,,High single-target ranged damage.
+DASH,TARGET_ENEMY,0xFF44CCCC (bright yellow),2,+3MP 4DMG,droppable,,,Grants 3 move points and deals 4 damage to target.
+ICE,TARGET_ENEMY,0xFFFFCC44 (light blue),1,FREEZE 3T SLOW+DMG,droppable,,,Freezes target for 3 turns with slow and 1 damage.
+ACID,TARGET_ENEMY,0xFF22CCAA (green-teal),1,STACK DOT 1/STACK,droppable,,,Stackable damage-over-time. 1 dmg per stack per turn.
+FIRE,TARGET_ENEMY,0xFF2244FF (bright orange-red),1,BURN 3T SPREADS,droppable,,,Burns target for 3 turns. Spreads to adjacent enemies.
+LIGHTNING,TARGET_ENEMY,0xFFEEEE44 (bright cyan-yellow),2,STUN 1-2T 2 DMG,droppable,,,Stuns target 1-2 turns and deals 2 damage.

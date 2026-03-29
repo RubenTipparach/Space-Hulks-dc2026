@@ -556,6 +556,8 @@ static void minimap_line(uint32_t *px, int x0, int y0, int x1, int y1, uint32_t 
     }
 }
 
+static void draw_minimap_player(sr_framebuffer *fb_ptr); /* forward decl */
+
 static void draw_dungeon_minimap(sr_framebuffer *fb_ptr) {
     sr_dungeon *d = dng_state.dungeon;
     dng_player *p = &dng_state.player;
@@ -590,6 +592,18 @@ static void draw_dungeon_minimap(sr_framebuffer *fb_ptr) {
             for (int dx = 0; dx < scale; dx++)
                 minimap_pixel(px, px0 + dx, py0 + dy, 0xFF0000CC);
     }
+
+    draw_minimap_player(fb_ptr);
+}
+
+/* Draw player dot + FOV cone on minimap (call after any minimap recoloring) */
+static void draw_minimap_player(sr_framebuffer *fb_ptr) {
+    sr_dungeon *d = dng_state.dungeon;
+    dng_player *p = &dng_state.player;
+    int scale = 2;
+    int mx = FB_WIDTH - d->w * scale - 4;
+    int my = 4;
+    uint32_t *px = fb_ptr->color;
 
     /* Player dot */
     float pcx = mx + (p->gx - 1) * scale + scale * 0.5f;

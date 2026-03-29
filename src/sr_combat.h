@@ -109,6 +109,9 @@ static const char_class char_classes[] = {
 
 enum { ENEMY_LURKER, ENEMY_BRUTE, ENEMY_SPITTER, ENEMY_HIVEGUARD, ENEMY_TYPE_COUNT };
 
+/* Enemy intent types */
+enum { INTENT_ATTACK, INTENT_MOVE };
+
 typedef struct {
     const char *name;
     int hp_max;
@@ -137,7 +140,8 @@ typedef struct {
     int attack_range;  /* distance at which this enemy can attack */
     int damage;
     int ranged;
-    int flash_timer;  /* > 0 = flashing white */
+    int intent;        /* INTENT_ATTACK or INTENT_MOVE */
+    int flash_timer;   /* > 0 = flashing white */
     bool alive;
     /* Elemental status effects */
     int ice_turns;       /* > 0: frozen, skip move every other turn, reduced dmg */
@@ -189,6 +193,14 @@ typedef struct {
     /* Player visual feedback */
     int player_flash_timer;       /* > 0 = player flickers red (took damage) */
     int player_shield_flash_timer;/* > 0 = blue sphere (shield absorbed) */
+
+    /* Combat log */
+    #define COMBAT_LOG_MAX  64
+    #define COMBAT_LOG_LINE 48
+    char log[COMBAT_LOG_MAX][COMBAT_LOG_LINE];
+    int log_count;
+    int log_scroll;       /* scroll offset when viewing */
+    bool log_open;        /* true = log overlay visible */
 
     /* Drag state */
     bool dragging;
@@ -301,6 +313,8 @@ static void combat_generate_rewards(combat_state *cs) {
     cs->reward_cursor = 0;
 }
 
+static void combat_log(combat_state *cs, const char *fmt, ...); /* forward decl */
+
 static void combat_init(combat_state *cs, int player_class, int floor, int cell_alien_type) {
     memset(cs, 0, sizeof(*cs));
     cs->player_class = player_class;
@@ -338,6 +352,7 @@ static void combat_init(combat_state *cs, int player_class, int floor, int cell_
         cs->enemies[i].attack_range = tmpl->attack_range;
         cs->enemies[i].damage = tmpl->damage;
         cs->enemies[i].ranged = tmpl->ranged;
+        cs->enemies[i].intent = INTENT_MOVE;
         cs->enemies[i].flash_timer = 0;
         cs->enemies[i].alive = true;
     }
@@ -351,7 +366,11 @@ static void combat_init(combat_state *cs, int player_class, int floor, int cell_
     cs->player_won = false;
     cs->initialized = true;
     cs->message_timer = 0;
+    cs->log_count = 0;
+    cs->log_scroll = 0;
+    cs->log_open = false;
     snprintf(cs->message, sizeof(cs->message), "ENEMIES DETECTED!");
+    combat_log(cs, "-- COMBAT START --");
 }
 
 /* ── Card logic ──────────────────────────────────────────────────── */
@@ -359,6 +378,38 @@ static void combat_init(combat_state *cs, int player_class, int floor, int cell_
 static void combat_set_message(combat_state *cs, const char *msg) {
     snprintf(cs->message, sizeof(cs->message), "%s", msg);
     cs->message_timer = 60;
+}
+
+/* ── Combat log ─────────────────────────────────────────────────── */
+
+static void combat_log(combat_state *cs, const char *fmt, ...) {
+    if (cs->log_count >= COMBAT_LOG_MAX) {
+        /* Shift everything up by 1 */
+        for (int i = 0; i < COMBAT_LOG_MAX - 1; i++)
+            memcpy(cs->log[i], cs->log[i+1], COMBAT_LOG_LINE);
+        cs->log_count = COMBAT_LOG_MAX - 1;
+    }
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(cs->log[cs->log_count], COMBAT_LOG_LINE, fmt, ap);
+    va_end(ap);
+    cs->log_count++;
+}
+
+/* ── Enemy intent ───────────────────────────────────────────────── */
+
+static void combat_roll_intents(combat_state *cs) {
+    for (int i = 0; i < cs->enemy_count; i++) {
+        combat_enemy *e = &cs->enemies[i];
+        if (!e->alive) continue;
+        bool stunned = (e->flash_timer > 10) || (e->lightning_stun > 0);
+        if (stunned) {
+            e->intent = INTENT_MOVE;
+            continue;
+        }
+        bool in_range = (cs->player_distance <= e->attack_range);
+        e->intent = in_range ? INTENT_ATTACK : INTENT_MOVE;
+    }
 }
 
 static bool combat_all_enemies_dead(combat_state *cs) {
@@ -388,12 +439,18 @@ static void combat_deal_damage_player(combat_state *cs, int dmg) {
     if (dmg < 1) dmg = 1;
     int absorbed = dmg < cs->player_shield ? dmg : cs->player_shield;
     cs->player_shield -= absorbed;
-    dmg -= absorbed;
-    if (absorbed > 0) cs->player_shield_flash_timer = 20;
-    if (dmg > 0) {
-        cs->player_hp -= dmg;
+    int actual = dmg - absorbed;
+    if (absorbed > 0) {
+        cs->player_shield_flash_timer = 20;
+        combat_log(cs, "  shield absorb %d", absorbed);
+    }
+    if (actual > 0) {
+        cs->player_hp -= actual;
         if (cs->player_hp <= 0) cs->player_hp = 0;
         cs->player_flash_timer = 16;
+        combat_log(cs, "  took %d dmg (%d HP)", actual, cs->player_hp);
+    } else {
+        combat_log(cs, "  fully blocked!");
     }
 }
 
@@ -410,6 +467,7 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
         return;
     }
     cs->energy -= cost;
+    combat_log(cs, "played %s (%dE)", card_names[card], cost);
 
     switch (card) {
         case CARD_SHIELD:
@@ -684,6 +742,8 @@ static void combat_begin_enemy_turn(combat_state *cs) {
         /* Advance if not yet in attack range */
         if (cs->player_distance > e->attack_range) {
             cs->player_distance--;
+            combat_log(cs, "%s advances -> dist %d",
+                       enemy_templates[e->type].name, cs->player_distance);
             char buf[64];
             snprintf(buf, sizeof(buf), "%s ADVANCES! DIST:%d",
                      enemy_templates[e->type].name, cs->player_distance);
@@ -717,11 +777,14 @@ static void combat_update(combat_state *cs) {
         if (cs->anim_timer > 0) {
             cs->anim_timer--;
         } else {
+            cs->player_shield = 0; /* shield expires at start of new turn */
             cs->energy = cs->energy_max; /* refill energy each turn */
             combat_draw_hand(cs);
             cs->cursor = 0;
             cs->target = combat_first_alive_enemy(cs);
             if (cs->target < 0) cs->target = 0;
+            combat_roll_intents(cs); /* enemies decide what they'll do */
+            combat_log(cs, "-- TURN %d --", cs->turn);
             cs->phase = CPHASE_PLAYER_TURN;
         }
     }
@@ -745,15 +808,17 @@ static void combat_update(combat_state *cs) {
 
         cs->enemy_atk_timer--;
 
-        /* Damage lands at the hit frame */
+        /* Action lands at the hit frame */
         if (cs->enemy_atk_timer == ENEMY_ATK_HIT_FRAME) {
             combat_enemy *e = &cs->enemies[cs->enemy_atk_idx];
+            char buf[64];
+
             int dmg = e->damage;
-            /* Ice reduces attack damage by half */
             if (e->ice_turns > 0) dmg = dmg / 2;
             if (dmg < 1) dmg = 1;
+            combat_log(cs, "%s attacks for %d",
+                       enemy_templates[e->type].name, dmg);
             combat_deal_damage_player(cs, dmg);
-            char buf[64];
             snprintf(buf, sizeof(buf), "%s ATTACKS -%dHP",
                      enemy_templates[e->type].name, dmg);
             combat_set_message(cs, buf);
@@ -790,8 +855,9 @@ static void combat_action_end_turn(combat_state *cs) {
     for (int i = 0; i < cs->hand_count; i++)
         cs->discard[cs->discard_count++] = cs->hand[i];
     cs->hand_count = 0;
-    cs->player_shield = 0;
-    /* Move points persist across rounds */
+    cs->player_move_pts = 0; /* unspent move points are lost */
+    combat_log(cs, "-- ENEMY TURN --");
+    /* Shield persists through enemy turn, cleared at next draw */
     cs->phase = CPHASE_ENEMY_TURN;
     combat_begin_enemy_turn(cs);
 }
@@ -809,6 +875,8 @@ static void combat_action_move_forward(combat_state *cs) {
     }
     cs->player_move_pts--;
     cs->player_distance--;
+    combat_log(cs, "advance -> dist %d", cs->player_distance);
+    combat_roll_intents(cs); /* enemies react to new distance */
     char buf[64];
     snprintf(buf, sizeof(buf), "ADVANCE! DIST:%d MP:%d", cs->player_distance, cs->player_move_pts);
     combat_set_message(cs, buf);
@@ -822,6 +890,8 @@ static void combat_action_move_back(combat_state *cs) {
     }
     cs->player_move_pts--;
     cs->player_distance++;
+    combat_log(cs, "retreat -> dist %d", cs->player_distance);
+    combat_roll_intents(cs); /* enemies react to new distance */
     char buf[64];
     snprintf(buf, sizeof(buf), "RETREAT! DIST:%d MP:%d", cs->player_distance, cs->player_move_pts);
     combat_set_message(cs, buf);
@@ -852,6 +922,28 @@ static void combat_card_rect(const combat_state *cs, int i, int *ox, int *oy) {
 /* ── Touch drag input (Slay the Spire style) ─────────────────────── */
 
 static void combat_touch_began(combat_state *cs, float fx, float fy) {
+    /* Log button / log overlay interaction */
+    if (cs->log_open) {
+        /* Close button [X] */
+        int lx = 20, lw = FB_WIDTH - 40;
+        if (fx >= lx + lw - 40 && fx <= lx + lw && fy >= 10 && fy <= 24) {
+            cs->log_open = false;
+            return;
+        }
+        /* Tap anywhere else on overlay closes it too */
+        cs->log_open = false;
+        return;
+    }
+    /* LOG button */
+    {
+        int lb_x = FB_WIDTH - 32, lb_y = 26;
+        if (fx >= lb_x && fx <= lb_x + 28 && fy >= lb_y && fy <= lb_y + 12) {
+            cs->log_open = true;
+            cs->log_scroll = 0;
+            return;
+        }
+    }
+
     if (cs->phase == CPHASE_RESULT) return;
 
     /* Reward phase — tap a card to pick it */
@@ -989,16 +1081,35 @@ static bool combat_handle_tap(combat_state *cs, float fx, float fy) {
 /* ── Keyboard input ──────────────────────────────────────────────── */
 
 static void combat_handle_key(combat_state *cs, int key) {
+    /* Log toggle and scroll (works in any phase) */
+    if (key == SAPP_KEYCODE_L) {
+        cs->log_open = !cs->log_open;
+        cs->log_scroll = 0;
+        return;
+    }
+    if (cs->log_open) {
+        if (key == SAPP_KEYCODE_W || key == SAPP_KEYCODE_UP) {
+            if (cs->log_scroll < cs->log_count - 5)
+                cs->log_scroll++;
+        }
+        if (key == SAPP_KEYCODE_S || key == SAPP_KEYCODE_DOWN) {
+            if (cs->log_scroll > 0)
+                cs->log_scroll--;
+        }
+        if (key == SAPP_KEYCODE_ESCAPE) cs->log_open = false;
+        return;
+    }
+
     if (cs->phase == CPHASE_RESULT) return;
     if (cs->phase != CPHASE_PLAYER_TURN) return;
 
     switch (key) {
         case SAPP_KEYCODE_LEFT:
-        case SAPP_KEYCODE_A:
+        case SAPP_KEYCODE_Q:
             if (cs->cursor > 0) cs->cursor--;
             break;
         case SAPP_KEYCODE_RIGHT:
-        case SAPP_KEYCODE_D:
+        case SAPP_KEYCODE_E:
             if (cs->cursor < cs->hand_count - 1) cs->cursor++;
             break;
         case SAPP_KEYCODE_UP:
@@ -1018,14 +1129,14 @@ static void combat_handle_key(combat_state *cs, int key) {
             break;
         }
         case SAPP_KEYCODE_TAB:
-        case SAPP_KEYCODE_E:
+        case SAPP_KEYCODE_R:
             combat_action_end_turn(cs);
             break;
-        case SAPP_KEYCODE_Q:
-            combat_action_move_forward(cs);
-            break;
-        case SAPP_KEYCODE_R:
+        case SAPP_KEYCODE_A:
             combat_action_move_back(cs);
+            break;
+        case SAPP_KEYCODE_D:
+            combat_action_move_forward(cs);
             break;
     }
 }
@@ -1181,42 +1292,30 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
                 else
                     spr_draw(px, W, H, sprite, sprite_x + wiggle_x, sprite_y, 2);
 
-                /* Target indicator */
+                /* Target highlight (yellow border around selected enemy) */
                 if (i == combat.target && combat.phase == CPHASE_PLAYER_TURN) {
-                    sr_draw_text_shadow(px, W, H, cx - 3, sprite_y - 10, "V", yellow, shadow);
+                    combat_draw_rect_outline(px, W, H,
+                        sprite_x - 2, sprite_y - 2, 36, 36, yellow);
                 }
 
-                /* Intent indicator: show planned damage during player turn */
+                /* Intent indicator (above sprite) */
                 if (combat.phase == CPHASE_PLAYER_TURN || combat.phase == CPHASE_DRAW) {
-                    bool in_range = combat_enemy_in_range(&combat, i);
-                    bool stunned = (e->flash_timer > 10);
-                    bool lt_stunned = (e->lightning_stun > 0);
-                    bool frozen = (e->ice_turns > 0);
-                    if (lt_stunned) {
-                        sr_draw_text_shadow(px, W, H, cx - 10, sprite_y - 10,
-                                            "ZAPPED", 0xFFEEEE44, shadow);
-                    } else if (stunned) {
+                    bool stunned = (e->flash_timer > 10) || (e->lightning_stun > 0);
+                    if (stunned) {
                         sr_draw_text_shadow(px, W, H, cx - 10, sprite_y - 10,
                                             "STUN", 0xFFCCCC22, shadow);
-                    } else if (frozen && in_range) {
-                        int dmg = e->damage / 2 / 2; if (dmg < 1) dmg = 1;
-                        char intent_buf[16];
-                        snprintf(intent_buf, sizeof(intent_buf), "%d!", dmg);
-                        sr_draw_text_shadow(px, W, H, cx - 8, sprite_y - 10,
-                                            intent_buf, 0xFFFFCC44, shadow);
-                    } else if (in_range && !stunned) {
-                        int dmg = e->damage / 2; if (dmg < 1) dmg = 1;
-                        char intent_buf[16];
-                        snprintf(intent_buf, sizeof(intent_buf), "%d!", dmg);
-                        sr_draw_text_shadow(px, W, H, cx - 8, sprite_y - 10,
-                                            intent_buf, 0xFF4444FF, shadow);
-                    } else if (combat.player_distance > e->attack_range) {
-                        /* Enemy will advance toward player */
+                    } else if (e->intent == INTENT_MOVE) {
+                        /* Movement only */
                         sr_draw_text_shadow(px, W, H, cx - 6, sprite_y - 10,
                                             ">>", 0xFFCC8844, shadow);
-                    } else {
-                        sr_draw_text_shadow(px, W, H, cx - 6, sprite_y - 10,
-                                            "---", 0xFF666666, shadow);
+                    } else if (e->intent == INTENT_ATTACK) {
+                        /* Attack only: red damage number */
+                        int dmg = e->damage / 2; if (dmg < 1) dmg = 1;
+                        if (e->ice_turns > 0) { dmg = dmg / 2; if (dmg < 1) dmg = 1; }
+                        char intent_buf[16];
+                        snprintf(intent_buf, sizeof(intent_buf), "%d", dmg);
+                        sr_draw_text_shadow(px, W, H, cx - 4, sprite_y - 10,
+                                            intent_buf, 0xFF4444FF, shadow);
                     }
                 }
             } else {
@@ -1561,6 +1660,62 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
         combat_draw_rect(px, W, H, cb_x, cb_y, cb_w, cb_h, 0xFF333333);
         combat_draw_rect_outline(px, W, H, cb_x, cb_y, cb_w, cb_h, white);
         sr_draw_text_shadow(px, W, H, cb_x + 12, cb_y + 6, "CONTINUE", white, shadow);
+    }
+
+    /* ── LOG button (always visible) ─────────────────────────── */
+    {
+        int lb_x = W - 32, lb_y = 26;
+        combat_draw_rect(px, W, H, lb_x, lb_y, 28, 12, 0xFF1A1A22);
+        combat_draw_rect_outline(px, W, H, lb_x, lb_y, 28, 12, 0xFF666688);
+        sr_draw_text_shadow(px, W, H, lb_x + 4, lb_y + 2, "LOG", 0xFF888899, shadow);
+    }
+
+    /* ── Log overlay ─────────────────────────────────────────── */
+    if (combat.log_open) {
+        /* Semi-transparent dark background */
+        for (int i = 0; i < W * H; i++) {
+            uint32_t c = px[i];
+            px[i] = ((c >> 24) << 24) |
+                    ((((c>>16)&0xFF)/3)<<16) |
+                    ((((c>>8)&0xFF)/3)<<8) |
+                    (((c)&0xFF)/3);
+        }
+
+        /* Log panel */
+        int lx = 20, ly = 10, lw = W - 40, lh = H - 20;
+        combat_draw_rect(px, W, H, lx, ly, lw, lh, 0xFF0A0A12);
+        combat_draw_rect_outline(px, W, H, lx, ly, lw, lh, 0xFF4444AA);
+        combat_draw_rect_outline(px, W, H, lx+1, ly+1, lw-2, lh-2, 0xFF222244);
+
+        sr_draw_text_shadow(px, W, H, lx + 4, ly + 4, "COMBAT LOG", yellow, shadow);
+        sr_draw_text_shadow(px, W, H, lx + lw - 40, ly + 4, "[X]", 0xFFCC4444, shadow);
+
+        /* Scroll indicators */
+        int visible_lines = (lh - 24) / 10;
+        int start = combat.log_count - visible_lines - combat.log_scroll;
+        if (start < 0) start = 0;
+        int end = start + visible_lines;
+        if (end > combat.log_count) end = combat.log_count;
+
+        for (int li = start; li < end; li++) {
+            int row_y = ly + 18 + (li - start) * 10;
+            uint32_t col = gray;
+            /* Color-code: turn headers = yellow, indented = dim, attacks = red */
+            if (combat.log[li][0] == '-' && combat.log[li][1] == '-')
+                col = yellow;
+            else if (combat.log[li][0] == ' ' && combat.log[li][1] == ' ')
+                col = dim;
+            else if (strstr(combat.log[li], "attack") || strstr(combat.log[li], "SABOTAGE"))
+                col = 0xFF6666FF;
+            sr_draw_text_shadow(px, W, H, lx + 6, row_y, combat.log[li], col, shadow);
+        }
+
+        /* Scroll bar hint */
+        if (combat.log_count > visible_lines) {
+            char sbuf[16];
+            snprintf(sbuf, sizeof(sbuf), "W/S SCROLL");
+            sr_draw_text_shadow(px, W, H, lx + lw/2 - 25, ly + lh - 12, sbuf, dim, shadow);
+        }
     }
 }
 

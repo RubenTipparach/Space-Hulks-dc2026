@@ -263,4 +263,7 @@ static const uint32_t *spr_enemy_table[] = {
 #undef _WH
 #undef __
 
+/* ── Console sprites (per room type) ─────────────────────────────── */
+#include "sr_console_sprites.h"
+
 #endif /* SR_SPRITES_H */

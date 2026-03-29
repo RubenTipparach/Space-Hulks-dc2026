@@ -288,6 +288,16 @@ static void try_console_sabotage(void) {
 
     ship_room *rm = &current_ship.rooms[sr_idx];
 
+    /* Can only sabotage if no enemies remain in THIS room */
+    {
+        sr_dungeon *d = dng_state.dungeon;
+        bool has_enemies = false;
+        for (int ry = d->room_y[local_room]; ry < d->room_y[local_room] + d->room_h[local_room]; ry++)
+            for (int rx = d->room_x[local_room]; rx < d->room_x[local_room] + d->room_w[local_room]; rx++)
+                if (d->aliens[ry][rx] > 0) has_enemies = true;
+        if (has_enemies) return; /* enemies still in room — can't use console */
+    }
+
     /* Can only sabotage rooms with active subsystems */
     if (rm->subsystem_hp_max <= 0 || rm->subsystem_hp <= 0) {
         /* Cargo rooms: search for artifacts */
@@ -753,7 +763,31 @@ static void frame(void) {
                             }
                     }
                 }
+
+                /* Draw console icons at room centers on minimap */
+                for (int ri = 0; ri < md->room_count; ri++) {
+                    int si = md->room_ship_idx[ri];
+                    if (si < 0 || si >= current_ship.room_count) continue;
+                    int rtype = current_ship.rooms[si].type;
+                    if (rtype <= 0 || rtype >= ROOM_TYPE_COUNT) continue;
+                    const uint32_t *cspr = spr_console_table[rtype];
+                    if (!cspr) continue;
+                    int rcx = mmx + (md->room_cx[ri] - 1) * mscale;
+                    int rcy = mmy + (md->room_cy[ri] - 1) * mscale;
+                    /* Draw 4x4 sample from sprite screen center (pixels 6-9, rows 6-9) */
+                    for (int sy = 0; sy < 4; sy++)
+                        for (int sx = 0; sx < 4; sx++) {
+                            uint32_t c = cspr[(6 + sy) * 16 + (6 + sx)];
+                            if ((c & 0xFF000000) == 0) continue;
+                            int cpx = rcx - 2 + sx, cpy = rcy - 2 + sy;
+                            if (cpx >= 0 && cpx < fb.width && cpy >= 0 && cpy < fb.height)
+                                fb.color[cpy * fb.width + cpx] = c;
+                        }
+                }
             }
+
+            /* Redraw player dot + FOV cone on top of recolored cells */
+            draw_minimap_player(&fb);
 
             /* Room label at bottom */
             dng_player *rp = &dng_state.player;
