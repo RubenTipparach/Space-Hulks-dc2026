@@ -7,6 +7,12 @@ torch:
   min_range: 1.0                # radius of full brightness (no falloff)
   attn_dist: 6.0                # distance over which light fades to zero
 
+# Room ceiling lights (point light at center-top of each room)
+room_light:
+  color: [0.8, 0.9, 1.0]         # RGB normalized (cool white)
+  brightness: 1.5                 # intensity multiplier
+  radius: 10.0                   # falloff radius in world units
+
 # Ambient lighting (constant base illumination)
 ambient:
   color: [0.15, 0.12, 0.18]    # RGB normalized

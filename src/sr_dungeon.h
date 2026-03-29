@@ -62,6 +62,7 @@ typedef struct {
     int room_cx[12], room_cy[12];  /* room centers */
     int room_x[12], room_y[12], room_w[12], room_h[12]; /* room bounds */
     int room_ship_idx[12];         /* index into ship_room array (-1 = none) */
+    bool room_light_on[12];        /* per-room ceiling light on/off */
 } sr_dungeon;
 
 /* ── Simple RNG for dungeon generation ───────────────────────────── */
@@ -319,6 +320,7 @@ static void dng_generate(sr_dungeon *d, int w, int h, bool has_down_stairs, bool
         d->room_w[i] = rooms[i].w;
         d->room_h[i] = rooms[i].h;
         d->room_ship_idx[i] = -1;
+        d->room_light_on[i] = true;  /* lights start on */
     }
 
     /* Place alien entities (not spawn, not stairs) */

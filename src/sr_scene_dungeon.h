@@ -19,6 +19,9 @@ static struct {
     float fog_intensity[16];
     float fog_density[16];
     float fog_stop;
+    float room_light_color[3];
+    float room_light_brightness;
+    float room_light_radius;
 } dng_cfg;
 
 static void dng_load_config(void) {
@@ -47,10 +50,19 @@ static void dng_load_config(void) {
     sr_config_array(&cfg, "fog.density", dng_cfg.fog_density, dng_cfg.fog_levels);
     dng_cfg.fog_stop = sr_config_float(&cfg, "fog.stop", 8.0f);
 
+    float rl_color[3] = {0.8f, 0.9f, 1.0f};
+    sr_config_array(&cfg, "room_light.color", rl_color, 3);
+    dng_cfg.room_light_color[0] = rl_color[0];
+    dng_cfg.room_light_color[1] = rl_color[1];
+    dng_cfg.room_light_color[2] = rl_color[2];
+    dng_cfg.room_light_brightness = sr_config_float(&cfg, "room_light.brightness", 1.2f);
+    dng_cfg.room_light_radius     = sr_config_float(&cfg, "room_light.radius", 5.0f);
+
     sr_config_free(&cfg);
-    printf("[dungeon] Config loaded: torch(%.1f/%.1f/%.1f) ambient(%.2f) fog(%d levels)\n",
+    printf("[dungeon] Config loaded: torch(%.1f/%.1f/%.1f) ambient(%.2f) fog(%d levels) room_light(%.1f/%.1f)\n",
            dng_cfg.light_brightness, dng_cfg.light_min_range, dng_cfg.light_attn_dist,
-           dng_cfg.ambient_brightness, dng_cfg.fog_levels);
+           dng_cfg.ambient_brightness, dng_cfg.fog_levels,
+           dng_cfg.room_light_brightness, dng_cfg.room_light_radius);
 }
 
 /* ── Game state ──────────────────────────────────────────────────── */
@@ -68,6 +80,24 @@ static int dng_light_mode = 0;
 static bool dng_show_info = false;
 static bool dng_expanded_map = false;
 
+/* ── Per-cell room light (set before drawing each cell) ─────────── */
+
+static int   dng_cur_room_light = -1;  /* room index for current cell, -1 = none */
+static float dng_cur_rl_x, dng_cur_rl_y, dng_cur_rl_z; /* precomputed light world pos */
+
+static void dng_set_cell_room_light(int gx, int gy) {
+    sr_dungeon *dd = dng_state.dungeon;
+    int ri = dng_room_at(dd, gx, gy);
+    if (ri >= 0 && dd->room_light_on[ri]) {
+        dng_cur_room_light = ri;
+        dng_cur_rl_x = (dd->room_cx[ri] - 0.5f) * DNG_CELL_SIZE;
+        dng_cur_rl_y = DNG_HALF_CELL;
+        dng_cur_rl_z = (dd->room_cy[ri] - 0.5f) * DNG_CELL_SIZE;
+    } else {
+        dng_cur_room_light = -1;
+    }
+}
+
 /* ── Torch lighting (pixel-lit callback) ─────────────────────────── */
 
 static float dng_torch_light(float wx, float wy, float wz,
@@ -78,30 +108,63 @@ static float dng_torch_light(float wx, float wy, float wz,
     float ambient = dng_cfg.ambient_brightness *
         (dng_cfg.ambient_color[0] + dng_cfg.ambient_color[1] + dng_cfg.ambient_color[2]) / 3.0f;
 
+    float total = ambient;
+
+    /* Player torch */
     float dx = p->x - wx;
     float dy = p->y - wy;
     float dz = p->z - wz;
     float dist = sqrtf(dx*dx + dy*dy + dz*dz);
 
-    if (dist >= dng_cfg.light_attn_dist) return ambient;
+    if (dist < dng_cfg.light_attn_dist) {
+        float atten;
+        if (dist <= dng_cfg.light_min_range) {
+            atten = 1.0f;
+        } else {
+            atten = 1.0f - (dist - dng_cfg.light_min_range) /
+                            (dng_cfg.light_attn_dist - dng_cfg.light_min_range);
+            atten *= atten;
+        }
 
-    float atten;
-    if (dist <= dng_cfg.light_min_range) {
-        atten = 1.0f;
-    } else {
-        atten = 1.0f - (dist - dng_cfg.light_min_range) /
-                        (dng_cfg.light_attn_dist - dng_cfg.light_min_range);
-        atten *= atten;
+        float inv_dist = 1.0f / (dist + 0.001f);
+        float ndotl = (dx * nx + dy * ny + dz * nz) * inv_dist;
+        if (ndotl < 0.0f) ndotl = 0.0f;
+
+        float torch_lum = dng_cfg.light_brightness *
+            (dng_cfg.light_color[0] + dng_cfg.light_color[1] + dng_cfg.light_color[2]) / 3.0f;
+
+        total += torch_lum * atten * ndotl;
     }
 
-    float inv_dist = 1.0f / (dist + 0.001f);
-    float ndotl = (dx * nx + dy * ny + dz * nz) * inv_dist;
-    if (ndotl < 0.0f) ndotl = 0.0f;
+    /* Room ceiling light (one per cell, set before draw) */
+    if (dng_cur_room_light >= 0) {
+        float rl_radius = dng_cfg.room_light_radius;
+        float ldx = dng_cur_rl_x - wx;
+        float ldy = dng_cur_rl_y - wy;
+        float ldz = dng_cur_rl_z - wz;
+        float ldist = sqrtf(ldx*ldx + ldy*ldy + ldz*ldz);
 
-    float torch_lum = dng_cfg.light_brightness *
-        (dng_cfg.light_color[0] + dng_cfg.light_color[1] + dng_cfg.light_color[2]) / 3.0f;
+        if (ldist < rl_radius) {
+            float la;
+            if (ldist <= 0.5f) {
+                la = 1.0f;
+            } else {
+                la = 1.0f - (ldist - 0.5f) / (rl_radius - 0.5f);
+                la *= la;
+            }
 
-    return ambient + torch_lum * atten * ndotl;
+            float linv = 1.0f / (ldist + 0.001f);
+            float lndotl = (ldx * nx + ldy * ny + ldz * nz) * linv;
+            if (lndotl < 0.0f) lndotl = 0.0f;
+
+            float rl_lum = dng_cfg.room_light_brightness *
+                (dng_cfg.room_light_color[0] + dng_cfg.room_light_color[1] + dng_cfg.room_light_color[2]) / 3.0f;
+
+            total += rl_lum * la * lndotl;
+        }
+    }
+
+    return total;
 }
 
 /* ── Depth-fog intensity ─────────────────────────────────────────── */
@@ -125,7 +188,33 @@ static float dng_fog_vertex_intensity(float wx, float wy, float wz) {
     float dy = p->y - wy;
     float dz = p->z - wz;
     float dist = sqrtf(dx*dx + dy*dy + dz*dz) / DNG_CELL_SIZE;
-    return dng_fog_intensity_at_dist(dist);
+    float base = dng_fog_intensity_at_dist(dist);
+
+    /* Room ceiling light (one per cell, set before draw) */
+    if (dng_cur_room_light >= 0) {
+        float rl_radius = dng_cfg.room_light_radius;
+        float ldx = dng_cur_rl_x - wx;
+        float ldy = dng_cur_rl_y - wy;
+        float ldz = dng_cur_rl_z - wz;
+        float ldist = sqrtf(ldx*ldx + ldy*ldy + ldz*ldz);
+
+        if (ldist < rl_radius) {
+            float la;
+            if (ldist <= 0.5f) {
+                la = 1.0f;
+            } else {
+                la = 1.0f - (ldist - 0.5f) / (rl_radius - 0.5f);
+                la *= la;
+            }
+
+            float rl_lum = dng_cfg.room_light_brightness *
+                (dng_cfg.room_light_color[0] + dng_cfg.room_light_color[1] + dng_cfg.room_light_color[2]) / 3.0f;
+            base += rl_lum * la;
+        }
+    }
+
+    if (base > 1.0f) base = 1.0f;
+    return base;
 }
 
 /* ── Wall / floor drawing ────────────────────────────────────────── */
@@ -249,6 +338,8 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
     for (int gy = gy0; gy <= gy1; gy++) {
         for (int gx = gx0; gx <= gx1; gx++) {
             if (!dng_vis[gy][gx]) continue;
+
+            dng_set_cell_room_light(gx, gy);
 
             float x0 = (gx - 1) * DNG_CELL_SIZE;
             float x1 = gx * DNG_CELL_SIZE;
