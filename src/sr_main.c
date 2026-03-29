@@ -40,8 +40,11 @@
 #include "sr_sprites.h"
 #include "sr_scene_dungeon.h"
 #include "sr_combat.h"
+#include "sr_ship.h"
 #include "sr_menu.h"
 #include "sr_mobile_input.h"
+
+static void game_init_ship(void); /* forward decl */
 
 /* ── Save / Load ─────────────────────────────────────────────────── */
 
@@ -115,6 +118,7 @@ static bool game_load(void) {
     dng_state.dungeon = &dng_state.floors[sd.current_floor];
     dng_player_init(&dng_state.player, sd.player_gx, sd.player_gy, sd.player_dir);
     dng_initialized = true;
+    game_init_ship();
 
     return true;
 }
@@ -165,8 +169,173 @@ static void draw_title_screen(sr_framebuffer *fb_ptr) {
     }
 }
 
-/* ── Track player movement for random encounters ─────────────────── */
+/* ── Ship-mode game initialization ──────────────────────────────── */
+
 static int last_player_gx = -1, last_player_gy = -1;
+static int current_combat_room = -1; /* ship room index of current combat */
+static bool console_combat = false;  /* true if combat was triggered by console sabotage */
+
+static void game_init_ship(void) {
+    /* Generate ship based on current floor as difficulty */
+    int difficulty = dng_state.current_floor;
+    uint32_t ship_seed = dng_state.seed_base + 9999;
+    ship_generate(&current_ship, difficulty, ship_seed);
+
+    /* For each deck, populate the dungeon floor with ship room data */
+    for (int deck = 0; deck < current_ship.num_decks && deck < DNG_MAX_FLOORS; deck++) {
+        if (!dng_state.floor_generated[deck]) continue;
+        sr_dungeon *dd = &dng_state.floors[deck];
+
+        /* Clear existing aliens (ship_populate_deck will place them) */
+        memset(dd->aliens, 0, sizeof(dd->aliens));
+
+        /* Build dng_room array from stored room info */
+        dng_room rooms[12];
+        for (int r = 0; r < dd->room_count && r < 12; r++) {
+            rooms[r].x = dd->room_x[r];
+            rooms[r].y = dd->room_y[r];
+            rooms[r].w = dd->room_w[r];
+            rooms[r].h = dd->room_h[r];
+            rooms[r].cx = dd->room_cx[r];
+            rooms[r].cy = dd->room_cy[r];
+        }
+
+        /* Map ship rooms to dungeon rooms */
+        int start = current_ship.deck_room_start[deck];
+        int count = current_ship.deck_room_count[deck];
+        for (int r = 0; r < count && r < dd->room_count; r++) {
+            dd->room_ship_idx[r] = start + r;
+        }
+
+        /* Populate with officers and enemies */
+        ship_populate_deck(&current_ship, dd, deck, dd->room_count, rooms);
+    }
+}
+
+/* ── Handle combat end (shared by tap and keyboard) ────────────── */
+
+static void handle_combat_end(void) {
+    if (current_ship.initialized) {
+        if (combat.player_won && current_combat_room >= 0) {
+            current_ship.rooms[current_combat_room].cleared = true;
+            /* Console sabotage deals heavy subsystem damage */
+            int sub_dmg = console_combat ? 10 : 3;
+            ship_damage_subsystem(&current_ship, current_combat_room, sub_dmg);
+
+            for (int o = 0; o < current_ship.officer_count; o++) {
+                if (current_ship.officers[o].room_idx == current_combat_room &&
+                    current_ship.officers[o].alive) {
+                    current_ship.officers[o].alive = false;
+                    current_ship.officers[o].captured = true;
+                }
+            }
+            ship_check_missions(&current_ship);
+        }
+        console_combat = false;
+
+        if (!combat.player_won) {
+            g_player.hp = g_player.hp_max / 2;
+            dng_state.current_floor = 0;
+            dng_state.dungeon = &dng_state.floors[0];
+            dng_player_init(&dng_state.player,
+                            dng_state.dungeon->spawn_gx,
+                            dng_state.dungeon->spawn_gy, 0);
+            last_player_gx = dng_state.player.gx;
+            last_player_gy = dng_state.player.gy;
+        }
+
+        if (current_ship.player_ship_destroyed) {
+            g_player.hp = g_player.hp_max / 4;
+            if (g_player.hp < 1) g_player.hp = 1;
+            dng_state.current_floor = 0;
+            dng_state.dungeon = &dng_state.floors[0];
+            dng_player_init(&dng_state.player,
+                            dng_state.dungeon->spawn_gx,
+                            dng_state.dungeon->spawn_gy, 0);
+            last_player_gx = dng_state.player.gx;
+            last_player_gy = dng_state.player.gy;
+            current_ship.boarding_active = false;
+        }
+
+        if (current_ship.enemy_ship_destroyed) {
+            dng_state.current_floor = 0;
+            dng_state.dungeon = &dng_state.floors[0];
+            dng_player_init(&dng_state.player,
+                            dng_state.dungeon->spawn_gx,
+                            dng_state.dungeon->spawn_gy, 0);
+            last_player_gx = dng_state.player.gx;
+            last_player_gy = dng_state.player.gy;
+            current_ship.boarding_active = false;
+        }
+
+        current_combat_room = -1;
+    }
+    app_state = STATE_RUNNING;
+    game_save();
+}
+
+/* ── Console sabotage (interact with room subsystem) ────────────── */
+
+static void try_console_sabotage(void) {
+    if (!current_ship.initialized || !current_ship.boarding_active) return;
+
+    dng_player *p = &dng_state.player;
+    int local_room = dng_room_at(dng_state.dungeon, p->gx, p->gy);
+    if (local_room < 0 || local_room >= dng_state.dungeon->room_count) return;
+
+    int sr_idx = dng_state.dungeon->room_ship_idx[local_room];
+    if (sr_idx < 0 || sr_idx >= current_ship.room_count) return;
+
+    ship_room *rm = &current_ship.rooms[sr_idx];
+
+    /* Can only sabotage rooms with active subsystems */
+    if (rm->subsystem_hp_max <= 0 || rm->subsystem_hp <= 0) {
+        /* Cargo rooms: search for artifacts */
+        if (rm->type == ROOM_CARGO && !rm->cleared) {
+            rm->cleared = true;
+            ship_check_missions(&current_ship);
+        }
+        return;
+    }
+
+    /* Trigger automated defense combat */
+    current_combat_room = sr_idx;
+    console_combat = true;
+
+    /* Automated defenses: 1-2 enemies scaled to room importance */
+    combat_init(&combat, selected_class, dng_state.current_floor, 0);
+
+    /* Override with defense drones based on room type */
+    int num_drones = 1;
+    int drone_type = ENEMY_LURKER;
+    switch (rm->type) {
+        case ROOM_BRIDGE:  num_drones = 2; drone_type = ENEMY_HIVEGUARD; break;
+        case ROOM_REACTOR: num_drones = 2; drone_type = ENEMY_SPITTER; break;
+        case ROOM_WEAPONS: num_drones = 1; drone_type = ENEMY_BRUTE; break;
+        case ROOM_ENGINES: num_drones = 1; drone_type = ENEMY_SPITTER; break;
+        case ROOM_SHIELDS: num_drones = 1; drone_type = ENEMY_BRUTE; break;
+        default: break;
+    }
+
+    combat.enemy_count = num_drones;
+    for (int i = 0; i < num_drones; i++) {
+        const enemy_template *tmpl = &enemy_templates[drone_type];
+        combat.enemies[i].type = drone_type;
+        combat.enemies[i].hp = tmpl->hp_max;
+        combat.enemies[i].hp_max = tmpl->hp_max;
+        combat.enemies[i].attack_range = tmpl->attack_range;
+        combat.enemies[i].damage = tmpl->damage;
+        combat.enemies[i].ranged = tmpl->ranged;
+        combat.enemies[i].flash_timer = 0;
+        combat.enemies[i].alive = true;
+    }
+
+    ship_tick_turn(&current_ship);
+    app_state = STATE_COMBAT;
+    game_save();
+}
+
+/* ── Track player movement for random encounters ─────────────────── */
 
 static void check_random_encounter(void) {
     dng_player *p = &dng_state.player;
@@ -178,6 +347,18 @@ static void check_random_encounter(void) {
         uint8_t alien = dng_state.dungeon->aliens[p->gy][p->gx];
         if (alien != 0) {
             dng_state.dungeon->aliens[p->gy][p->gx] = 0;
+
+            /* Track which ship room this combat is in */
+            current_combat_room = -1;
+            if (current_ship.initialized) {
+                int local_room = dng_room_at(dng_state.dungeon, p->gx, p->gy);
+                if (local_room >= 0 && local_room < dng_state.dungeon->room_count)
+                    current_combat_room = dng_state.dungeon->room_ship_idx[local_room];
+
+                /* Tick ship turn on each combat */
+                ship_tick_turn(&current_ship);
+            }
+
             combat_init(&combat, selected_class, dng_state.current_floor, alien);
             app_state = STATE_COMBAT;
         }
@@ -539,6 +720,62 @@ static void frame(void) {
 
         draw_dungeon_scene(&fb, &vp);
         draw_dungeon_minimap(&fb);
+
+        /* Ship HUD overlay */
+        if (current_ship.initialized && current_ship.boarding_active) {
+            draw_ship_hud(fb.color, fb.width, fb.height, &current_ship);
+
+            /* Recolor minimap cells by ship room type */
+            {
+                sr_dungeon *md = dng_state.dungeon;
+                int mscale = 2;
+                int mmx = fb.width - md->w * mscale - 4;
+                int mmy = 4;
+                for (int my = 1; my <= md->h; my++) {
+                    for (int mx = 1; mx <= md->w; mx++) {
+                        if (md->map[my][mx] == 1) continue;
+                        int ri = dng_room_at(md, mx, my);
+                        if (ri < 0 || ri >= md->room_count) continue;
+                        int sr = md->room_ship_idx[ri];
+                        if (sr < 0 || sr >= current_ship.room_count) continue;
+                        uint32_t rc = room_type_colors[current_ship.rooms[sr].type];
+                        int rr = ((rc >> 0) & 0xFF) / 3;
+                        int rg = ((rc >> 8) & 0xFF) / 3;
+                        int rb = ((rc >> 16) & 0xFF) / 3;
+                        uint32_t cell_col = 0xFF000000 | (rb << 16) | (rg << 8) | rr;
+                        int px0 = mmx + (mx - 1) * mscale;
+                        int py0 = mmy + (my - 1) * mscale;
+                        for (int dy = 0; dy < mscale; dy++)
+                            for (int dx = 0; dx < mscale; dx++) {
+                                int rx = px0 + dx, ry = py0 + dy;
+                                if (rx >= 0 && rx < fb.width && ry >= 0 && ry < fb.height)
+                                    fb.color[ry * fb.width + rx] = cell_col;
+                            }
+                    }
+                }
+            }
+
+            /* Room label at bottom */
+            dng_player *rp = &dng_state.player;
+            int local_room = dng_room_at(dng_state.dungeon, rp->gx, rp->gy);
+            if (local_room >= 0 && local_room < dng_state.dungeon->room_count) {
+                int sr_idx = dng_state.dungeon->room_ship_idx[local_room];
+                if (sr_idx >= 0 && sr_idx < current_ship.room_count) {
+                    draw_room_label(fb.color, fb.width, fb.height,
+                                    &current_ship.rooms[sr_idx], sr_idx, &current_ship);
+                }
+            }
+
+            /* Deck indicator */
+            {
+                char deckbuf[32];
+                snprintf(deckbuf, sizeof(deckbuf), "DECK %d/%d",
+                         dng_state.current_floor + 1, current_ship.num_decks);
+                sr_draw_text_shadow(fb.color, fb.width, fb.height,
+                                    fb.width - 60, 4, deckbuf, 0xFF888888, 0xFF000000);
+            }
+        }
+
         if (dng_show_info) {
             static const char *dir_names[] = {"N","E","S","W"};
             char ibuf[64];
@@ -654,6 +891,7 @@ static void handle_screen_tap(float sx, float sy) {
                 selected_class = 0;
                 player_persist_init(selected_class);
                 dng_game_init(&dng_state);
+                game_init_ship();
                 dng_initialized = true;
                 last_player_gx = dng_state.player.gx;
                 last_player_gy = dng_state.player.gy;
@@ -670,6 +908,7 @@ static void handle_screen_tap(float sx, float sy) {
                 selected_class = 1;
                 player_persist_init(selected_class);
                 dng_game_init(&dng_state);
+                game_init_ship();
                 dng_initialized = true;
                 last_player_gx = dng_state.player.gx;
                 last_player_gy = dng_state.player.gy;
@@ -685,8 +924,7 @@ static void handle_screen_tap(float sx, float sy) {
     if (app_state == STATE_COMBAT) {
         /* Result screen — tap anywhere */
         if (combat.phase == CPHASE_RESULT) {
-            app_state = STATE_RUNNING;
-            game_save();
+            handle_combat_end();
             return;
         }
         combat_touch_began(&combat, fx, fy);
@@ -702,6 +940,15 @@ static void event(const sapp_event *ev) {
     /* ── Mouse click / touch began → tap handling ────────────── */
     if (ev->type == SAPP_EVENTTYPE_MOUSE_DOWN && ev->mouse_button == SAPP_MOUSEBUTTON_LEFT) {
         if (app_state == STATE_RUNNING) {
+            /* Check if tapping the console/sabotage button area */
+            float fx, fy; screen_to_fb(ev->mouse_x, ev->mouse_y, &fx, &fy);
+            int bw = 140, bh = 40;
+            int cbx = FB_WIDTH / 2 - bw / 2;
+            int cby = FB_HEIGHT - bh - 4;
+            if (fx >= cbx && fx <= cbx + bw && fy >= cby + 24 && fy <= cby + bh) {
+                try_console_sabotage();
+                if (app_state == STATE_COMBAT) return;
+            }
             dng_touch_began(ev->mouse_x, ev->mouse_y, now_time);
         } else {
             handle_screen_tap(ev->mouse_x, ev->mouse_y);
@@ -711,6 +958,14 @@ static void event(const sapp_event *ev) {
     if (ev->type == SAPP_EVENTTYPE_TOUCHES_BEGAN && ev->num_touches > 0) {
         float sx = ev->touches[0].pos_x, sy = ev->touches[0].pos_y;
         if (app_state == STATE_RUNNING) {
+            float fx, fy; screen_to_fb(sx, sy, &fx, &fy);
+            int bw = 140, bh = 40;
+            int cbx = FB_WIDTH / 2 - bw / 2;
+            int cby = FB_HEIGHT - bh - 4;
+            if (fx >= cbx && fx <= cbx + bw && fy >= cby + 24 && fy <= cby + bh) {
+                try_console_sabotage();
+                if (app_state == STATE_COMBAT) return;
+            }
             dng_touch_began(sx, sy, now_time);
         } else {
             handle_screen_tap(sx, sy);
@@ -821,6 +1076,7 @@ static void event(const sapp_event *ev) {
                 selected_class = class_select_cursor;
                 player_persist_init(selected_class);
                 dng_game_init(&dng_state);
+                game_init_ship();
                 dng_initialized = true;
                 last_player_gx = dng_state.player.gx;
                 last_player_gy = dng_state.player.gy;
@@ -835,8 +1091,7 @@ static void event(const sapp_event *ev) {
     if (app_state == STATE_COMBAT) {
         if (combat.phase == CPHASE_RESULT &&
             (ev->key_code == SAPP_KEYCODE_ENTER || ev->key_code == SAPP_KEYCODE_SPACE)) {
-            app_state = STATE_RUNNING;
-            game_save();
+            handle_combat_end();
             return;
         }
         combat_handle_key(&combat, ev->key_code);
@@ -892,6 +1147,11 @@ static void event(const sapp_event *ev) {
                 dng_state.player.dir = (dng_state.player.dir + 1) % 4;
                 dng_state.player.target_angle += 0.25f;
             }
+            break;
+        case SAPP_KEYCODE_SPACE:
+        case SAPP_KEYCODE_ENTER:
+            if (dng_play_state == DNG_STATE_PLAYING)
+                try_console_sabotage();
             break;
         default: break;
     }

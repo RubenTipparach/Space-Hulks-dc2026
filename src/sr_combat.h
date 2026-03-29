@@ -20,12 +20,18 @@ enum {
     CARD_FORTIFY,    /* +6 shield, cost 2 */
     CARD_DOUBLE_SHOT,/* 5 dmg single, cost 2 */
     CARD_DASH,       /* advance 2 + melee 4, cost 2 */
+    /* Elemental cards */
+    CARD_ICE,        /* ice: freeze target 3 turns, 1 dmg, cost 1 */
+    CARD_ACID,       /* acid: stackable DoT, 1 dmg, cost 1 */
+    CARD_FIRE,       /* fire: DoT + spreads, 1 dmg, cost 1 */
+    CARD_LIGHTNING,  /* lightning: stun 1-2 turns, 2 dmg, cost 2 */
     CARD_TYPE_COUNT
 };
 
 static const char *card_names[] = {
     "SHIELD", "SHOOT", "BURST", "MOVE", "MELEE",
-    "OVERCHRG", "REPAIR", "STUN", "FORTIFY", "DBL SHOT", "DASH"
+    "OVERCHRG", "REPAIR", "STUN", "FORTIFY", "DBL SHOT", "DASH",
+    "ICE", "ACID", "FIRE", "LIGHTNING"
 };
 
 static const uint32_t card_colors[] = {
@@ -40,11 +46,16 @@ static const uint32_t card_colors[] = {
     0xFFFFAA22,  /* fortify - bright blue */
     0xFF4444FF,  /* double shot - bright red */
     0xFF44CCCC,  /* dash - bright yellow */
+    0xFFFFCC44,  /* ice - light blue */
+    0xFF22CCAA,  /* acid - green-teal */
+    0xFF2244FF,  /* fire - bright orange-red */
+    0xFFEEEE44,  /* lightning - bright cyan-yellow */
 };
 
 static const int card_energy_cost[] = {
     1, 1, 2, 1, 1,  /* base cards */
-    0, 2, 1, 2, 2, 2 /* droppable cards */
+    0, 2, 1, 2, 2, 2, /* droppable cards */
+    1, 1, 1, 2 /* elemental cards */
 };
 
 /* Card target types */
@@ -62,6 +73,10 @@ static const int card_targets[] = {
     TARGET_SELF,          /* FORTIFY */
     TARGET_ENEMY,         /* DOUBLE SHOT */
     TARGET_ENEMY,         /* DASH */
+    TARGET_ENEMY,         /* ICE */
+    TARGET_ENEMY,         /* ACID */
+    TARGET_ENEMY,         /* FIRE */
+    TARGET_ENEMY,         /* LIGHTNING */
 };
 
 /* ── Character classes ───────────────────────────────────────────── */
@@ -124,6 +139,11 @@ typedef struct {
     int ranged;
     int flash_timer;  /* > 0 = flashing white */
     bool alive;
+    /* Elemental status effects */
+    int ice_turns;       /* > 0: frozen, skip move every other turn, reduced dmg */
+    int acid_stacks;     /* > 0: take acid_stacks dmg each turn, stackable */
+    int fire_turns;      /* > 0: burning, take fire dmg each turn, can spread */
+    int lightning_stun;  /* > 0: stunned, can't move or attack */
 } combat_enemy;
 
 typedef struct {
@@ -175,6 +195,9 @@ typedef struct {
     int drag_card;         /* index in hand being dragged */
     float drag_x, drag_y;  /* current drag position (framebuffer coords) */
     float drag_start_x, drag_start_y;
+
+    /* Elemental state */
+    int fire_atk_bonus;  /* +1 per burning enemy, boosts player attack dmg */
 
     /* Result */
     bool combat_over;
@@ -262,11 +285,18 @@ static void combat_draw_hand(combat_state *cs) {
 /* ── Combat initialization ───────────────────────────────────────── */
 
 static void combat_generate_rewards(combat_state *cs) {
-    /* Pick 3 droppable card types (CARD_OVERCHARGE through CARD_DASH) */
+    /* Pick 3 unique droppable card types (CARD_OVERCHARGE through CARD_LIGHTNING) */
     int droppable_start = CARD_OVERCHARGE;
     int droppable_count = CARD_TYPE_COUNT - droppable_start;
     for (int i = 0; i < 3; i++) {
-        cs->reward_choices[i] = droppable_start + dng_rng_int(droppable_count);
+        int attempts = 0;
+        do {
+            cs->reward_choices[i] = droppable_start + dng_rng_int(droppable_count);
+            attempts++;
+        } while (attempts < 20 && (
+            (i > 0 && cs->reward_choices[i] == cs->reward_choices[0]) ||
+            (i > 1 && cs->reward_choices[i] == cs->reward_choices[1])
+        ));
     }
     cs->reward_cursor = 0;
 }
@@ -354,6 +384,8 @@ static void combat_deal_damage_enemy(combat_state *cs, int idx, int dmg) {
 }
 
 static void combat_deal_damage_player(combat_state *cs, int dmg) {
+    dmg = dmg / 2; /* halve incoming damage, round down */
+    if (dmg < 1) dmg = 1;
     int absorbed = dmg < cs->player_shield ? dmg : cs->player_shield;
     cs->player_shield -= absorbed;
     dmg -= absorbed;
@@ -390,20 +422,24 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
             while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
             if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
             if (t >= 0) {
-                combat_deal_damage_enemy(cs, t, 3);
-                snprintf(buf, sizeof(buf), "SHOOT %s -3HP", enemy_templates[cs->enemies[t].type].name);
+                int dmg = 3 + cs->fire_atk_bonus;
+                combat_deal_damage_enemy(cs, t, dmg);
+                snprintf(buf, sizeof(buf), "SHOOT %s -%dHP", enemy_templates[cs->enemies[t].type].name, dmg);
                 combat_set_message(cs, buf);
             }
             break;
         }
 
-        case CARD_BURST:
+        case CARD_BURST: {
+            int dmg = 2 + cs->fire_atk_bonus;
             for (int i = 0; i < cs->enemy_count; i++) {
                 if (cs->enemies[i].alive)
-                    combat_deal_damage_enemy(cs, i, 2);
+                    combat_deal_damage_enemy(cs, i, dmg);
             }
-            combat_set_message(cs, "BURST -2HP ALL");
+            snprintf(buf, sizeof(buf), "BURST -%dHP ALL", dmg);
+            combat_set_message(cs, buf);
             break;
+        }
 
         case CARD_MOVE:
             cs->player_move_pts += 2;
@@ -417,8 +453,9 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
                 while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
                 if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
                 if (t >= 0) {
-                    combat_deal_damage_enemy(cs, t, 6);
-                    snprintf(buf, sizeof(buf), "MELEE %s -6HP!", enemy_templates[cs->enemies[t].type].name);
+                    int dmg = 6 + cs->fire_atk_bonus;
+                    combat_deal_damage_enemy(cs, t, dmg);
+                    snprintf(buf, sizeof(buf), "MELEE %s -%dHP!", enemy_templates[cs->enemies[t].type].name, dmg);
                     combat_set_message(cs, buf);
                 }
             } else {
@@ -456,8 +493,9 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
             while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
             if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
             if (t >= 0) {
-                combat_deal_damage_enemy(cs, t, 5);
-                snprintf(buf, sizeof(buf), "DOUBLE SHOT %s -5HP", enemy_templates[cs->enemies[t].type].name);
+                int dmg = 5 + cs->fire_atk_bonus;
+                combat_deal_damage_enemy(cs, t, dmg);
+                snprintf(buf, sizeof(buf), "DBL SHOT %s -%dHP", enemy_templates[cs->enemies[t].type].name, dmg);
                 combat_set_message(cs, buf);
             }
             break;
@@ -470,8 +508,9 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
                 while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
                 if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
                 if (t >= 0) {
-                    combat_deal_damage_enemy(cs, t, 4);
-                    snprintf(buf, sizeof(buf), "DASH +3MP %s -4HP!", enemy_templates[cs->enemies[t].type].name);
+                    int dmg = 4 + cs->fire_atk_bonus;
+                    combat_deal_damage_enemy(cs, t, dmg);
+                    snprintf(buf, sizeof(buf), "DASH +3MP %s -%dHP!", enemy_templates[cs->enemies[t].type].name, dmg);
                     combat_set_message(cs, buf);
                 } else {
                     snprintf(buf, sizeof(buf), "DASH +3 MOVE PTS (%d)", cs->player_move_pts);
@@ -479,6 +518,60 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
                 }
             }
             break;
+
+        /* ── Elemental cards ─────────────────────────────────── */
+        case CARD_ICE: {
+            int t = cs->target;
+            while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
+            if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
+            if (t >= 0) {
+                cs->enemies[t].ice_turns = 3;
+                combat_deal_damage_enemy(cs, t, 1);
+                snprintf(buf, sizeof(buf), "ICE %s! FROZEN 3T", enemy_templates[cs->enemies[t].type].name);
+                combat_set_message(cs, buf);
+            }
+            break;
+        }
+
+        case CARD_ACID: {
+            int t = cs->target;
+            while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
+            if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
+            if (t >= 0) {
+                cs->enemies[t].acid_stacks++;
+                combat_deal_damage_enemy(cs, t, 1);
+                snprintf(buf, sizeof(buf), "ACID %s x%d!", enemy_templates[cs->enemies[t].type].name, cs->enemies[t].acid_stacks);
+                combat_set_message(cs, buf);
+            }
+            break;
+        }
+
+        case CARD_FIRE: {
+            int t = cs->target;
+            while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
+            if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
+            if (t >= 0) {
+                cs->enemies[t].fire_turns = 3;
+                combat_deal_damage_enemy(cs, t, 1);
+                snprintf(buf, sizeof(buf), "FIRE %s! BURN 3T", enemy_templates[cs->enemies[t].type].name);
+                combat_set_message(cs, buf);
+            }
+            break;
+        }
+
+        case CARD_LIGHTNING: {
+            int t = cs->target;
+            while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
+            if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
+            if (t >= 0) {
+                int stun_turns = 1 + dng_rng_int(2); /* 1-2 turns */
+                cs->enemies[t].lightning_stun = stun_turns;
+                combat_deal_damage_enemy(cs, t, 2);
+                snprintf(buf, sizeof(buf), "ZAP %s! STUN %dT", enemy_templates[cs->enemies[t].type].name, stun_turns);
+                combat_set_message(cs, buf);
+            }
+            break;
+        }
     }
 
     /* Move card to discard */
@@ -491,6 +584,56 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
 
     if (cs->cursor >= cs->hand_count && cs->hand_count > 0)
         cs->cursor = cs->hand_count - 1;
+}
+
+/* ── Status effect tick (called at start of enemy turn) ──────────── */
+
+static void combat_tick_status_effects(combat_state *cs) {
+    cs->fire_atk_bonus = 0;
+    for (int i = 0; i < cs->enemy_count; i++) {
+        combat_enemy *e = &cs->enemies[i];
+        if (!e->alive) continue;
+
+        /* Acid: deal damage per stack each turn */
+        if (e->acid_stacks > 0) {
+            e->hp -= e->acid_stacks;
+            e->flash_timer = 10;
+            if (e->hp <= 0) { e->hp = 0; e->alive = false; }
+        }
+
+        /* Fire: deal 2 damage per turn, grant player attack bonus */
+        if (e->fire_turns > 0) {
+            e->hp -= 2;
+            e->flash_timer = 10;
+            cs->fire_atk_bonus++;
+            e->fire_turns--;
+            if (e->hp <= 0) { e->hp = 0; e->alive = false; }
+        }
+
+        /* Ice: deal 1 damage, decrement */
+        if (e->ice_turns > 0) {
+            e->hp -= 1;
+            e->flash_timer = 10;
+            e->ice_turns--;
+            if (e->hp <= 0) { e->hp = 0; e->alive = false; }
+        }
+
+        /* Lightning: decrement stun counter */
+        if (e->lightning_stun > 0) {
+            e->lightning_stun--;
+        }
+    }
+
+    /* Fire spread: if any enemy is burning, adjacent alive enemies catch fire */
+    for (int i = 0; i < cs->enemy_count; i++) {
+        combat_enemy *e = &cs->enemies[i];
+        if (!e->alive || e->fire_turns <= 0) continue;
+        /* Spread to neighbors */
+        if (i > 0 && cs->enemies[i-1].alive && cs->enemies[i-1].fire_turns == 0)
+            cs->enemies[i-1].fire_turns = 2;
+        if (i + 1 < cs->enemy_count && cs->enemies[i+1].alive && cs->enemies[i+1].fire_turns == 0)
+            cs->enemies[i+1].fire_turns = 2;
+    }
 }
 
 /* ── Enemy turn (sequential) ─────────────────────────────────────── */
@@ -509,6 +652,7 @@ static int combat_next_attacker(combat_state *cs, int from) {
     for (int i = from; i < cs->enemy_count; i++) {
         if (!cs->enemies[i].alive) continue;
         if (cs->enemies[i].flash_timer > 10) continue; /* stunned */
+        if (cs->enemies[i].lightning_stun > 0) continue; /* lightning stun */
         if (combat_enemy_in_range(cs, i))
             return i;
     }
@@ -517,11 +661,26 @@ static int combat_next_attacker(combat_state *cs, int from) {
 
 /* Start the sequential enemy attack phase */
 static void combat_begin_enemy_turn(combat_state *cs) {
+    /* Tick status effects at start of enemy turn */
+    combat_tick_status_effects(cs);
+
+    /* Check if all enemies died from status effects */
+    if (combat_all_enemies_dead(cs)) {
+        cs->player_won = true;
+        g_player.hp = cs->player_hp;
+        combat_generate_rewards(cs);
+        cs->phase = CPHASE_REWARD;
+        combat_set_message(cs, "VICTORY! PICK A CARD");
+        return;
+    }
+
     /* All alive non-stunned enemies try to close distance */
     for (int i = 0; i < cs->enemy_count; i++) {
         combat_enemy *e = &cs->enemies[i];
         if (!e->alive) continue;
         if (e->flash_timer > 10) continue; /* stunned */
+        if (e->lightning_stun > 0) continue; /* lightning stun */
+        if (e->ice_turns > 0 && (cs->turn % 2) == 0) continue; /* ice: skip move every other turn */
         /* Advance if not yet in attack range */
         if (cs->player_distance > e->attack_range) {
             cs->player_distance--;
@@ -589,10 +748,14 @@ static void combat_update(combat_state *cs) {
         /* Damage lands at the hit frame */
         if (cs->enemy_atk_timer == ENEMY_ATK_HIT_FRAME) {
             combat_enemy *e = &cs->enemies[cs->enemy_atk_idx];
-            combat_deal_damage_player(cs, e->damage);
+            int dmg = e->damage;
+            /* Ice reduces attack damage by half */
+            if (e->ice_turns > 0) dmg = dmg / 2;
+            if (dmg < 1) dmg = 1;
+            combat_deal_damage_player(cs, dmg);
             char buf[64];
             snprintf(buf, sizeof(buf), "%s ATTACKS -%dHP",
-                     enemy_templates[e->type].name, e->damage);
+                     enemy_templates[e->type].name, dmg);
             combat_set_message(cs, buf);
         }
 
@@ -622,24 +785,13 @@ static void combat_check_victory(combat_state *cs) {
     }
 }
 
-static void combat_action_end_turn(combat_state *cs); /* forward decl */
-static void combat_action_play(combat_state *cs) {
-    if (cs->phase != CPHASE_PLAYER_TURN || cs->hand_count <= 0) return;
-    combat_play_card(cs, cs->cursor);
-    combat_check_victory(cs);
-    /* Auto-end turn when hand is empty */
-    if (cs->phase == CPHASE_PLAYER_TURN && cs->hand_count <= 0) {
-        combat_action_end_turn(cs);
-    }
-}
-
 static void combat_action_end_turn(combat_state *cs) {
     if (cs->phase != CPHASE_PLAYER_TURN) return;
     for (int i = 0; i < cs->hand_count; i++)
         cs->discard[cs->discard_count++] = cs->hand[i];
     cs->hand_count = 0;
     cs->player_shield = 0;
-    cs->player_move_pts = 0; /* unspent move points are lost */
+    /* Move points persist across rounds */
     cs->phase = CPHASE_ENEMY_TURN;
     combat_begin_enemy_turn(cs);
 }
@@ -677,11 +829,6 @@ static void combat_action_move_back(combat_state *cs) {
 
 /* ── Button layout constants (used by both render and touch) ─────── */
 
-#define BTN_PLAY_X   (FB_WIDTH - 78)
-#define BTN_PLAY_Y   135
-#define BTN_PLAY_W   70
-#define BTN_PLAY_H   18
-
 #define BTN_END_X    (FB_WIDTH - 78)
 #define BTN_END_Y    158
 #define BTN_END_W    70
@@ -689,7 +836,7 @@ static void combat_action_move_back(combat_state *cs) {
 
 /* ── Card layout helpers ─────────────────────────────────────────── */
 
-#define CARD_W  36
+#define CARD_W  45
 #define CARD_H  54
 #define CARD_GAP 4
 
@@ -870,11 +1017,6 @@ static void combat_handle_key(combat_state *cs, int key) {
             } while (!cs->enemies[cs->target].alive && cs->target != start);
             break;
         }
-        case SAPP_KEYCODE_ENTER:
-        case SAPP_KEYCODE_KP_ENTER:
-        case SAPP_KEYCODE_SPACE:
-            combat_action_play(cs);
-            break;
         case SAPP_KEYCODE_TAB:
         case SAPP_KEYCODE_E:
             combat_action_end_turn(cs);
@@ -925,6 +1067,73 @@ static void combat_draw_bar(uint32_t *px, int W, int H,
         if (fill > 0)
             combat_draw_rect(px, W, H, x, y, fill, h, fg);
     }
+}
+
+/* ── Shared card rendering ───────────────────────────────────────── */
+
+static void combat_draw_card_content(uint32_t *px, int W, int H,
+                                     int cx, int cy, int cw, int ch,
+                                     int card_type, bool selected,
+                                     uint32_t shadow)
+{
+    uint32_t white = 0xFFFFFFFF;
+    uint32_t gray = 0xFF888888;
+    uint32_t yellow = 0xFF00DDDD;
+
+    /* Background */
+    uint32_t bg = selected ? 0xFF222233 : 0xFF111122;
+    combat_draw_rect(px, W, H, cx, cy, cw, ch, bg);
+
+    /* Border */
+    uint32_t border = selected ? yellow : card_colors[card_type];
+    combat_draw_rect_outline(px, W, H, cx, cy, cw, ch, border);
+    if (selected)
+        combat_draw_rect_outline(px, W, H, cx+1, cy+1, cw-2, ch-2, border);
+
+    /* Color stripe */
+    combat_draw_rect(px, W, H, cx + 1, cy + 1, cw - 2, 3, card_colors[card_type]);
+
+    /* Energy cost (top right) */
+    {
+        int cost = card_energy_cost[card_type];
+        char cbuf[8];
+        snprintf(cbuf, sizeof(cbuf), "%d", cost);
+        sr_draw_text_shadow(px, W, H, cx + cw - 10, cy + 5, cbuf, 0xFF22CCEE, shadow);
+    }
+
+    /* Card name (word-wrapped, returns Y after last line) */
+    int ty = sr_draw_text_wrap(px, W, H, cx + 3, cy + 5, card_names[card_type],
+                               cw - 16, 8, white, shadow);
+
+    /* Card effect text */
+    const char *effect = "";
+    switch (card_type) {
+        case CARD_SHIELD:     effect = "+3 SHIELD"; break;
+        case CARD_SHOOT:      effect = "3 DMG"; break;
+        case CARD_BURST:      effect = "2 DMG ALL"; break;
+        case CARD_MOVE:       effect = "+2 MOVE"; break;
+        case CARD_MELEE:      effect = "6 DMG MELEE"; break;
+        case CARD_OVERCHARGE: effect = "+2 ENERGY"; break;
+        case CARD_REPAIR:     effect = "+4 HP"; break;
+        case CARD_STUN:       effect = "SKIP ENEMY\nATTACKS"; break;
+        case CARD_FORTIFY:    effect = "+6 SHIELD"; break;
+        case CARD_DOUBLE_SHOT:effect = "5 DMG"; break;
+        case CARD_DASH:       effect = "+3 MOVE\n4 DMG"; break;
+        case CARD_ICE:        effect = "FREEZE 3T\nSLOW+DMG"; break;
+        case CARD_ACID:       effect = "STACK DOT\n1/STACK"; break;
+        case CARD_FIRE:       effect = "BURN 3T\nSPREADS"; break;
+        case CARD_LIGHTNING:  effect = "STUN 1-2T\n2 DMG"; break;
+    }
+    ty = sr_draw_text_wrap(px, W, H, cx + 3, ty + 2, effect,
+                           cw - 6, 8, gray, shadow);
+
+    /* Target type at bottom */
+    const char *tgt = "";
+    int tt = card_targets[card_type];
+    if (tt == TARGET_SELF) tgt = "SELF";
+    else if (tt == TARGET_ENEMY) tgt = "1 ENEMY";
+    else tgt = "ALL";
+    sr_draw_text_shadow(px, W, H, cx + 3, cy + ch - 10, tgt, 0xFF555555, shadow);
 }
 
 /* ── Main combat render ──────────────────────────────────────────── */
@@ -981,14 +1190,26 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
                 if (combat.phase == CPHASE_PLAYER_TURN || combat.phase == CPHASE_DRAW) {
                     bool in_range = combat_enemy_in_range(&combat, i);
                     bool stunned = (e->flash_timer > 10);
-                    if (in_range && !stunned) {
-                        char intent_buf[16];
-                        snprintf(intent_buf, sizeof(intent_buf), "-%d!", e->damage);
-                        sr_draw_text_shadow(px, W, H, cx - 8, sprite_y - 10,
-                                            intent_buf, 0xFF4444FF, shadow);
+                    bool lt_stunned = (e->lightning_stun > 0);
+                    bool frozen = (e->ice_turns > 0);
+                    if (lt_stunned) {
+                        sr_draw_text_shadow(px, W, H, cx - 10, sprite_y - 10,
+                                            "ZAPPED", 0xFFEEEE44, shadow);
                     } else if (stunned) {
                         sr_draw_text_shadow(px, W, H, cx - 10, sprite_y - 10,
                                             "STUN", 0xFFCCCC22, shadow);
+                    } else if (frozen && in_range) {
+                        int dmg = e->damage / 2 / 2; if (dmg < 1) dmg = 1;
+                        char intent_buf[16];
+                        snprintf(intent_buf, sizeof(intent_buf), "%d!", dmg);
+                        sr_draw_text_shadow(px, W, H, cx - 8, sprite_y - 10,
+                                            intent_buf, 0xFFFFCC44, shadow);
+                    } else if (in_range && !stunned) {
+                        int dmg = e->damage / 2; if (dmg < 1) dmg = 1;
+                        char intent_buf[16];
+                        snprintf(intent_buf, sizeof(intent_buf), "%d!", dmg);
+                        sr_draw_text_shadow(px, W, H, cx - 8, sprite_y - 10,
+                                            intent_buf, 0xFF4444FF, shadow);
                     } else if (combat.player_distance > e->attack_range) {
                         /* Enemy will advance toward player */
                         sr_draw_text_shadow(px, W, H, cx - 6, sprite_y - 10,
@@ -1021,6 +1242,29 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
                 char rngbuf[16];
                 snprintf(rngbuf, sizeof(rngbuf), "RNG:%d", e->attack_range);
                 sr_draw_text_shadow(px, W, H, cx - 12, sprite_y + 62, rngbuf, dim, shadow);
+
+                /* Status effect indicators */
+                int sx = cx - 18;
+                int sy = sprite_y + 72;
+                if (e->ice_turns > 0) {
+                    char ibuf[8]; snprintf(ibuf, sizeof(ibuf), "I%d", e->ice_turns);
+                    sr_draw_text_shadow(px, W, H, sx, sy, ibuf, 0xFFFFCC44, shadow);
+                    sx += 16;
+                }
+                if (e->acid_stacks > 0) {
+                    char abuf[8]; snprintf(abuf, sizeof(abuf), "A%d", e->acid_stacks);
+                    sr_draw_text_shadow(px, W, H, sx, sy, abuf, 0xFF22CCAA, shadow);
+                    sx += 16;
+                }
+                if (e->fire_turns > 0) {
+                    char fbuf[8]; snprintf(fbuf, sizeof(fbuf), "F%d", e->fire_turns);
+                    sr_draw_text_shadow(px, W, H, sx, sy, fbuf, 0xFF2244FF, shadow);
+                    sx += 16;
+                }
+                if (e->lightning_stun > 0) {
+                    char lbuf[8]; snprintf(lbuf, sizeof(lbuf), "L%d", e->lightning_stun);
+                    sr_draw_text_shadow(px, W, H, sx, sy, lbuf, 0xFFEEEE44, shadow);
+                }
             }
         }
     }
@@ -1138,6 +1382,13 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
             snprintf(mpbuf, sizeof(mpbuf), "MP  %d", combat.player_move_pts);
             sr_draw_text_shadow(px, W, H, 8, 228, mpbuf, 0xFF22CC22, shadow);
         }
+
+        /* Fire attack bonus */
+        if (combat.fire_atk_bonus > 0) {
+            char fbuf[16];
+            snprintf(fbuf, sizeof(fbuf), "ATK+%d", combat.fire_atk_bonus);
+            sr_draw_text_shadow(px, W, H, 60, 218, fbuf, 0xFF2244FF, shadow);
+        }
     }
 
     /* ── Move buttons (when player has move points) ──────────── */
@@ -1153,7 +1404,7 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
         sr_draw_text_shadow(px, W, H, 50, mb_y + 3, "BCK", 0xFFCC6644, shadow);
     }
 
-    /* ── Hand of cards (bottom, 2:3 ratio) ─────────────────────── */
+    /* ── Hand of cards (bottom) ───────────────────────────────── */
     {
         int card_w = CARD_W;
         int card_h = CARD_H;
@@ -1167,68 +1418,9 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
             int cx = base_x + i * (card_w + card_gap);
             int cy = base_y;
             bool selected = (i == combat.cursor && combat.phase == CPHASE_PLAYER_TURN);
-
             if (selected) cy -= 6;
-
-            /* Card background */
-            uint32_t bg = selected ? 0xFF222233 : 0xFF111122;
-            combat_draw_rect(px, W, H, cx, cy, card_w, card_h, bg);
-
-            /* Card border */
-            uint32_t border = selected ? yellow : card_colors[card];
-            combat_draw_rect_outline(px, W, H, cx, cy, card_w, card_h, border);
-            if (selected)
-                combat_draw_rect_outline(px, W, H, cx+1, cy+1, card_w-2, card_h-2, border);
-
-            /* Card type color stripe at top */
-            combat_draw_rect(px, W, H, cx + 1, cy + 1, card_w - 2, 3, card_colors[card]);
-
-            /* Energy cost (top right) */
-            {
-                int cost = card_energy_cost[card];
-                char cbuf[8];
-                snprintf(cbuf, sizeof(cbuf), "%d", cost);
-                uint32_t ccol = combat.energy >= cost ? 0xFF22CCEE : 0xFF4444CC;
-                sr_draw_text_shadow(px, W, H, cx + card_w - 10, cy + 5, cbuf, ccol, shadow);
-            }
-
-            /* Card name */
-            sr_draw_text_shadow(px, W, H, cx + 3, cy + 8, card_names[card], white, shadow);
-
-            /* Card effect text */
-            const char *effect = "";
-            switch (card) {
-                case CARD_SHIELD:     effect = "+3 SH"; break;
-                case CARD_SHOOT:      effect = "3 DMG"; break;
-                case CARD_BURST:      effect = "2 ALL"; break;
-                case CARD_MOVE:       effect = "+2 MP"; break;
-                case CARD_MELEE:      effect = "6 DMG"; break;
-                case CARD_OVERCHARGE: effect = "+2NRG"; break;
-                case CARD_REPAIR:     effect = "+4 HP"; break;
-                case CARD_STUN:       effect = "STUN"; break;
-                case CARD_FORTIFY:    effect = "+6 SH"; break;
-                case CARD_DOUBLE_SHOT:effect = "5 DMG"; break;
-                case CARD_DASH:       effect = "+3MP"; break;
-            }
-            sr_draw_text_shadow(px, W, H, cx + 3, cy + 22, effect, gray, shadow);
-
-            /* Extra info line (uses the extra vertical space) */
-            if (card == CARD_MELEE) {
-                const char *req = combat.player_distance <= 0 ? "READY" : "MOVE!";
-                uint32_t rc = combat.player_distance <= 0 ? 0xFF00CC00 : 0xFF4444CC;
-                sr_draw_text_shadow(px, W, H, cx + 3, cy + 34, req, rc, shadow);
-            }
-            if (card == CARD_BURST) {
-                sr_draw_text_shadow(px, W, H, cx + 3, cy + 34, "ALL", 0xFF5588FF, shadow);
-            }
-            if (card == CARD_DASH) {
-                sr_draw_text_shadow(px, W, H, cx + 3, cy + 34, "4DMG", 0xFF44CCCC, shadow);
-            }
-            if (card == CARD_MOVE) {
-                char mpbuf[16];
-                snprintf(mpbuf, sizeof(mpbuf), "MP:%d", combat.player_move_pts);
-                sr_draw_text_shadow(px, W, H, cx + 3, cy + 34, mpbuf, 0xFF22CC22, shadow);
-            }
+            combat_draw_card_content(px, W, H, cx, cy, card_w, card_h,
+                                     card, selected, shadow);
         }
     }
 
@@ -1305,14 +1497,6 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
 
     /* ── Action buttons (touch-friendly) ─────────────────────── */
     if (combat.phase == CPHASE_PLAYER_TURN) {
-        /* PLAY button */
-        uint32_t play_bg = combat.hand_count > 0 ? 0xFF224422 : 0xFF222222;
-        uint32_t play_border = combat.hand_count > 0 ? 0xFF44CC44 : 0xFF444444;
-        combat_draw_rect(px, W, H, BTN_PLAY_X, BTN_PLAY_Y, BTN_PLAY_W, BTN_PLAY_H, play_bg);
-        combat_draw_rect_outline(px, W, H, BTN_PLAY_X, BTN_PLAY_Y, BTN_PLAY_W, BTN_PLAY_H, play_border);
-        sr_draw_text_shadow(px, W, H, BTN_PLAY_X + 10, BTN_PLAY_Y + 5,
-                            "PLAY", play_border, shadow);
-
         /* END TURN button */
         combat_draw_rect(px, W, H, BTN_END_X, BTN_END_Y, BTN_END_W, BTN_END_H, 0xFF332222);
         combat_draw_rect_outline(px, W, H, BTN_END_X, BTN_END_Y, BTN_END_W, BTN_END_H, 0xFFCC6644);
@@ -1357,41 +1541,8 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
             int rx = rbase_x + i * (rw + rgap);
             int ry = rbase_y;
             bool rsel = (i == combat.reward_cursor);
-
-            uint32_t rbg = rsel ? 0xFF222244 : 0xFF111122;
-            uint32_t rborder = rsel ? yellow : card_colors[rc];
-            combat_draw_rect(px, W, H, rx, ry, rw, rh, rbg);
-            combat_draw_rect_outline(px, W, H, rx, ry, rw, rh, rborder);
-            if (rsel)
-                combat_draw_rect_outline(px, W, H, rx+1, ry+1, rw-2, rh-2, rborder);
-
-            combat_draw_rect(px, W, H, rx+1, ry+1, rw-2, 3, card_colors[rc]);
-            sr_draw_text_shadow(px, W, H, rx+4, ry+8, card_names[rc], white, shadow);
-
-            /* Cost */
-            char costbuf[8];
-            snprintf(costbuf, sizeof(costbuf), "%dE", card_energy_cost[rc]);
-            sr_draw_text_shadow(px, W, H, rx+rw-18, ry+8, costbuf, 0xFF22CCEE, shadow);
-
-            /* Effect description */
-            const char *desc = "";
-            switch (rc) {
-                case CARD_OVERCHARGE: desc = "+2 ENERGY\nTHIS TURN"; break;
-                case CARD_REPAIR:     desc = "HEAL 4 HP"; break;
-                case CARD_STUN:       desc = "SKIP ENEMY\nATTACKS"; break;
-                case CARD_FORTIFY:    desc = "+6 SHIELD"; break;
-                case CARD_DOUBLE_SHOT:desc = "5 DMG\nSINGLE"; break;
-                case CARD_DASH:       desc = "ADV 2 +\n4 DMG"; break;
-            }
-            sr_draw_text_shadow(px, W, H, rx+4, ry+28, desc, gray, shadow);
-
-            /* Target type label */
-            const char *tgt = "";
-            int tt = card_targets[rc];
-            if (tt == TARGET_SELF) tgt = "SELF";
-            else if (tt == TARGET_ENEMY) tgt = "1 ENEMY";
-            else tgt = "ALL";
-            sr_draw_text_shadow(px, W, H, rx+4, ry+rh-14, tgt, dim, shadow);
+            combat_draw_card_content(px, W, H, rx, ry, rw, rh,
+                                     rc, rsel, shadow);
         }
 
         sr_draw_text_shadow(px, W, H, W/2 - 35, rbase_y + rh + 10,

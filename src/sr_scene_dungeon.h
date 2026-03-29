@@ -569,9 +569,10 @@ static void draw_dungeon_minimap(sr_framebuffer *fb_ptr) {
             if (d->map[y][x] == 1) continue;
             int px0 = mx + (x - 1) * scale;
             int py0 = my + (y - 1) * scale;
+            uint32_t cell_col = 0xFF444444;
             for (int dy = 0; dy < scale; dy++)
                 for (int dx = 0; dx < scale; dx++)
-                    minimap_pixel(px, px0 + dx, py0 + dy, 0xFF444444);
+                    minimap_pixel(px, px0 + dx, py0 + dy, cell_col);
         }
     }
 
