@@ -362,6 +362,8 @@ typedef struct {
     float angle;        /* smooth facing angle (turns) */
     float target_x, target_z;
     float target_angle;
+    int bounce_timer;    /* >0 = bouncing back from blocked tile */
+    float bounce_mid_x, bounce_mid_z; /* midpoint to animate toward before snapping back */
 } dng_player;
 
 static void dng_player_init(dng_player *p, int gx, int gy, int dir) {
@@ -373,9 +375,11 @@ static void dng_player_init(dng_player *p, int gx, int gy, int dir) {
     p->target_z = p->z;
     p->angle = dir * 0.25f;
     p->target_angle = p->angle;
+    p->bounce_timer = 0;
 }
 
 static void dng_player_try_move(dng_player *p, const sr_dungeon *d, int dir) {
+    if (p->bounce_timer > 0) return; /* blocked during bounce-back */
     int nx = p->gx + dng_dir_dx[dir];
     int ny = p->gy + dng_dir_dz[dir];
     if (dng_can_enter(d, p->gx, p->gy, nx, ny)) {
@@ -387,8 +391,21 @@ static void dng_player_try_move(dng_player *p, const sr_dungeon *d, int dir) {
 }
 
 static void dng_player_update(dng_player *p) {
-    p->x += (p->target_x - p->x) * DNG_MOVE_SMOOTH;
-    p->z += (p->target_z - p->z) * DNG_MOVE_SMOOTH;
+    if (p->bounce_timer > 0) {
+        p->bounce_timer--;
+        if (p->bounce_timer > 5) {
+            /* First phase: move toward the blocked tile midpoint */
+            p->x += (p->bounce_mid_x - p->x) * 0.25f;
+            p->z += (p->bounce_mid_z - p->z) * 0.25f;
+        } else {
+            /* Second phase: snap back to grid target */
+            p->x += (p->target_x - p->x) * 0.3f;
+            p->z += (p->target_z - p->z) * 0.3f;
+        }
+    } else {
+        p->x += (p->target_x - p->x) * DNG_MOVE_SMOOTH;
+        p->z += (p->target_z - p->z) * DNG_MOVE_SMOOTH;
+    }
     p->angle += (p->target_angle - p->angle) * DNG_TURN_SMOOTH;
 }
 

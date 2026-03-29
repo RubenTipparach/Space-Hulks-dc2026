@@ -307,6 +307,7 @@ static void handle_combat_end(void) {
 static void check_random_encounter(void) {
     dng_player *p = &dng_state.player;
     if (p->gx != last_player_gx || p->gy != last_player_gy) {
+        int prev_gx = last_player_gx, prev_gy = last_player_gy;
         last_player_gx = p->gx;
         last_player_gy = p->gy;
         /* Auto-save on each step */
@@ -334,7 +335,7 @@ static void check_random_encounter(void) {
         /* Check for console interaction — sentinel defense combat */
         uint8_t con_type = dng_state.dungeon->consoles[p->gy][p->gx];
         if (con_type != 0 && current_ship.initialized && current_ship.boarding_active) {
-            /* Block console access if enemies remain in this room */
+            /* Block console access if enemies remain in this room — bounce back */
             int con_room = dng_room_at(dng_state.dungeon, p->gx, p->gy);
             if (con_room >= 0) {
                 sr_dungeon *dd = dng_state.dungeon;
@@ -345,6 +346,20 @@ static void check_random_encounter(void) {
                     for (int cx = rx; cx < rx + rw && !has_enemies; cx++)
                         if (dd->aliens[cy][cx] != 0) has_enemies = true;
                 if (has_enemies) {
+                    /* Remember the console tile for the bounce midpoint */
+                    float mid_x = (p->gx - 0.5f) * DNG_CELL_SIZE;
+                    float mid_z = (p->gy - 0.5f) * DNG_CELL_SIZE;
+                    /* Snap grid position back to previous tile */
+                    p->gx = prev_gx;
+                    p->gy = prev_gy;
+                    last_player_gx = prev_gx;
+                    last_player_gy = prev_gy;
+                    p->target_x = (p->gx - 0.5f) * DNG_CELL_SIZE;
+                    p->target_z = (p->gy - 0.5f) * DNG_CELL_SIZE;
+                    /* Start bounce animation */
+                    p->bounce_mid_x = mid_x;
+                    p->bounce_mid_z = mid_z;
+                    p->bounce_timer = 12;
                     snprintf(dng_hud_msg, sizeof(dng_hud_msg), "CLEAR ENEMIES FIRST");
                     dng_hud_msg_timer = 90;
                     goto skip_console;
