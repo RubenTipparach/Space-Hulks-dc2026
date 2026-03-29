@@ -3,6 +3,7 @@
 #ifndef SR_COMBAT_H
 #define SR_COMBAT_H
 
+#include <stdarg.h>
 #include "sr_sprites.h"
 
 /* ── Card types ──────────────────────────────────────────────────── */
