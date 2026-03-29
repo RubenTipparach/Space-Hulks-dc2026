@@ -821,6 +821,13 @@ static void frame(void) {
             sr_draw_text_shadow(fb.color, fb.width, fb.height,
                                 3, 3, ibuf, 0xFFFFFFFF, 0xFF000000);
         }
+
+        /* Expanded map overlay (drawn on top of everything) */
+        if (dng_expanded_map) {
+            draw_expanded_map(&fb);
+            if (current_ship.initialized && current_ship.boarding_active)
+                expanded_map_ship_overlay(&fb, &current_ship);
+        }
     }
 
     int tris = sr_stats_tri_count();
@@ -1133,7 +1140,20 @@ static void event(const sapp_event *ev) {
     }
 
     /* ── Dungeon keys ────────────────────────────────────────── */
+
+    /* Close expanded map on Escape or any movement key */
+    if (dng_expanded_map) {
+        if (ev->key_code == SAPP_KEYCODE_ESCAPE || ev->key_code == SAPP_KEYCODE_M) {
+            dng_expanded_map = false;
+            return;
+        }
+        return; /* Consume all keys while map is open */
+    }
+
     switch (ev->key_code) {
+        case SAPP_KEYCODE_M:
+            dng_expanded_map = true;
+            break;
         case SAPP_KEYCODE_F:
             dng_light_mode = (dng_light_mode + 1) % 2;
             break;
