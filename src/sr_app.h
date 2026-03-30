@@ -55,12 +55,18 @@ static int    screenshot_counter;
 
 /* ── App state ─────────────────────────────────────────────────── */
 
-enum { STATE_TITLE, STATE_CLASS_SELECT, STATE_RUNNING, STATE_COMBAT };
+enum { STATE_TITLE, STATE_CLASS_SELECT, STATE_RUNNING, STATE_COMBAT,
+       STATE_SHIP_HUB, STATE_SHOP, STATE_DIALOG, STATE_STARMAP };
 static int app_state = STATE_TITLE;
 static int selected_class = 0;  /* 0=scout, 1=marine */
 static int class_select_cursor = 0;
 static int title_cursor = 0;
 static bool save_exists = false;
+
+/* ── Player progression / currency ─────────────────────────────── */
+
+static int player_scrap = 0;       /* currency earned from missions */
+static int player_sector = 0;      /* current sector (progression depth) */
 
 #define SAVE_FILE "spacehulks.sav"
 #define SAVE_MAGIC 0x534B4C48  /* "HLKS" */

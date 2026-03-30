@@ -41,6 +41,7 @@
 #include "sr_scene_dungeon.h"
 #include "sr_combat.h"
 #include "sr_ship.h"
+#include "sr_scene_ship_hub.h"
 #include "sr_menu.h"
 #include "sr_mobile_input.h"
 
@@ -275,14 +276,14 @@ static void handle_combat_end(void) {
         if (current_ship.player_ship_destroyed) {
             g_player.hp = g_player.hp_max / 4;
             if (g_player.hp < 1) g_player.hp = 1;
-            dng_state.current_floor = 0;
-            dng_state.dungeon = &dng_state.floors[0];
-            dng_player_init(&dng_state.player,
-                            dng_state.dungeon->spawn_gx,
-                            dng_state.dungeon->spawn_gy, 0);
-            last_player_gx = dng_state.player.gx;
-            last_player_gy = dng_state.player.gy;
             current_ship.boarding_active = false;
+            hub_generate(&g_hub);
+            app_state = STATE_SHIP_HUB;
+            snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "SHIP DAMAGED! EMERGENCY JUMP!");
+            g_hub.hud_msg_timer = 120;
+            g_hub.mission_available = false;
+            current_combat_room = -1;
+            return;
         }
 
         if (current_ship.enemy_ship_destroyed) {
@@ -294,6 +295,32 @@ static void handle_combat_end(void) {
             last_player_gx = dng_state.player.gx;
             last_player_gy = dng_state.player.gy;
             current_ship.boarding_active = false;
+            /* Mission complete — reward scrap and return to hub */
+            int reward = 20 + player_sector * 10;
+            player_scrap += reward;
+            hub_generate(&g_hub);
+            app_state = STATE_SHIP_HUB;
+            snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "MISSION COMPLETE! +%d SCRAP", reward);
+            g_hub.hud_msg_timer = 120;
+            g_hub.mission_available = false;
+            current_combat_room = -1;
+            return;
+        }
+
+        /* Check if primary mission is done (bridge captured) */
+        if (current_ship.mission.completed && current_ship.boarding_active) {
+            current_ship.boarding_active = false;
+            int reward = 30 + player_sector * 10;
+            for (int b = 0; b < current_ship.bonus_count; b++)
+                if (current_ship.bonus_missions[b].completed) reward += 15;
+            player_scrap += reward;
+            hub_generate(&g_hub);
+            app_state = STATE_SHIP_HUB;
+            snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "MISSION COMPLETE! +%d SCRAP", reward);
+            g_hub.hud_msg_timer = 120;
+            g_hub.mission_available = false;
+            current_combat_room = -1;
+            return;
         }
 
         current_combat_room = -1;
@@ -746,6 +773,17 @@ static void frame(void) {
     } else if (app_state == STATE_COMBAT) {
         combat_update(&combat);
         draw_combat_scene(&fb);
+    } else if (app_state == STATE_SHIP_HUB) {
+        dng_player_update(&g_hub.player);
+        hub_draw_scene(&fb);
+        hub_draw_minimap(&fb);
+        hub_draw_hud(fb.color, fb.width, fb.height);
+        if (g_dialog.active)
+            draw_dialog(fb.color, fb.width, fb.height);
+    } else if (app_state == STATE_SHOP) {
+        draw_shop(fb.color, fb.width, fb.height);
+    } else if (app_state == STATE_STARMAP) {
+        draw_starmap(fb.color, fb.width, fb.height);
     } else {
         sr_mat4 vp;
         (void)vp;
@@ -1030,15 +1068,12 @@ static void handle_screen_tap(float sx, float sy) {
         int sb_x = FB_WIDTH/4 - 40, sb_y = 80;
         if (fx >= sb_x && fx <= sb_x + 80 && fy >= sb_y && fy <= sb_y + 120) {
             if (class_select_cursor == 0) {
-                /* Already selected — start */
                 selected_class = 0;
                 player_persist_init(selected_class);
-                dng_game_init(&dng_state);
-                game_init_ship();
-                dng_initialized = true;
-                last_player_gx = dng_state.player.gx;
-                last_player_gy = dng_state.player.gy;
-                app_state = STATE_RUNNING;
+                player_scrap = 30;
+                player_sector = 0;
+                hub_generate(&g_hub);
+                app_state = STATE_SHIP_HUB;
             } else {
                 class_select_cursor = 0;
             }
@@ -1050,12 +1085,10 @@ static void handle_screen_tap(float sx, float sy) {
             if (class_select_cursor == 1) {
                 selected_class = 1;
                 player_persist_init(selected_class);
-                dng_game_init(&dng_state);
-                game_init_ship();
-                dng_initialized = true;
-                last_player_gx = dng_state.player.gx;
-                last_player_gy = dng_state.player.gy;
-                app_state = STATE_RUNNING;
+                player_scrap = 30;
+                player_sector = 0;
+                hub_generate(&g_hub);
+                app_state = STATE_SHIP_HUB;
             } else {
                 class_select_cursor = 1;
             }
@@ -1201,14 +1234,150 @@ static void event(const sapp_event *ev) {
             case SAPP_KEYCODE_SPACE:
                 selected_class = class_select_cursor;
                 player_persist_init(selected_class);
-                dng_game_init(&dng_state);
-                game_init_ship();
-                dng_initialized = true;
-                last_player_gx = dng_state.player.gx;
-                last_player_gy = dng_state.player.gy;
-                app_state = STATE_RUNNING;
+                player_scrap = 30; /* starting scrap */
+                player_sector = 0;
+                hub_generate(&g_hub);
+                app_state = STATE_SHIP_HUB;
                 break;
             default: break;
+        }
+        return;
+    }
+
+    /* ── Ship hub state ──────────────────────────────────────── */
+    if (app_state == STATE_SHIP_HUB) {
+        if (g_dialog.active) {
+            if (ev->key_code == SAPP_KEYCODE_ENTER || ev->key_code == SAPP_KEYCODE_SPACE ||
+                ev->key_code == SAPP_KEYCODE_ESCAPE) {
+                g_dialog.active = false;
+            }
+            return;
+        }
+        switch (ev->key_code) {
+            case SAPP_KEYCODE_W: case SAPP_KEYCODE_UP:
+                dng_player_try_move(&g_hub.player, &g_hub.dungeon, g_hub.player.dir);
+                break;
+            case SAPP_KEYCODE_S: case SAPP_KEYCODE_DOWN:
+                dng_player_try_move(&g_hub.player, &g_hub.dungeon, (g_hub.player.dir + 2) % 4);
+                break;
+            case SAPP_KEYCODE_A:
+                dng_player_try_move(&g_hub.player, &g_hub.dungeon, (g_hub.player.dir + 3) % 4);
+                break;
+            case SAPP_KEYCODE_D:
+                dng_player_try_move(&g_hub.player, &g_hub.dungeon, (g_hub.player.dir + 1) % 4);
+                break;
+            case SAPP_KEYCODE_LEFT: case SAPP_KEYCODE_Q:
+                g_hub.player.dir = (g_hub.player.dir + 3) % 4;
+                g_hub.player.target_angle -= 0.25f;
+                break;
+            case SAPP_KEYCODE_RIGHT: case SAPP_KEYCODE_E:
+                g_hub.player.dir = (g_hub.player.dir + 1) % 4;
+                g_hub.player.target_angle += 0.25f;
+                break;
+            case SAPP_KEYCODE_ENTER: case SAPP_KEYCODE_SPACE: {
+                int look_gx = g_hub.player.gx + dng_dir_dx[g_hub.player.dir];
+                int look_gy = g_hub.player.gy + dng_dir_dz[g_hub.player.dir];
+                int npc = hub_npc_at(look_gx, look_gy);
+                if (npc >= 0) {
+                    hub_start_dialog(npc);
+                    hub_npc *n = &g_hub.crew[npc];
+                    if (n->dialog_id == 4 && g_player.hp < g_player.hp_max && player_scrap >= 10) {
+                        player_scrap -= 10;
+                        g_player.hp = g_player.hp_max;
+                        snprintf(g_dialog.lines[2], DIALOG_LINE_LEN, "FULLY HEALED!");
+                    }
+                }
+                break;
+            }
+            case SAPP_KEYCODE_T: {
+                int room_idx = hub_room_at_pos(g_hub.player.gx, g_hub.player.gy);
+                if (room_idx >= 0 && g_hub.room_types[room_idx] == HUB_ROOM_TELEPORTER &&
+                    g_hub.mission_available) {
+                    dng_game_init(&dng_state);
+                    game_init_ship();
+                    dng_initialized = true;
+                    last_player_gx = dng_state.player.gx;
+                    last_player_gy = dng_state.player.gy;
+                    g_hub.mission_available = false;
+                    app_state = STATE_RUNNING;
+                }
+                break;
+            }
+            case SAPP_KEYCODE_J: {
+                int room_idx = hub_room_at_pos(g_hub.player.gx, g_hub.player.gy);
+                if (room_idx >= 0 && g_hub.room_types[room_idx] == HUB_ROOM_BRIDGE) {
+                    dng_rng_seed((uint32_t)(player_sector * 1337 + 42));
+                    starmap_generate(&g_starmap, player_sector);
+                    app_state = STATE_STARMAP;
+                }
+                break;
+            }
+            case SAPP_KEYCODE_B: {
+                int room_idx = hub_room_at_pos(g_hub.player.gx, g_hub.player.gy);
+                if (room_idx >= 0 && g_hub.room_types[room_idx] == HUB_ROOM_SHOP) {
+                    dng_rng_seed((uint32_t)(player_sector * 7777 + 123));
+                    shop_generate(&g_shop);
+                    app_state = STATE_SHOP;
+                }
+                break;
+            }
+            case SAPP_KEYCODE_H: {
+                int room_idx = hub_room_at_pos(g_hub.player.gx, g_hub.player.gy);
+                if (room_idx >= 0 && g_hub.room_types[room_idx] == HUB_ROOM_MEDBAY) {
+                    if (g_player.hp < g_player.hp_max && player_scrap >= 10) {
+                        player_scrap -= 10;
+                        g_player.hp = g_player.hp_max;
+                        snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "FULLY HEALED!");
+                        g_hub.hud_msg_timer = 60;
+                    } else if (g_player.hp >= g_player.hp_max) {
+                        snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "ALREADY AT FULL HP");
+                        g_hub.hud_msg_timer = 60;
+                    } else {
+                        snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "NOT ENOUGH SCRAP");
+                        g_hub.hud_msg_timer = 60;
+                    }
+                }
+                break;
+            }
+            default: break;
+        }
+        return;
+    }
+
+    /* ── Shop state ──────────────────────────────────────────── */
+    if (app_state == STATE_SHOP) {
+        if (ev->key_code == SAPP_KEYCODE_ESCAPE) {
+            g_shop.active = false;
+            app_state = STATE_SHIP_HUB;
+        } else {
+            shop_handle_key(ev->key_code);
+        }
+        return;
+    }
+
+    /* ── Star map state ──────────────────────────────────────── */
+    if (app_state == STATE_STARMAP) {
+        if (ev->key_code == SAPP_KEYCODE_ESCAPE) {
+            g_starmap.active = false;
+            app_state = STATE_SHIP_HUB;
+        } else if (ev->key_code == SAPP_KEYCODE_ENTER || ev->key_code == SAPP_KEYCODE_SPACE) {
+            starmap_node *cur = &g_starmap.nodes[g_starmap.current_node];
+            if (cur->next_count > 0 && g_starmap.cursor >= 0 && g_starmap.cursor < cur->next_count) {
+                int next = cur->next[g_starmap.cursor];
+                if (next >= 0 && next < g_starmap.node_count) {
+                    g_starmap.nodes[next].visited = true;
+                    g_starmap.current_node = next;
+                    player_sector = g_starmap.nodes[next].difficulty;
+                    g_starmap.active = false;
+                    hub_generate(&g_hub);
+                    g_hub.mission_available = true;
+                    app_state = STATE_SHIP_HUB;
+                    snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "JUMPED TO %s", g_starmap.nodes[next].name);
+                    g_hub.hud_msg_timer = 90;
+                }
+            }
+        } else {
+            starmap_handle_key(ev->key_code);
         }
         return;
     }
