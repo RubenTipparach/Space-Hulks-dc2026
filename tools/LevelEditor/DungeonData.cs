@@ -1,0 +1,106 @@
+namespace SpaceHulksLevelEditor;
+
+public enum RoomType
+{
+    Corridor = 0,
+    Bridge = 1,
+    Medbay = 2,
+    Weapons = 3,
+    Engines = 4,
+    Reactor = 5,
+    Shields = 6,
+    Cargo = 7,
+    Barracks = 8,
+}
+
+public enum EnemyType
+{
+    None = 0,
+    Lurker = 1,
+    Brute = 2,
+    Spitter = 3,
+    Hiveguard = 4,
+}
+
+public enum CellType
+{
+    Wall = 1,
+    Open = 0,
+    Window = 2,
+}
+
+public class RoomData
+{
+    public int X { get; set; }
+    public int Y { get; set; }
+    public int Width { get; set; } = 3;
+    public int Height { get; set; } = 3;
+    public RoomType Type { get; set; } = RoomType.Corridor;
+    public bool LightOn { get; set; } = true;
+    public int ShipIdx { get; set; } = -1;
+
+    public int CenterX => X + Width / 2;
+    public int CenterY => Y + Height / 2;
+
+    public bool Contains(int gx, int gy) =>
+        gx >= X && gx < X + Width && gy >= Y && gy < Y + Height;
+}
+
+public class EntityData
+{
+    public int GX { get; set; }
+    public int GY { get; set; }
+    public EnemyType EnemyType { get; set; }
+    public string Name { get; set; } = "";
+}
+
+public class ConsoleData
+{
+    public int GX { get; set; }
+    public int GY { get; set; }
+    public RoomType RoomType { get; set; }
+}
+
+public class LootData
+{
+    public int GX { get; set; }
+    public int GY { get; set; }
+}
+
+public class FloorData
+{
+    public int Width { get; set; } = 20;
+    public int Height { get; set; } = 20;
+    public int[,] Map { get; set; } = new int[21, 21]; // 1-indexed
+    public int SpawnGX { get; set; } = 3;
+    public int SpawnGY { get; set; } = 10;
+    public int StairsGX { get; set; } = -1;
+    public int StairsGY { get; set; } = -1;
+    public int StairsDir { get; set; } = 1;
+    public bool HasUp { get; set; }
+    public int DownGX { get; set; } = -1;
+    public int DownGY { get; set; } = -1;
+    public int DownDir { get; set; } = 3;
+    public bool HasDown { get; set; }
+    public List<RoomData> Rooms { get; set; } = new();
+    public List<EntityData> Enemies { get; set; } = new();
+    public List<ConsoleData> Consoles { get; set; } = new();
+    public List<LootData> Loot { get; set; } = new();
+
+    public FloorData()
+    {
+        // Fill with walls
+        for (int y = 0; y <= 20; y++)
+            for (int x = 0; x <= 20; x++)
+                Map[y, x] = 1;
+    }
+
+    public RoomData? RoomAt(int gx, int gy) =>
+        Rooms.FirstOrDefault(r => r.Contains(gx, gy));
+}
+
+public class LevelData
+{
+    public List<FloorData> Floors { get; set; } = new() { new FloorData() };
+    public string ShipName { get; set; } = "UNNAMED SHIP";
+}

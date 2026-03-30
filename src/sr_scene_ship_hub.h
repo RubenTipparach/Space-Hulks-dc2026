@@ -4,6 +4,45 @@
 #ifndef SR_SCENE_SHIP_HUB_H
 #define SR_SCENE_SHIP_HUB_H
 
+/* ── Hub lighting config (loaded from config/hub.yaml) ─────────── */
+
+static struct {
+    float ambient_brightness;
+    float torch_brightness;
+    float fog_base;
+    float fog_boost;
+    float fog_near;
+    float fog_falloff;
+    float room_light_color[3];
+    float room_light_brightness;
+    float room_light_radius;
+} hub_cfg;
+
+static void hub_load_config(void) {
+    sr_config cfg = sr_config_load("config/hub.yaml");
+
+    hub_cfg.ambient_brightness = sr_config_float(&cfg, "ambient.brightness", 0.6f);
+    hub_cfg.torch_brightness   = sr_config_float(&cfg, "torch.brightness", 0.4f);
+    hub_cfg.fog_base           = sr_config_float(&cfg, "fog.base", 0.6f);
+    hub_cfg.fog_boost          = sr_config_float(&cfg, "fog.boost", 0.3f);
+    hub_cfg.fog_near           = sr_config_float(&cfg, "fog.near", 1.0f);
+    hub_cfg.fog_falloff        = sr_config_float(&cfg, "fog.falloff", 8.0f);
+
+    float rl_color[3] = {1.0f, 1.0f, 1.0f};
+    sr_config_array(&cfg, "room_light.color", rl_color, 3);
+    hub_cfg.room_light_color[0] = rl_color[0];
+    hub_cfg.room_light_color[1] = rl_color[1];
+    hub_cfg.room_light_color[2] = rl_color[2];
+    hub_cfg.room_light_brightness = sr_config_float(&cfg, "room_light.brightness", 1.5f);
+    hub_cfg.room_light_radius     = sr_config_float(&cfg, "room_light.radius", 8.0f);
+
+    sr_config_free(&cfg);
+    printf("[hub] Config loaded: ambient(%.2f) torch(%.2f) fog(%.2f/%.2f/%.1f) room_light(%.1f/%.1f)\n",
+           hub_cfg.ambient_brightness, hub_cfg.torch_brightness,
+           hub_cfg.fog_base, hub_cfg.fog_boost, hub_cfg.fog_falloff,
+           hub_cfg.room_light_brightness, hub_cfg.room_light_radius);
+}
+
 /* ── Hub room types ─────────────────────────────────────────────── */
 
 enum {
@@ -90,7 +129,8 @@ enum {
     DIALOG_ACTION_NONE,
     DIALOG_ACTION_STARMAP,
     DIALOG_ACTION_SHOP,
-    DIALOG_ACTION_TELEPORT,
+    DIALOG_ACTION_TELEPORT,       /* opens confirm prompt */
+    DIALOG_ACTION_TELEPORT_GO,    /* confirmed — actually teleport */
     DIALOG_ACTION_HEAL,
 };
 
@@ -100,6 +140,7 @@ typedef struct {
     char speaker[24];
     bool active;
     int pending_action;    /* action to trigger on dismiss */
+    bool confirm_mode;     /* true = show YES/NO buttons */
 } dialog_state;
 
 static dialog_state g_dialog;
@@ -137,24 +178,25 @@ static void hub_generate(hub_state *hub) {
 
     int mid_y = d->h / 2;
 
-    /* Central corridor (2 tiles wide) */
+    /* Central corridor (1 tile wide) */
     for (int x = 3; x <= 18; x++) {
         d->map[mid_y][x] = 0;
-        d->map[mid_y + 1][x] = 0;
     }
 
-    /* Room definitions: {x, y, w, h, type} */
+    /* Room definitions: {x, y, w, h, type}
+     * Rooms are set back 1 tile from corridor so there's a wall gap.
+     * A single doorway tile connects through the gap. */
     struct { int x, y, w, h, type; } room_defs[] = {
-        /* Bridge at the front (right side) */
+        /* Bridge at the front (right side) — 1 wall gap above corridor */
         { 15, mid_y - 5, 4, 4, HUB_ROOM_BRIDGE },
         /* Teleporter at the back (left side) */
         { 3, mid_y - 5, 4, 4, HUB_ROOM_TELEPORTER },
         /* Shop/Armory upper-middle */
         { 9, mid_y - 5, 4, 4, HUB_ROOM_SHOP },
-        /* Quarters below-left */
-        { 5, mid_y + 3, 4, 4, HUB_ROOM_QUARTERS },
+        /* Quarters below-left — 1 wall gap below corridor */
+        { 5, mid_y + 2, 4, 4, HUB_ROOM_QUARTERS },
         /* Medbay below-right */
-        { 12, mid_y + 3, 4, 4, HUB_ROOM_MEDBAY },
+        { 12, mid_y + 2, 4, 4, HUB_ROOM_MEDBAY },
     };
     int num_rooms = 5;
 
@@ -181,14 +223,14 @@ static void hub_generate(hub_state *hub) {
         d->room_ship_idx[i] = -1;
         d->room_light_on[i] = true;
 
-        /* Connect room to corridor */
+        /* Connect room to corridor with 1-wide doorway */
         int conn_x = rx + rw / 2;
-        if (ry < mid_y) {
+        if (ry + rh <= mid_y) {
             for (int y = ry + rh; y <= mid_y; y++)
                 if (y >= 1 && y <= d->h && conn_x >= 1 && conn_x <= d->w)
                     d->map[y][conn_x] = 0;
-        } else {
-            for (int y = mid_y + 1; y < ry; y++)
+        } else if (ry > mid_y) {
+            for (int y = mid_y; y < ry; y++)
                 if (y >= 1 && y <= d->h && conn_x >= 1 && conn_x <= d->w)
                     d->map[y][conn_x] = 0;
         }
@@ -221,12 +263,12 @@ static void hub_generate(hub_state *hub) {
     /* Crew in quarters */
     hub->crew[3] = (hub_npc){
         .name = "PVT KOWALSKI", .room = 3, .dialog_id = 3, .active = true,
-        .gx = 6, .gy = mid_y + 5
+        .gx = 6, .gy = mid_y + 3
     };
     /* Medic */
     hub->crew[4] = (hub_npc){
         .name = "DR VASQUEZ", .room = 4, .dialog_id = 4, .active = true,
-        .gx = 13, .gy = mid_y + 5
+        .gx = 13, .gy = mid_y + 3
     };
 
     /* Place NPC sprites using crew-specific textures */
@@ -258,14 +300,13 @@ static float hub_fog_vertex_intensity(float wx, float wy, float wz) {
     float dz = p->z - wz;
     float dist = sqrtf(dx*dx + dy*dy + dz*dz) / DNG_CELL_SIZE;
 
-    /* 60% ambient base + depth falloff */
-    float base = 0.6f;
-    if (dist > 1.0f) {
-        float fade = 1.0f - (dist - 1.0f) / 8.0f;
+    float base = hub_cfg.fog_base;
+    if (dist > hub_cfg.fog_near) {
+        float fade = 1.0f - (dist - hub_cfg.fog_near) / hub_cfg.fog_falloff;
         if (fade < 0.0f) fade = 0.0f;
-        base += 0.3f * fade;
+        base += hub_cfg.fog_boost * fade;
     } else {
-        base += 0.3f;
+        base += hub_cfg.fog_boost;
     }
     if (base > 1.0f) base = 1.0f;
     return base;
@@ -293,16 +334,17 @@ static int hub_room_at_pos(int gx, int gy) {
 
 /* ── Dialog system ──────────────────────────────────────────────── */
 
+/* Default crew dialogs (non-captain) */
 static const char *crew_dialogs[][3] = {
-    /* CPT HARDEN (bridge) */
-    { "WE NEED TO KEEP MOVING.", "HEAD TO THE BRIDGE WHEN", "YOU'RE READY TO JUMP." },
-    /* SGT REYES (teleporter) */
+    /* 0: CPT HARDEN — overridden dynamically below */
+    { "", "", "" },
+    /* 1: SGT REYES (teleporter) */
     { "TELEPORTER IS PRIMED.", "STEP ON THE PAD WHEN", "YOU'RE READY FOR ACTION." },
-    /* QM CHEN (shop) */
+    /* 2: QM CHEN (shop) */
     { "GOT SOME NEW GEAR.", "TAKE A LOOK AT WHAT", "I'VE SCROUNGED UP." },
-    /* PVT KOWALSKI (quarters) */
+    /* 3: PVT KOWALSKI (quarters) */
     { "ANOTHER DAY IN SPACE.", "AT LEAST WE'RE STILL", "BREATHING, RIGHT?" },
-    /* DR VASQUEZ (medbay) */
+    /* 4: DR VASQUEZ (medbay) */
     { "YOU LOOK ROUGHED UP.", "LET ME PATCH YOU UP", "BEFORE YOUR NEXT RUN." },
 };
 
@@ -314,9 +356,27 @@ static void hub_start_dialog(int npc_idx, int action) {
 
     int did = npc->dialog_id;
     if (did < 0 || did > 4) did = 0;
-    g_dialog.line_count = 3;
-    for (int i = 0; i < 3; i++)
-        snprintf(g_dialog.lines[i], DIALOG_LINE_LEN, "%s", crew_dialogs[did][i]);
+
+    /* Captain has dynamic dialog based on ship status */
+    if (did == 0) {
+        if (g_hub.mission_available) {
+            /* Under attack */
+            snprintf(g_dialog.lines[0], DIALOG_LINE_LEN, "WE'RE UNDER ATTACK!");
+            snprintf(g_dialog.lines[1], DIALOG_LINE_LEN, "GET TO THE TELEPORTER");
+            snprintf(g_dialog.lines[2], DIALOG_LINE_LEN, "AND BOARD THAT SHIP!");
+            g_dialog.line_count = 3;
+        } else {
+            /* Enemy neutralized — ready to jump */
+            snprintf(g_dialog.lines[0], DIALOG_LINE_LEN, "ENEMY NEUTRALIZED.");
+            snprintf(g_dialog.lines[1], DIALOG_LINE_LEN, "WE'RE READY TO JUMP.");
+            snprintf(g_dialog.lines[2], DIALOG_LINE_LEN, "HEAD TO THE STAR MAP.");
+            g_dialog.line_count = 3;
+        }
+    } else {
+        g_dialog.line_count = 3;
+        for (int i = 0; i < 3; i++)
+            snprintf(g_dialog.lines[i], DIALOG_LINE_LEN, "%s", crew_dialogs[did][i]);
+    }
 
     g_dialog.pending_action = action;
     g_dialog.active = true;
@@ -331,6 +391,18 @@ static int hub_room_action_for_type(int room_type) {
         case HUB_ROOM_MEDBAY:     return DIALOG_ACTION_HEAL;
         default:                  return DIALOG_ACTION_NONE;
     }
+}
+
+static void hub_show_teleport_confirm(void) {
+    memset(&g_dialog, 0, sizeof(g_dialog));
+    snprintf(g_dialog.speaker, sizeof(g_dialog.speaker), "TELEPORTER");
+    snprintf(g_dialog.lines[0], DIALOG_LINE_LEN, "ARE YOU READY TO");
+    snprintf(g_dialog.lines[1], DIALOG_LINE_LEN, "TELEPORT TO THE");
+    snprintf(g_dialog.lines[2], DIALOG_LINE_LEN, "ENEMY SHIP?");
+    g_dialog.line_count = 3;
+    g_dialog.pending_action = DIALOG_ACTION_TELEPORT_GO;
+    g_dialog.confirm_mode = true;
+    g_dialog.active = true;
 }
 
 static void draw_dialog(uint32_t *px, int W, int H) {
@@ -362,11 +434,23 @@ static void draw_dialog(uint32_t *px, int W, int H) {
         sr_draw_text_shadow(px, W, H, bx + 4, by + 16 + i * 10,
                             g_dialog.lines[i], 0xFFCCCCCC, shadow);
 
-    const char *dismiss_label = g_dialog.pending_action != DIALOG_ACTION_NONE
-        ? "CONTINUE" : "CLOSE";
-    if (ui_button(px, W, H, bx + bw - 80, by + bh - 14, 70, 12,
-                  dismiss_label, 0xFF1A1A33, 0xFF222255, 0xFF44CC44)) {
-        /* Mark for dismiss — handled by handle_screen_tap via tap flow */
+    if (g_dialog.confirm_mode) {
+        /* YES / NO buttons */
+        if (ui_button(px, W, H, bx + bw - 150, by + bh - 14, 60, 12,
+                      "YES", 0xFF112211, 0xFF223322, 0xFF44CC44)) {
+            /* handled by tap/key — confirm_mode YES click */
+        }
+        if (ui_button(px, W, H, bx + bw - 80, by + bh - 14, 60, 12,
+                      "NO", 0xFF221111, 0xFF332222, 0xFF882222)) {
+            /* handled by tap/key — confirm_mode NO click */
+        }
+    } else {
+        const char *dismiss_label = g_dialog.pending_action != DIALOG_ACTION_NONE
+            ? "CONTINUE" : "CLOSE";
+        if (ui_button(px, W, H, bx + bw - 80, by + bh - 14, 70, 12,
+                      dismiss_label, 0xFF1A1A33, 0xFF222255, 0xFF44CC44)) {
+            /* Mark for dismiss — handled by handle_screen_tap via tap flow */
+        }
     }
 }
 
@@ -917,11 +1001,19 @@ static void hub_draw_scene(sr_framebuffer *fb_ptr) {
     sr_dungeon *d = &g_hub.dungeon;
     dng_player *p = &g_hub.player;
 
-    /* Override the lighting for hub: set high ambient, disable pixel lighting */
+    /* Override the lighting for hub using hub config */
     float save_ambient = dng_cfg.ambient_brightness;
     float save_torch = dng_cfg.light_brightness;
-    dng_cfg.ambient_brightness = 0.6f;
-    dng_cfg.light_brightness = 0.4f;
+    float save_rl_color[3], save_rl_bright, save_rl_radius;
+    memcpy(save_rl_color, dng_cfg.room_light_color, sizeof(save_rl_color));
+    save_rl_bright = dng_cfg.room_light_brightness;
+    save_rl_radius = dng_cfg.room_light_radius;
+
+    dng_cfg.ambient_brightness = hub_cfg.ambient_brightness;
+    dng_cfg.light_brightness = hub_cfg.torch_brightness;
+    memcpy(dng_cfg.room_light_color, hub_cfg.room_light_color, sizeof(dng_cfg.room_light_color));
+    dng_cfg.room_light_brightness = hub_cfg.room_light_brightness;
+    dng_cfg.room_light_radius = hub_cfg.room_light_radius;
 
     /* Temporarily point dng_state at hub dungeon for rendering */
     sr_dungeon *save_dungeon = dng_state.dungeon;
@@ -933,6 +1025,8 @@ static void hub_draw_scene(sr_framebuffer *fb_ptr) {
     int save_light_mode = dng_light_mode;
     dng_light_mode = 1;
     dng_sprites_unlit = true;
+    dng_wall_texture = ITEX_WALL_A;
+    dng_skip_pillars = true;
 
     sr_mat4 vp;
     draw_dungeon_scene(fb_ptr, &vp);
@@ -942,8 +1036,13 @@ static void hub_draw_scene(sr_framebuffer *fb_ptr) {
     dng_state.player = save_player;
     dng_light_mode = save_light_mode;
     dng_sprites_unlit = false;
+    dng_wall_texture = -1;
+    dng_skip_pillars = false;
     dng_cfg.ambient_brightness = save_ambient;
     dng_cfg.light_brightness = save_torch;
+    memcpy(dng_cfg.room_light_color, save_rl_color, sizeof(dng_cfg.room_light_color));
+    dng_cfg.room_light_brightness = save_rl_bright;
+    dng_cfg.room_light_radius = save_rl_radius;
 }
 
 /* ── Hub HUD overlay ────────────────────────────────────────────── */

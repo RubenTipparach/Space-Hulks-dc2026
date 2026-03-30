@@ -29,7 +29,7 @@ static sr_texture textures[TEX_COUNT];
 
 /* Indexed (palette) textures */
 enum {
-    ITEX_BRICK, ITEX_GRASS, ITEX_ROOF, ITEX_WOOD, ITEX_TILE, ITEX_STONE, ITEX_COUNT
+    ITEX_BRICK, ITEX_GRASS, ITEX_ROOF, ITEX_WOOD, ITEX_TILE, ITEX_STONE, ITEX_WALL_A, ITEX_COUNT
 };
 static sr_indexed_texture itextures[ITEX_COUNT];
 
@@ -44,7 +44,7 @@ enum {
 static sr_texture stextures[STEX_COUNT];
 
 /* Console textures (built from embedded sprite data at runtime) */
-#define CONSOLE_TEX_COUNT 9 /* matches ROOM_TYPE_COUNT */
+#define CONSOLE_TEX_COUNT 10 /* matches ROOM_TYPE_COUNT */
 static sr_texture console_textures[CONSOLE_TEX_COUNT]; /* indexed by room type */
 
 /* Timing */

@@ -857,7 +857,7 @@ static void combat_action_end_turn(combat_state *cs) {
     for (int i = 0; i < cs->hand_count; i++)
         cs->discard[cs->discard_count++] = cs->hand[i];
     cs->hand_count = 0;
-    cs->player_move_pts = 0; /* unspent move points are lost */
+    /* movement points persist between rounds */
     combat_log(cs, "-- ENEMY TURN --");
     /* Shield persists through enemy turn, cleared at next draw */
     cs->phase = CPHASE_ENEMY_TURN;

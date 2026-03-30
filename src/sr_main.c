@@ -314,14 +314,17 @@ static void handle_combat_end(void) {
         console_combat = false;
 
         if (!combat.player_won) {
-            g_player.hp = g_player.hp_max / 2;
-            dng_state.current_floor = 0;
-            dng_state.dungeon = &dng_state.floors[0];
-            dng_player_init(&dng_state.player,
-                            dng_state.dungeon->spawn_gx,
-                            dng_state.dungeon->spawn_gy, 0);
-            last_player_gx = dng_state.player.gx;
-            last_player_gy = dng_state.player.gy;
+            /* Player died — emergency teleport back to hub */
+            g_player.hp = g_player.hp_max / 4;
+            if (g_player.hp < 1) g_player.hp = 1;
+            current_ship.boarding_active = false;
+            hub_generate(&g_hub);
+            app_state = STATE_SHIP_HUB;
+            snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "EMERGENCY EXTRACTION!");
+            g_hub.hud_msg_timer = 120;
+            g_hub.mission_available = false;
+            current_combat_room = -1;
+            return;
         }
 
         if (current_ship.player_ship_destroyed) {
@@ -445,6 +448,21 @@ static void check_random_encounter(void) {
             }
             /* Remove the console from the map */
             dng_state.dungeon->consoles[p->gy][p->gx] = 0;
+
+            /* Teleporter console — escape back to hub */
+            if (con_type == ROOM_TELEPORTER) {
+                current_ship.boarding_active = false;
+                int reward = 5 + player_sector * 3;
+                player_scrap += reward;
+                hub_generate(&g_hub);
+                app_state = STATE_SHIP_HUB;
+                snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg),
+                         "TELEPORTED OUT! +%d SCRAP", reward);
+                g_hub.hud_msg_timer = 120;
+                g_hub.mission_available = false;
+                current_combat_room = -1;
+                goto skip_console;
+            }
 
             /* Find which ship room this console belongs to */
             int local_room = dng_room_at(dng_state.dungeon, p->gx, p->gy);
@@ -768,7 +786,8 @@ static void init(void) {
     itextures[ITEX_ROOF]  = sr_indexed_load("assets/indexed/roof.idx");
     itextures[ITEX_WOOD]  = sr_indexed_load("assets/indexed/wood.idx");
     itextures[ITEX_TILE]  = sr_indexed_load("assets/indexed/tile.idx");
-    itextures[ITEX_STONE] = sr_indexed_load("assets/indexed/stone.idx");
+    itextures[ITEX_STONE]  = sr_indexed_load("assets/indexed/stone.idx");
+    itextures[ITEX_WALL_A] = sr_indexed_load("assets/indexed/wall_a.idx");
 
     stextures[STEX_LURKER]    = sr_texture_load("assets/sprites/lurker.png");
     stextures[STEX_BRUTE]     = sr_texture_load("assets/sprites/brute.png");
@@ -796,6 +815,7 @@ static void init(void) {
     sr_fog_set(FOG_COLOR, FOG_NEAR, FOG_FAR);
 
     dng_load_config();
+    hub_load_config();
 
 #ifdef _WIN32
     timeBeginPeriod(1);
@@ -1173,7 +1193,36 @@ static void handle_screen_tap(float sx, float sy) {
 
     if (app_state == STATE_SHIP_HUB) {
         if (g_dialog.active) {
-            /* Tap anywhere dismisses dialog + triggers action (like pressing F) */
+            if (g_dialog.confirm_mode) {
+                /* Confirm dialog — check YES/NO button hits */
+                int H = FB_HEIGHT;
+                int bx = 40, bw = FB_WIDTH - 80, bh = 60;
+                int by = H - 70;
+                /* YES button area */
+                if (fx >= bx + bw - 150 && fx < bx + bw - 90 &&
+                    fy >= by + bh - 14 && fy < by + bh - 2) {
+                    int action = g_dialog.pending_action;
+                    g_dialog.active = false;
+                    g_dialog.confirm_mode = false;
+                    if (action == DIALOG_ACTION_TELEPORT_GO && g_hub.mission_available) {
+                        dng_game_init(&dng_state);
+                        game_init_ship();
+                        dng_initialized = true;
+                        last_player_gx = dng_state.player.gx;
+                        last_player_gy = dng_state.player.gy;
+                        g_hub.mission_available = false;
+                        app_state = STATE_RUNNING;
+                    }
+                }
+                /* NO button area */
+                else if (fx >= bx + bw - 80 && fx < bx + bw - 20 &&
+                         fy >= by + bh - 14 && fy < by + bh - 2) {
+                    g_dialog.active = false;
+                    g_dialog.confirm_mode = false;
+                }
+                return;
+            }
+            /* Normal dialog — tap anywhere dismisses + triggers action */
             int action = g_dialog.pending_action;
             g_dialog.active = false;
             if (action != DIALOG_ACTION_NONE) {
@@ -1189,6 +1238,10 @@ static void handle_screen_tap(float sx, float sy) {
                         app_state = STATE_SHOP;
                         break;
                     case DIALOG_ACTION_TELEPORT:
+                        if (g_hub.mission_available)
+                            hub_show_teleport_confirm();
+                        break;
+                    case DIALOG_ACTION_TELEPORT_GO:
                         if (g_hub.mission_available) {
                             dng_game_init(&dng_state);
                             game_init_ship();
@@ -1480,7 +1533,34 @@ static void event(const sapp_event *ev) {
             return;
         }
         if (g_dialog.active) {
-            if (ev->key_code == SAPP_KEYCODE_F || ev->key_code == SAPP_KEYCODE_ENTER ||
+            if (g_dialog.confirm_mode) {
+                /* YES/NO confirm dialog */
+                bool yes = (ev->key_code == SAPP_KEYCODE_Y || ev->key_code == SAPP_KEYCODE_ENTER ||
+                            ev->key_code == SAPP_KEYCODE_SPACE);
+                bool no  = (ev->key_code == SAPP_KEYCODE_N || ev->key_code == SAPP_KEYCODE_ESCAPE);
+                if (yes) {
+                    int action = g_dialog.pending_action;
+                    g_dialog.active = false;
+                    g_dialog.confirm_mode = false;
+                    switch (action) {
+                        case DIALOG_ACTION_TELEPORT_GO:
+                            if (g_hub.mission_available) {
+                                dng_game_init(&dng_state);
+                                game_init_ship();
+                                dng_initialized = true;
+                                last_player_gx = dng_state.player.gx;
+                                last_player_gy = dng_state.player.gy;
+                                g_hub.mission_available = false;
+                                app_state = STATE_RUNNING;
+                            }
+                            break;
+                        default: break;
+                    }
+                } else if (no) {
+                    g_dialog.active = false;
+                    g_dialog.confirm_mode = false;
+                }
+            } else if (ev->key_code == SAPP_KEYCODE_F || ev->key_code == SAPP_KEYCODE_ENTER ||
                 ev->key_code == SAPP_KEYCODE_SPACE || ev->key_code == SAPP_KEYCODE_ESCAPE) {
                 int action = g_dialog.pending_action;
                 g_dialog.active = false;
@@ -1498,6 +1578,10 @@ static void event(const sapp_event *ev) {
                             app_state = STATE_SHOP;
                             break;
                         case DIALOG_ACTION_TELEPORT:
+                            if (g_hub.mission_available)
+                                hub_show_teleport_confirm();
+                            break;
+                        case DIALOG_ACTION_TELEPORT_GO:
                             if (g_hub.mission_available) {
                                 dng_game_init(&dng_state);
                                 game_init_ship();
