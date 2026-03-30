@@ -13,3 +13,5 @@ rubens_dungeon/
 .claude
 tools/LevelEditor/obj/
 tools/LevelEditor/bin/
+utilities/LevelEditor/obj/
+utilities/LevelEditor/bin/
