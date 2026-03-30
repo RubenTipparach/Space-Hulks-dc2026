@@ -79,6 +79,7 @@ static int dng_play_state = DNG_STATE_PLAYING;
 static int dng_light_mode = 0;
 static bool dng_show_info = false;
 static bool dng_expanded_map = false;
+static bool dng_sprites_unlit = false;  /* true = sprites skip fog tint */
 
 /* ── Per-cell room light (set before drawing each cell) ─────────── */
 
@@ -612,8 +613,13 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
                 float rz = cz + right_z * sprite_half;
 
                 /* Compute fog/light tint based on distance to player */
-                float fog_i = dng_fog_vertex_intensity(cx, 0, cz);
-                uint32_t tint = pal_intensity_color(fog_i);
+                uint32_t tint;
+                if (dng_sprites_unlit) {
+                    tint = 0xFFFFFFFF;
+                } else {
+                    float fog_i = dng_fog_vertex_intensity(cx, 0, cz);
+                    tint = pal_intensity_color(fog_i);
+                }
 
                 sr_draw_quad_doublesided(fb_ptr,
                     sr_vert_c(lx, bot_y, lz, 0, 1, tint),
@@ -650,8 +656,13 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
                 float crx = ccx + cright_x * console_half;
                 float crz = ccz + cright_z * console_half;
 
-                float fog_i = dng_fog_vertex_intensity(ccx, 0, ccz);
-                uint32_t tint = pal_intensity_color(fog_i);
+                uint32_t tint;
+                if (dng_sprites_unlit) {
+                    tint = 0xFFFFFFFF;
+                } else {
+                    float fog_i = dng_fog_vertex_intensity(ccx, 0, ccz);
+                    tint = pal_intensity_color(fog_i);
+                }
 
                 sr_draw_quad_doublesided(fb_ptr,
                     sr_vert_c(clx, cbot_y, clz, 0, 1, tint),

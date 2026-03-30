@@ -58,6 +58,8 @@ typedef struct {
     int current_node;
     int cursor;          /* selected next node */
     bool active;
+    bool confirm_active; /* showing jump confirm dialog */
+    int confirm_target;  /* node index to confirm */
 } starmap_state;
 
 static starmap_state g_starmap;
@@ -73,6 +75,7 @@ typedef struct {
     int cursor;
     int mode;            /* 0=buy, 1=trash */
     int trash_cursor;    /* cursor into player deck for trashing */
+    int trash_count;     /* number of cards trashed this visit */
     bool active;
 } shop_state;
 
@@ -83,11 +86,20 @@ static shop_state g_shop;
 #define DIALOG_MAX_LINES 4
 #define DIALOG_LINE_LEN 48
 
+enum {
+    DIALOG_ACTION_NONE,
+    DIALOG_ACTION_STARMAP,
+    DIALOG_ACTION_SHOP,
+    DIALOG_ACTION_TELEPORT,
+    DIALOG_ACTION_HEAL,
+};
+
 typedef struct {
     char lines[DIALOG_MAX_LINES][DIALOG_LINE_LEN];
     int line_count;
     char speaker[24];
     bool active;
+    int pending_action;    /* action to trigger on dismiss */
 } dialog_state;
 
 static dialog_state g_dialog;
@@ -217,14 +229,19 @@ static void hub_generate(hub_state *hub) {
         .gx = 13, .gy = mid_y + 5
     };
 
-    /* Place NPC sprites as "aliens" (reuse the sprite system) */
-    for (int i = 0; i < hub->crew_count; i++) {
-        hub_npc *npc = &hub->crew[i];
-        if (!npc->active) continue;
-        if (npc->gx >= 1 && npc->gx <= d->w && npc->gy >= 1 && npc->gy <= d->h) {
-            /* Use STEX_SCOUT or STEX_MARINE sprite as NPC stand-in */
-            d->aliens[npc->gy][npc->gx] = (i % 2 == 0) ? (ENEMY_SPITTER + 1) : (ENEMY_BRUTE + 1);
-            snprintf(d->alien_names[npc->gy][npc->gx], 16, "%s", npc->name);
+    /* Place NPC sprites using crew-specific textures */
+    {
+        static const int crew_stex[] = {
+            STEX_CREW_CAPTAIN, STEX_CREW_SERGEANT, STEX_CREW_QUARTERMASTER,
+            STEX_CREW_PRIVATE, STEX_CREW_DOCTOR
+        };
+        for (int i = 0; i < hub->crew_count; i++) {
+            hub_npc *npc = &hub->crew[i];
+            if (!npc->active) continue;
+            if (npc->gx >= 1 && npc->gx <= d->w && npc->gy >= 1 && npc->gy <= d->h) {
+                d->aliens[npc->gy][npc->gx] = (uint8_t)(crew_stex[i] + 1);
+                snprintf(d->alien_names[npc->gy][npc->gx], 16, "%s", npc->name);
+            }
         }
     }
 
@@ -289,7 +306,7 @@ static const char *crew_dialogs[][3] = {
     { "YOU LOOK ROUGHED UP.", "LET ME PATCH YOU UP", "BEFORE YOUR NEXT RUN." },
 };
 
-static void hub_start_dialog(int npc_idx) {
+static void hub_start_dialog(int npc_idx, int action) {
     if (npc_idx < 0 || npc_idx >= g_hub.crew_count) return;
     hub_npc *npc = &g_hub.crew[npc_idx];
     memset(&g_dialog, 0, sizeof(g_dialog));
@@ -301,7 +318,19 @@ static void hub_start_dialog(int npc_idx) {
     for (int i = 0; i < 3; i++)
         snprintf(g_dialog.lines[i], DIALOG_LINE_LEN, "%s", crew_dialogs[did][i]);
 
+    g_dialog.pending_action = action;
     g_dialog.active = true;
+}
+
+/* Start dialog for a room interaction (F key with no NPC, or NPC with room action) */
+static int hub_room_action_for_type(int room_type) {
+    switch (room_type) {
+        case HUB_ROOM_BRIDGE:     return DIALOG_ACTION_STARMAP;
+        case HUB_ROOM_TELEPORTER: return DIALOG_ACTION_TELEPORT;
+        case HUB_ROOM_SHOP:       return DIALOG_ACTION_SHOP;
+        case HUB_ROOM_MEDBAY:     return DIALOG_ACTION_HEAL;
+        default:                  return DIALOG_ACTION_NONE;
+    }
 }
 
 static void draw_dialog(uint32_t *px, int W, int H) {
@@ -333,8 +362,12 @@ static void draw_dialog(uint32_t *px, int W, int H) {
         sr_draw_text_shadow(px, W, H, bx + 4, by + 16 + i * 10,
                             g_dialog.lines[i], 0xFFCCCCCC, shadow);
 
-    sr_draw_text_shadow(px, W, H, bx + bw - 80, by + bh - 12,
-                        "[ENTER] CLOSE", 0xFF888888, shadow);
+    const char *dismiss_label = g_dialog.pending_action != DIALOG_ACTION_NONE
+        ? "CONTINUE" : "CLOSE";
+    if (ui_button(px, W, H, bx + bw - 80, by + bh - 14, 70, 12,
+                  dismiss_label, 0xFF1A1A33, 0xFF222255, 0xFF44CC44)) {
+        /* Mark for dismiss — handled by handle_screen_tap via tap flow */
+    }
 }
 
 /* ── Shop system ────────────────────────────────────────────────── */
@@ -370,27 +403,41 @@ static void draw_shop(uint32_t *px, int W, int H) {
     snprintf(scrap_buf, sizeof(scrap_buf), "SCRAP: %d", player_scrap);
     sr_draw_text_shadow(px, W, H, W - 80, 10, scrap_buf, 0xFF00DDDD, shadow);
 
-    /* Mode tabs */
-    uint32_t buy_col = g_shop.mode == 0 ? 0xFF00DDDD : 0xFF555555;
-    uint32_t trash_col = g_shop.mode == 1 ? 0xFF00DDDD : 0xFF555555;
-    sr_draw_text_shadow(px, W, H, 40, 26, "[1] BUY CARDS", buy_col, shadow);
-    sr_draw_text_shadow(px, W, H, 160, 26, "[2] TRASH CARDS", trash_col, shadow);
+    /* Mode tab buttons */
+    if (ui_button(px, W, H, 30, 24, 90, 14, "BUY CARDS",
+                  g_shop.mode == 0 ? 0xFF1A1A33 : 0xFF111122,
+                  0xFF222255, 0xFF333366))
+        g_shop.mode = 0;
+    if (ui_button(px, W, H, 130, 24, 100, 14, "TRASH CARDS",
+                  g_shop.mode == 1 ? 0xFF1A1A33 : 0xFF111122,
+                  0xFF222255, 0xFF333366))
+        g_shop.mode = 1;
 
     if (g_shop.mode == 0) {
         /* Buy mode */
         for (int i = 0; i < g_shop.count; i++) {
             int cy = 44 + i * 30;
-            bool sel = (g_shop.cursor == i);
-            uint32_t bg = sel ? 0xFF222244 : 0xFF111122;
+            int rx0 = 60, rw = W - 120, rh = 26;
 
-            /* Card background */
-            for (int ry = cy; ry < cy + 26 && ry < H; ry++)
-                for (int rx = 60; rx < W - 60 && rx < W; rx++)
+            bool hovered = false;
+            bool row_clicked = ui_row_hover(rx0, cy, rw, rh, &hovered);
+            bool sel = (g_shop.cursor == i);
+
+            /* Hover selects */
+            if (hovered) g_shop.cursor = i;
+
+            uint32_t bg = sel ? (hovered ? 0xFF2A2A55 : 0xFF222244) : (hovered ? 0xFF1A1A33 : 0xFF111122);
+
+            for (int ry = cy; ry < cy + rh && ry < H; ry++)
+                for (int rx = rx0; rx < rx0 + rw && rx < W; rx++)
                     if (ry >= 0 && rx >= 0) px[ry * W + rx] = bg;
-            if (sel) {
-                for (int rx = 60; rx < W - 60; rx++) {
-                    if (cy >= 0 && cy < H) px[cy * W + rx] = 0xFF4444AA;
-                    if (cy + 25 >= 0 && cy + 25 < H) px[(cy + 25) * W + rx] = 0xFF4444AA;
+
+            /* Border on selected/hovered */
+            if (sel || hovered) {
+                uint32_t bdr = hovered ? 0xFF6666CC : 0xFF4444AA;
+                for (int rx = rx0; rx < rx0 + rw; rx++) {
+                    if (cy >= 0 && cy < H) px[cy * W + rx] = bdr;
+                    if (cy+rh-1 >= 0 && cy+rh-1 < H) px[(cy+rh-1) * W + rx] = bdr;
                 }
             }
 
@@ -407,33 +454,94 @@ static void draw_shop(uint32_t *px, int W, int H) {
             uint32_t pcol = player_scrap >= g_shop.prices[i] ? 0xFF22CC22 : 0xFF882222;
             sr_draw_text_shadow(px, W, H, W - 140, cy + 4, price_buf, pcol, shadow);
 
+            /* Buy button on selected row */
             if (sel) {
-                sr_draw_text_shadow(px, W, H, 66, cy + 14,
-                    "[ENTER] BUY", 0xFF888888, shadow);
+                if (ui_button(px, W, H, 66, cy + 14, 60, 12, "BUY",
+                              0xFF1A1A33, 0xFF222255, 0xFF44CC44)) {
+                    /* Trigger buy */
+                    if (player_scrap >= g_shop.prices[i] &&
+                        g_player.persistent_deck_count < COMBAT_DECK_MAX) {
+                        player_scrap -= g_shop.prices[i];
+                        g_player.persistent_deck[g_player.persistent_deck_count++] = g_shop.cards[i];
+                        for (int j = i; j < g_shop.count - 1; j++) {
+                            g_shop.cards[j] = g_shop.cards[j + 1];
+                            g_shop.prices[j] = g_shop.prices[j + 1];
+                        }
+                        g_shop.count--;
+                        if (g_shop.cursor >= g_shop.count && g_shop.count > 0)
+                            g_shop.cursor = g_shop.count - 1;
+                    }
+                }
+            }
+
+            /* Click row to buy (same as clicking buy button) */
+            if (row_clicked && sel) {
+                if (player_scrap >= g_shop.prices[i] &&
+                    g_player.persistent_deck_count < COMBAT_DECK_MAX) {
+                    player_scrap -= g_shop.prices[i];
+                    g_player.persistent_deck[g_player.persistent_deck_count++] = g_shop.cards[i];
+                    for (int j = i; j < g_shop.count - 1; j++) {
+                        g_shop.cards[j] = g_shop.cards[j + 1];
+                        g_shop.prices[j] = g_shop.prices[j + 1];
+                    }
+                    g_shop.count--;
+                    if (g_shop.cursor >= g_shop.count && g_shop.count > 0)
+                        g_shop.cursor = g_shop.count - 1;
+                    break; /* list shifted, stop iterating */
+                }
             }
         }
     } else {
         /* Trash mode - show player's deck */
-        sr_draw_text_shadow(px, W, H, 60, 44, "YOUR DECK:", 0xFFCCCCCC, shadow);
+        int trash_cost = 30 + g_shop.trash_count * 5;
+        char trash_hdr[48];
+        snprintf(trash_hdr, sizeof(trash_hdr), "YOUR DECK:  TRASH COST: %d SCRAP", trash_cost);
+        sr_draw_text_shadow(px, W, H, 60, 44, trash_hdr, 0xFFCCCCCC, shadow);
         int cols = 4;
         for (int i = 0; i < g_player.persistent_deck_count; i++) {
             int col = i % cols;
             int row = i / cols;
             int cx = 60 + col * 100;
             int cy = 58 + row * 24;
+
+            bool hovered = false;
+            ui_row_hover(cx, cy, 90, 20, &hovered);
+            if (hovered) g_shop.trash_cursor = i;
             bool sel = (g_shop.trash_cursor == i);
 
             int card_type = g_player.persistent_deck[i];
-            uint32_t ccol = sel ? 0xFF00DDDD : card_colors[card_type];
+            uint32_t ccol = hovered ? 0xFF00FFFF : (sel ? 0xFF00DDDD : card_colors[card_type]);
             sr_draw_text_shadow(px, W, H, cx, cy, card_names[card_type], ccol, shadow);
-            if (sel)
-                sr_draw_text_shadow(px, W, H, cx, cy + 10, "^TRASH", 0xFFCC2222, shadow);
+            if (sel) {
+                bool can_trash = g_player.persistent_deck_count > 5 && player_scrap >= trash_cost;
+                char tbuf[24];
+                snprintf(tbuf, sizeof(tbuf), "TRASH (%d)", trash_cost);
+                if (ui_button(px, W, H, cx, cy + 10, 70, 12, tbuf,
+                              can_trash ? 0xFF331111 : 0xFF222222,
+                              can_trash ? 0xFF442222 : 0xFF333333,
+                              can_trash ? 0xFFCC2222 : 0xFF333333)) {
+                    if (can_trash) {
+                        player_scrap -= trash_cost;
+                        g_shop.trash_count++;
+                        for (int j = i; j < g_player.persistent_deck_count - 1; j++)
+                            g_player.persistent_deck[j] = g_player.persistent_deck[j + 1];
+                        g_player.persistent_deck_count--;
+                        if (g_shop.trash_cursor >= g_player.persistent_deck_count)
+                            g_shop.trash_cursor = g_player.persistent_deck_count - 1;
+                    }
+                }
+            }
         }
         sr_draw_text_shadow(px, W, H, 60, H - 30,
-            "TRASH IS FREE  [ENTER] CONFIRM  MIN 5 CARDS", 0xFF888888, shadow);
+            "MIN 5 CARDS", 0xFF888888, shadow);
     }
 
-    sr_draw_text_shadow(px, W, H, W/2 - 30, H - 14, "[ESC] LEAVE", 0xFF888888, shadow);
+    /* Leave button */
+    if (ui_button(px, W, H, W/2 - 40, H - 18, 80, 16, "LEAVE",
+                  0xFF111122, 0xFF222244, 0xFF333366)) {
+        g_shop.active = false;
+        app_state = STATE_SHIP_HUB;
+    }
 }
 
 static void shop_handle_key(int key_code) {
@@ -492,8 +600,10 @@ static void shop_handle_key(int key_code) {
                 g_shop.trash_cursor = g_player.persistent_deck_count - 1;
         }
         if (key_code == SAPP_KEYCODE_ENTER || key_code == SAPP_KEYCODE_SPACE) {
-            /* Minimum 5 cards in deck */
-            if (g_player.persistent_deck_count > 5) {
+            int trash_cost = 30 + g_shop.trash_count * 5;
+            if (g_player.persistent_deck_count > 5 && player_scrap >= trash_cost) {
+                player_scrap -= trash_cost;
+                g_shop.trash_count++;
                 int idx = g_shop.trash_cursor;
                 for (int i = idx; i < g_player.persistent_deck_count - 1; i++)
                     g_player.persistent_deck[i] = g_player.persistent_deck[i + 1];
@@ -626,33 +736,61 @@ static void draw_starmap(uint32_t *px, int W, int H) {
         }
     }
 
+    /* Hover detection on selectable nodes (before drawing so cursor is up to date) */
+    starmap_node *cur = &g_starmap.nodes[g_starmap.current_node];
+    int hovered_node = -1;
+    if (!g_starmap.confirm_active) {
+        for (int c = 0; c < cur->next_count; c++) {
+            int target = cur->next[c];
+            if (target < 0 || target >= g_starmap.node_count) continue;
+            starmap_node *nd = &g_starmap.nodes[target];
+            float ddx = ui_mouse_x - nd->x, ddy = ui_mouse_y - nd->y;
+            if (ddx * ddx + ddy * ddy <= 14 * 14) {
+                g_starmap.cursor = c;
+                hovered_node = target;
+                break;
+            }
+        }
+    }
+
     /* Draw nodes */
     for (int i = 0; i < g_starmap.node_count; i++) {
         starmap_node *nd = &g_starmap.nodes[i];
         uint32_t col;
-        if (i == g_starmap.current_node) col = 0xFF22CC22; /* current = green */
-        else if (nd->visited) col = 0xFF555555; /* visited = dim */
-        else col = 0xFFCCCCFF; /* available = white-blue */
+        if (i == g_starmap.current_node) col = 0xFF22CC22;
+        else if (nd->visited) col = 0xFF555555;
+        else col = 0xFFCCCCFF;
 
-        /* Check if this is a selectable next node */
         bool selectable = false;
-        starmap_node *cur = &g_starmap.nodes[g_starmap.current_node];
         for (int c = 0; c < cur->next_count; c++) {
             if (cur->next[c] == i) {
                 selectable = true;
-                /* Highlight selected */
                 if (g_starmap.cursor == c) col = 0xFF00DDDD;
                 break;
             }
         }
 
-        /* Node circle (3x3) */
+        bool is_hovered = (i == hovered_node);
+
+        /* Node circle — larger glow ring when hovered */
+        if (is_hovered) {
+            uint32_t glow = 0xFF005555;
+            for (int dy = -4; dy <= 4; dy++)
+                for (int dx = -4; dx <= 4; dx++) {
+                    int d2 = dx*dx + dy*dy;
+                    if (d2 > 16 || d2 <= 5) continue;
+                    int rx = nd->x + dx, ry = nd->y + dy;
+                    if (rx >= 0 && rx < W && ry >= 0 && ry < H)
+                        px[ry * W + rx] = glow;
+                }
+        }
+
         for (int dy = -2; dy <= 2; dy++)
             for (int dx = -2; dx <= 2; dx++) {
                 if (dx*dx + dy*dy > 5) continue;
                 int rx = nd->x + dx, ry = nd->y + dy;
                 if (rx >= 0 && rx < W && ry >= 0 && ry < H)
-                    px[ry * W + rx] = col;
+                    px[ry * W + rx] = is_hovered ? 0xFF00FFFF : col;
             }
 
         /* Label */
@@ -668,14 +806,99 @@ static void draw_starmap(uint32_t *px, int W, int H) {
         }
     }
 
-    /* Instructions */
-    sr_draw_text_shadow(px, W, H, W/2 - 80, H - 14,
-                        "[LEFT/RIGHT] SELECT  [ENTER] JUMP  [ESC] BACK",
-                        0xFF888888, shadow);
+    /* ── Confirm dialog ────────────────────────────────────────── */
+    if (g_starmap.confirm_active) {
+        int ct = g_starmap.confirm_target;
+        if (ct >= 0 && ct < g_starmap.node_count) {
+            starmap_node *tgt = &g_starmap.nodes[ct];
+            /* Dialog box */
+            int dbw = 160, dbh = 50;
+            int dbx = W/2 - dbw/2, dby = H/2 - dbh/2;
+            for (int ry = dby; ry < dby + dbh && ry < H; ry++)
+                for (int rx = dbx; rx < dbx + dbw && rx < W; rx++)
+                    if (rx >= 0 && ry >= 0) px[ry * W + rx] = 0xFF111133;
+            /* Border */
+            for (int rx = dbx; rx < dbx + dbw && rx < W; rx++) {
+                if (dby >= 0 && dby < H) px[dby * W + rx] = 0xFF4444AA;
+                if (dby+dbh-1 >= 0 && dby+dbh-1 < H) px[(dby+dbh-1) * W + rx] = 0xFF4444AA;
+            }
+            for (int ry = dby; ry < dby + dbh && ry < H; ry++) {
+                if (dbx >= 0 && dbx < W) px[ry * W + dbx] = 0xFF4444AA;
+                if (dbx+dbw-1 >= 0 && dbx+dbw-1 < W) px[ry * W + dbx+dbw-1] = 0xFF4444AA;
+            }
+            sr_draw_text_shadow(px, W, H, dbx + 10, dby + 6, "JUMP TO", 0xFFCCCCCC, shadow);
+            sr_draw_text_shadow(px, W, H, dbx + 10, dby + 16, tgt->name, 0xFF00DDDD, shadow);
+            char dbuf[32];
+            snprintf(dbuf, sizeof(dbuf), "D%d  ~%d SCRAP", tgt->difficulty, tgt->scrap_reward);
+            sr_draw_text_shadow(px, W, H, dbx + 10, dby + 26, dbuf, 0xFF888888, shadow);
+
+            if (ui_button(px, W, H, dbx + 10, dby + dbh - 16, 60, 14, "YES",
+                          0xFF112211, 0xFF223322, 0xFF44CC44)) {
+                tgt->visited = true;
+                g_starmap.current_node = ct;
+                player_sector = tgt->difficulty;
+                g_starmap.active = false;
+                g_starmap.confirm_active = false;
+                hub_generate(&g_hub);
+                g_hub.mission_available = true;
+                app_state = STATE_SHIP_HUB;
+                snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "JUMPED TO %s", tgt->name);
+                g_hub.hud_msg_timer = 90;
+            }
+            if (ui_button(px, W, H, dbx + dbw - 70, dby + dbh - 16, 60, 14, "NO",
+                          0xFF221111, 0xFF332222, 0xFF882222)) {
+                g_starmap.confirm_active = false;
+            }
+        }
+    } else {
+        /* Jump button — opens confirm dialog */
+        if (cur->next_count > 0) {
+            if (ui_button(px, W, H, W/2 - 30, H - 30, 60, 14, "JUMP",
+                          0xFF111133, 0xFF222255, 0xFF333377)) {
+                int next = cur->next[g_starmap.cursor];
+                if (next >= 0 && next < g_starmap.node_count) {
+                    g_starmap.confirm_active = true;
+                    g_starmap.confirm_target = next;
+                }
+            }
+        }
+    }
+
+    /* Back button */
+    if (ui_button(px, W, H, W/2 - 30, H - 14, 60, 12, "BACK",
+                  0xFF111122, 0xFF222244, 0xFF333366)) {
+        g_starmap.active = false;
+        g_starmap.confirm_active = false;
+        app_state = STATE_SHIP_HUB;
+    }
 }
 
 static void starmap_handle_key(int key_code) {
     if (!g_starmap.active) return;
+
+    if (g_starmap.confirm_active) {
+        /* Confirm dialog: Y/Enter = yes, N/Escape = no */
+        if (key_code == SAPP_KEYCODE_Y || key_code == SAPP_KEYCODE_ENTER ||
+            key_code == SAPP_KEYCODE_SPACE) {
+            int ct = g_starmap.confirm_target;
+            if (ct >= 0 && ct < g_starmap.node_count) {
+                g_starmap.nodes[ct].visited = true;
+                g_starmap.current_node = ct;
+                player_sector = g_starmap.nodes[ct].difficulty;
+                g_starmap.active = false;
+                g_starmap.confirm_active = false;
+                hub_generate(&g_hub);
+                g_hub.mission_available = true;
+                app_state = STATE_SHIP_HUB;
+                snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "JUMPED TO %s", g_starmap.nodes[ct].name);
+                g_hub.hud_msg_timer = 90;
+            }
+        } else if (key_code == SAPP_KEYCODE_N || key_code == SAPP_KEYCODE_ESCAPE) {
+            g_starmap.confirm_active = false;
+        }
+        return;
+    }
+
     starmap_node *cur = &g_starmap.nodes[g_starmap.current_node];
 
     if (key_code == SAPP_KEYCODE_LEFT || key_code == SAPP_KEYCODE_A) {
@@ -706,9 +929,10 @@ static void hub_draw_scene(sr_framebuffer *fb_ptr) {
     dng_state.dungeon = d;
     dng_state.player = *p;
 
-    /* Use fog mode (mode 1) for hub - faster and looks good with high ambient */
+    /* Use fog mode (mode 1) for hub — hub_mode flag makes it fully lit */
     int save_light_mode = dng_light_mode;
     dng_light_mode = 1;
+    dng_sprites_unlit = true;
 
     sr_mat4 vp;
     draw_dungeon_scene(fb_ptr, &vp);
@@ -717,6 +941,7 @@ static void hub_draw_scene(sr_framebuffer *fb_ptr) {
     dng_state.dungeon = save_dungeon;
     dng_state.player = save_player;
     dng_light_mode = save_light_mode;
+    dng_sprites_unlit = false;
     dng_cfg.ambient_brightness = save_ambient;
     dng_cfg.light_brightness = save_torch;
 }
@@ -753,8 +978,10 @@ static void hub_draw_hud(uint32_t *px, int W, int H) {
     int room_idx = hub_room_at_pos(g_hub.player.gx, g_hub.player.gy);
     if (room_idx >= 0 && room_idx < (int)(sizeof(hub_room_names)/sizeof(hub_room_names[0]))) {
         int rt = g_hub.room_types[room_idx];
-        sr_draw_text_shadow(px, W, H, W/2 - 20, H - 14,
-                            hub_room_names[rt], hub_room_colors[rt], shadow);
+        const char *rn = hub_room_names[rt];
+        int rnlen = 0; for (const char *c = rn; *c; c++) rnlen++;
+        sr_draw_text_shadow(px, W, H, W/2 - rnlen * 3, H - 14,
+                            rn, hub_room_colors[rt], shadow);
     }
 
     /* Show NPC name when facing one */
@@ -762,30 +989,29 @@ static void hub_draw_hud(uint32_t *px, int W, int H) {
     int look_gy = g_hub.player.gy + dng_dir_dz[g_hub.player.dir];
     int npc = hub_npc_at(look_gx, look_gy);
     if (npc >= 0) {
-        sr_draw_text_shadow(px, W, H, W/2 - 30, H - 24,
-                            g_hub.crew[npc].name, 0xFF00DDDD, shadow);
-        sr_draw_text_shadow(px, W, H, W/2 - 40, H - 34,
-                            "[ENTER] TALK", 0xFF888888, shadow);
-    }
-
-    /* Room-specific prompts */
-    if (room_idx >= 0) {
+        const char *nn = g_hub.crew[npc].name;
+        int nnlen = 0; for (const char *c = nn; *c; c++) nnlen++;
+        sr_draw_text_shadow(px, W, H, W/2 - nnlen * 3, H - 24,
+                            nn, 0xFF00DDDD, shadow);
+        sr_draw_text_shadow(px, W, H, W/2 - 24, H - 34,
+                            "[F] TALK", 0xFF888888, shadow);
+    } else if (room_idx >= 0) {
         int rt = g_hub.room_types[room_idx];
+        const char *action_label = NULL;
+        uint32_t action_col = 0xFF888888;
         if (rt == HUB_ROOM_TELEPORTER && g_hub.mission_available) {
-            sr_draw_text_shadow(px, W, H, W/2 - 50, H - 44,
-                                "[T] BEGIN MISSION", 0xFF22CC44, shadow);
+            action_label = "[F] TELEPORTER"; action_col = 0xFF22CC44;
+        } else if (rt == HUB_ROOM_BRIDGE) {
+            action_label = "[F] STAR MAP"; action_col = 0xFF22CCEE;
+        } else if (rt == HUB_ROOM_SHOP) {
+            action_label = "[F] ARMORY"; action_col = 0xFFCC8822;
+        } else if (rt == HUB_ROOM_MEDBAY) {
+            action_label = "[F] MEDBAY"; action_col = 0xFF44CC44;
         }
-        if (rt == HUB_ROOM_BRIDGE) {
-            sr_draw_text_shadow(px, W, H, W/2 - 50, H - 44,
-                                "[J] OPEN STAR MAP", 0xFF22CCEE, shadow);
-        }
-        if (rt == HUB_ROOM_SHOP) {
-            sr_draw_text_shadow(px, W, H, W/2 - 50, H - 44,
-                                "[B] OPEN SHOP", 0xFFCC8822, shadow);
-        }
-        if (rt == HUB_ROOM_MEDBAY && g_player.hp < g_player.hp_max) {
-            sr_draw_text_shadow(px, W, H, W/2 - 50, H - 44,
-                                "[H] HEAL (10 SCRAP)", 0xFF44CC44, shadow);
+        if (action_label) {
+            int allen = 0; for (const char *c = action_label; *c; c++) allen++;
+            sr_draw_text_shadow(px, W, H, W/2 - allen * 3, H - 34,
+                                action_label, action_col, shadow);
         }
     }
 

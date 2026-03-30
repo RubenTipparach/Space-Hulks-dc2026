@@ -102,4 +102,43 @@ static void dng_touch_cancelled(void) {
     touch_active = false;
 }
 
+/* ── Hub touch (same swipe/tap logic, operates on g_hub) ────────── */
+
+static void hub_touch_ended(float sx, float sy, double time) {
+    if (!touch_active) return;
+    touch_active = false;
+
+    float dx = sx - touch_start_sx;
+    float dy = sy - touch_start_sy;
+    float dist = sqrtf(dx * dx + dy * dy);
+    double duration = time - touch_start_time;
+
+    if (dist < TOUCH_SWIPE_MIN_DIST && duration < TOUCH_TAP_MAX_TIME) {
+        /* Tap — convert to screen_tap for dialog/minimap/interact */
+        handle_screen_tap(sx, sy);
+    } else if (dist >= TOUCH_SWIPE_MIN_DIST) {
+        /* Swipe — move or turn */
+        float adx = dx < 0 ? -dx : dx;
+        float ady = dy < 0 ? -dy : dy;
+
+        if (ady > adx) {
+            if (dy < 0) {
+                dng_player_try_move(&g_hub.player, &g_hub.dungeon,
+                                    g_hub.player.dir);
+            } else {
+                dng_player_try_move(&g_hub.player, &g_hub.dungeon,
+                                    (g_hub.player.dir + 2) % 4);
+            }
+        } else {
+            if (dx < 0) {
+                g_hub.player.dir = (g_hub.player.dir + 3) % 4;
+                g_hub.player.target_angle -= 0.25f;
+            } else {
+                g_hub.player.dir = (g_hub.player.dir + 1) % 4;
+                g_hub.player.target_angle += 0.25f;
+            }
+        }
+    }
+}
+
 #endif /* SR_MOBILE_INPUT_H */

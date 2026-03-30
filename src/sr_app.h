@@ -36,7 +36,10 @@ static sr_indexed_texture itextures[ITEX_COUNT];
 /* Sprite textures (loaded from PNG) */
 enum {
     STEX_LURKER, STEX_BRUTE, STEX_SPITTER, STEX_HIVEGUARD,
-    STEX_SCOUT, STEX_MARINE, STEX_COUNT
+    STEX_SCOUT, STEX_MARINE,
+    STEX_CREW_CAPTAIN, STEX_CREW_SERGEANT, STEX_CREW_QUARTERMASTER,
+    STEX_CREW_PRIVATE, STEX_CREW_DOCTOR,
+    STEX_COUNT
 };
 static sr_texture stextures[STEX_COUNT];
 
