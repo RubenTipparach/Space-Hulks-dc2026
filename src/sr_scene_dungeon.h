@@ -79,6 +79,9 @@ static int dng_play_state = DNG_STATE_PLAYING;
 static int dng_light_mode = 0;
 static bool dng_show_info = false;
 static bool dng_expanded_map = false;
+static bool dng_sprites_unlit = false;  /* true = sprites skip fog tint */
+static int  dng_wall_texture = -1;     /* -1 = default ITEX_BRICK, else override */
+static bool dng_skip_pillars = false;  /* true = don't draw corner pillars */
 
 /* ── Per-cell room light (set before drawing each cell) ─────────── */
 
@@ -334,6 +337,10 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
     int gy0 = pgy - DNG_RENDER_R; if (gy0 < 1) gy0 = 1;
     int gy1 = pgy + DNG_RENDER_R; if (gy1 > d->h) gy1 = d->h;
 
+    const sr_indexed_texture *wall_tex = (dng_wall_texture >= 0)
+        ? &itextures[dng_wall_texture] : &itextures[ITEX_BRICK];
+    float WP = dng_skip_pillars ? 0.0f : P; /* wall padding (0 = flush, no pillar gaps) */
+
     /* Render cells */
     for (int gy = gy0; gy <= gy1; gy++) {
         for (int gx = gx0; gx <= gx1; gx++) {
@@ -350,27 +357,27 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
                 /* Wall cell — draw faces toward open cells */
                 if (gy < d->h && d->map[gy+1][gx] != 1 && dng_vis[gy+1][gx]) {
                     dng_draw_wall(fb_ptr, &mvp,
-                        x0+P, y_hi, z1,  x1-P, y_hi, z1,
-                        x1-P, y_lo, z1,  x0+P, y_lo, z1,
-                        &itextures[ITEX_BRICK], 0, 0, 1);
+                        x0+WP, y_hi, z1,  x1-WP, y_hi, z1,
+                        x1-WP, y_lo, z1,  x0+WP, y_lo, z1,
+                        wall_tex, 0, 0, 1);
                 }
                 if (gy > 1 && d->map[gy-1][gx] != 1 && dng_vis[gy-1][gx]) {
                     dng_draw_wall(fb_ptr, &mvp,
-                        x1-P, y_hi, z0,  x0+P, y_hi, z0,
-                        x0+P, y_lo, z0,  x1-P, y_lo, z0,
-                        &itextures[ITEX_BRICK], 0, 0, -1);
+                        x1-WP, y_hi, z0,  x0+WP, y_hi, z0,
+                        x0+WP, y_lo, z0,  x1-WP, y_lo, z0,
+                        wall_tex, 0, 0, -1);
                 }
                 if (gx < d->w && d->map[gy][gx+1] != 1 && dng_vis[gy][gx+1]) {
                     dng_draw_wall(fb_ptr, &mvp,
-                        x1, y_hi, z1-P,  x1, y_hi, z0+P,
-                        x1, y_lo, z0+P,  x1, y_lo, z1-P,
-                        &itextures[ITEX_BRICK], 1, 0, 0);
+                        x1, y_hi, z1-WP,  x1, y_hi, z0+WP,
+                        x1, y_lo, z0+WP,  x1, y_lo, z1-WP,
+                        wall_tex, 1, 0, 0);
                 }
                 if (gx > 1 && d->map[gy][gx-1] != 1 && dng_vis[gy][gx-1]) {
                     dng_draw_wall(fb_ptr, &mvp,
-                        x0, y_hi, z0+P,  x0, y_hi, z1-P,
-                        x0, y_lo, z1-P,  x0, y_lo, z0+P,
-                        &itextures[ITEX_BRICK], -1, 0, 0);
+                        x0, y_hi, z0+WP,  x0, y_hi, z1-WP,
+                        x0, y_lo, z1-WP,  x0, y_lo, z0+WP,
+                        wall_tex, -1, 0, 0);
                 }
             } else {
                 /* Open cell */
@@ -516,7 +523,10 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
         }
     }
 
-    /* Pillars at grid intersections */
+    /* Pillars at grid intersections
+     * dng_skip_pillars: use P=0 (flush walls, no protruding columns) */
+    {
+    float PP = dng_skip_pillars ? 0.0f : P;
     for (int vy = gy0; vy <= gy1 + 1; vy++) {
         for (int vx = gx0; vx <= gx1 + 1; vx++) {
             bool nw_open = vx > 1 && vy > 1 && d->map[vy-1][vx-1] != 1;
@@ -539,47 +549,48 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
                 float wz = (vy - 1) * DNG_CELL_SIZE;
 
                 if (sw_open || se_open) {
-                    float fx0 = sw_open ? wx - P : wx;
-                    float fx1 = se_open ? wx + P : wx;
+                    float fx0 = sw_open ? wx - PP : wx;
+                    float fx1 = se_open ? wx + PP : wx;
                     if (fx0 < fx1) {
                         dng_draw_wall(fb_ptr, &mvp,
-                            fx0, y_hi, wz+P,  fx1, y_hi, wz+P,
-                            fx1, y_lo, wz+P,  fx0, y_lo, wz+P,
-                            &itextures[ITEX_BRICK], 0, 0, 1);
+                            fx0, y_hi, wz+PP,  fx1, y_hi, wz+PP,
+                            fx1, y_lo, wz+PP,  fx0, y_lo, wz+PP,
+                            wall_tex, 0, 0, 1);
                     }
                 }
                 if (nw_open || ne_open) {
-                    float fx0 = nw_open ? wx - P : wx;
-                    float fx1 = ne_open ? wx + P : wx;
+                    float fx0 = nw_open ? wx - PP : wx;
+                    float fx1 = ne_open ? wx + PP : wx;
                     if (fx0 < fx1) {
                         dng_draw_wall(fb_ptr, &mvp,
-                            fx1, y_hi, wz-P,  fx0, y_hi, wz-P,
-                            fx0, y_lo, wz-P,  fx1, y_lo, wz-P,
-                            &itextures[ITEX_BRICK], 0, 0, -1);
+                            fx1, y_hi, wz-PP,  fx0, y_hi, wz-PP,
+                            fx0, y_lo, wz-PP,  fx1, y_lo, wz-PP,
+                            wall_tex, 0, 0, -1);
                     }
                 }
                 if (ne_open || se_open) {
-                    float fz0 = ne_open ? wz - P : wz;
-                    float fz1 = se_open ? wz + P : wz;
+                    float fz0 = ne_open ? wz - PP : wz;
+                    float fz1 = se_open ? wz + PP : wz;
                     if (fz0 < fz1) {
                         dng_draw_wall(fb_ptr, &mvp,
-                            wx+P, y_hi, fz1,  wx+P, y_hi, fz0,
-                            wx+P, y_lo, fz0,  wx+P, y_lo, fz1,
-                            &itextures[ITEX_BRICK], 1, 0, 0);
+                            wx+PP, y_hi, fz1,  wx+PP, y_hi, fz0,
+                            wx+PP, y_lo, fz0,  wx+PP, y_lo, fz1,
+                            wall_tex, 1, 0, 0);
                     }
                 }
                 if (nw_open || sw_open) {
-                    float fz0 = nw_open ? wz - P : wz;
-                    float fz1 = sw_open ? wz + P : wz;
+                    float fz0 = nw_open ? wz - PP : wz;
+                    float fz1 = sw_open ? wz + PP : wz;
                     if (fz0 < fz1) {
                         dng_draw_wall(fb_ptr, &mvp,
-                            wx-P, y_hi, fz0,  wx-P, y_hi, fz1,
-                            wx-P, y_lo, fz1,  wx-P, y_lo, fz0,
-                            &itextures[ITEX_BRICK], -1, 0, 0);
+                            wx-PP, y_hi, fz0,  wx-PP, y_hi, fz1,
+                            wx-PP, y_lo, fz1,  wx-PP, y_lo, fz0,
+                            wall_tex, -1, 0, 0);
                     }
                 }
             }
         }
+    }
     }
 
     /* ── Alien billboards (camera-facing textured quads) ──────── */
@@ -612,8 +623,13 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
                 float rz = cz + right_z * sprite_half;
 
                 /* Compute fog/light tint based on distance to player */
-                float fog_i = dng_fog_vertex_intensity(cx, 0, cz);
-                uint32_t tint = pal_intensity_color(fog_i);
+                uint32_t tint;
+                if (dng_sprites_unlit) {
+                    tint = 0xFFFFFFFF;
+                } else {
+                    float fog_i = dng_fog_vertex_intensity(cx, 0, cz);
+                    tint = pal_intensity_color(fog_i);
+                }
 
                 sr_draw_quad_doublesided(fb_ptr,
                     sr_vert_c(lx, bot_y, lz, 0, 1, tint),
@@ -650,8 +666,13 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
                 float crx = ccx + cright_x * console_half;
                 float crz = ccz + cright_z * console_half;
 
-                float fog_i = dng_fog_vertex_intensity(ccx, 0, ccz);
-                uint32_t tint = pal_intensity_color(fog_i);
+                uint32_t tint;
+                if (dng_sprites_unlit) {
+                    tint = 0xFFFFFFFF;
+                } else {
+                    float fog_i = dng_fog_vertex_intensity(ccx, 0, ccz);
+                    tint = pal_intensity_color(fog_i);
+                }
 
                 sr_draw_quad_doublesided(fb_ptr,
                     sr_vert_c(clx, cbot_y, clz, 0, 1, tint),

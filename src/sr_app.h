@@ -29,19 +29,22 @@ static sr_texture textures[TEX_COUNT];
 
 /* Indexed (palette) textures */
 enum {
-    ITEX_BRICK, ITEX_GRASS, ITEX_ROOF, ITEX_WOOD, ITEX_TILE, ITEX_STONE, ITEX_COUNT
+    ITEX_BRICK, ITEX_GRASS, ITEX_ROOF, ITEX_WOOD, ITEX_TILE, ITEX_STONE, ITEX_WALL_A, ITEX_COUNT
 };
 static sr_indexed_texture itextures[ITEX_COUNT];
 
 /* Sprite textures (loaded from PNG) */
 enum {
     STEX_LURKER, STEX_BRUTE, STEX_SPITTER, STEX_HIVEGUARD,
-    STEX_SCOUT, STEX_MARINE, STEX_COUNT
+    STEX_SCOUT, STEX_MARINE,
+    STEX_CREW_CAPTAIN, STEX_CREW_SERGEANT, STEX_CREW_QUARTERMASTER,
+    STEX_CREW_PRIVATE, STEX_CREW_DOCTOR,
+    STEX_COUNT
 };
 static sr_texture stextures[STEX_COUNT];
 
 /* Console textures (built from embedded sprite data at runtime) */
-#define CONSOLE_TEX_COUNT 9 /* matches ROOM_TYPE_COUNT */
+#define CONSOLE_TEX_COUNT 10 /* matches ROOM_TYPE_COUNT */
 static sr_texture console_textures[CONSOLE_TEX_COUNT]; /* indexed by room type */
 
 /* Timing */
@@ -55,12 +58,18 @@ static int    screenshot_counter;
 
 /* ── App state ─────────────────────────────────────────────────── */
 
-enum { STATE_TITLE, STATE_CLASS_SELECT, STATE_RUNNING, STATE_COMBAT };
+enum { STATE_TITLE, STATE_CLASS_SELECT, STATE_RUNNING, STATE_COMBAT,
+       STATE_SHIP_HUB, STATE_SHOP, STATE_DIALOG, STATE_STARMAP };
 static int app_state = STATE_TITLE;
 static int selected_class = 0;  /* 0=scout, 1=marine */
 static int class_select_cursor = 0;
 static int title_cursor = 0;
 static bool save_exists = false;
+
+/* ── Player progression / currency ─────────────────────────────── */
+
+static int player_scrap = 0;       /* currency earned from missions */
+static int player_sector = 0;      /* current sector (progression depth) */
 
 #define SAVE_FILE "spacehulks.sav"
 #define SAVE_MAGIC 0x534B4C48  /* "HLKS" */

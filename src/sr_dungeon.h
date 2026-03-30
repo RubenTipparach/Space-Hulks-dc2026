@@ -220,19 +220,17 @@ static void dng_generate(sr_dungeon *d, int w, int h, bool has_down_stairs, bool
 
     int mid_y = h / 2;          /* central corridor Y */
     int corridor_y1 = mid_y;
-    int corridor_y2 = mid_y + 1;  /* 2 tiles wide */
+    int corridor_y2 = mid_y;    /* 1 tile wide */
 
     /* Ship hull boundaries (leave margin) */
     int ship_left = 3;
     int ship_right = w - 2;
     int ship_span = ship_right - ship_left;
 
-    /* Carve the central corridor */
+    /* Carve the central corridor (1 tile wide) */
     for (int x = ship_left; x <= ship_right; x++) {
-        for (int y = corridor_y1; y <= corridor_y2; y++) {
-            if (y >= 1 && y <= h && x >= 1 && x <= w)
-                d->map[y][x] = 0;
-        }
+        if (mid_y >= 1 && mid_y <= h && x >= 1 && x <= w)
+            d->map[mid_y][x] = 0;
     }
 
     /* Place rooms along the corridor, set back 1 tile with a 1-wide doorway */

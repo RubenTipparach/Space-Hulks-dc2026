@@ -16,12 +16,13 @@ enum {
     ROOM_SHIELDS,    /* shield generator */
     ROOM_CARGO,      /* cargo hold / artifact storage */
     ROOM_BARRACKS,   /* crew quarters */
+    ROOM_TELEPORTER, /* teleporter — lets player escape back to hub */
     ROOM_TYPE_COUNT
 };
 
 static const char *room_type_names[] = {
     "CORRIDOR", "BRIDGE", "MEDBAY", "WEAPONS", "ENGINES",
-    "REACTOR", "SHIELDS", "CARGO", "BARRACKS"
+    "REACTOR", "SHIELDS", "CARGO", "BARRACKS", "TELEPORTER"
 };
 
 static const uint32_t room_type_colors[] = {
@@ -221,9 +222,9 @@ static void ship_generate(ship_state *ship, int difficulty, uint32_t seed) {
             if (assigned < num_required) {
                 rm->type = required_rooms[assigned++];
             } else {
-                /* Random non-bridge room */
-                int types[] = { ROOM_CORRIDOR, ROOM_BARRACKS, ROOM_CARGO, ROOM_MEDBAY };
-                rm->type = types[dng_rng_int(4)];
+                /* Random non-bridge room — 20% chance of teleporter */
+                int types[] = { ROOM_CORRIDOR, ROOM_BARRACKS, ROOM_CARGO, ROOM_MEDBAY, ROOM_TELEPORTER };
+                rm->type = types[dng_rng_int(5)];
             }
 
             /* Subsystem HP based on importance */
