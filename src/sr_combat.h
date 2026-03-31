@@ -1391,9 +1391,24 @@ static void combat_draw_card_content(uint32_t *px, int W, int H,
         case CARD_ACID:       effect = "STACK DOT\n1/STACK"; break;
         case CARD_FIRE:       effect = "BURN 3T\nSPREADS"; break;
         case CARD_LIGHTNING:  effect = "STUN 1-2T\n2 DMG"; break;
+        case CARD_SNIPER:    effect = "5 DMG\nDIST 2+"; break;
+        case CARD_SHOTGUN:   effect = "4 DMG\nDIST 0-1"; break;
+        case CARD_WELDER:    effect = "4 DMG\nMELEE"; break;
+        case CARD_CHAINSAW:  effect = "8 DMG\nMELEE"; break;
+        case CARD_LASER:     effect = "4 DMG\nPRECISION"; break;
+        case CARD_DEFLECTOR: effect = "+4 SHIELD\n1 REFLECT"; break;
+        case CARD_STUN_GUN:  effect = "STUN 1T\n1 DMG"; break;
     }
     ty = sr_draw_text_wrap(px, W, H, cx + 3, ty + 2, effect,
                            cw - 6, 8, gray, shadow);
+
+    /* Card art sprite (draw at bottom-center of card if space allows) */
+    if (card_type < (int)(sizeof(spr_card_table)/sizeof(spr_card_table[0]))) {
+        int art_x = cx + (cw - 16) / 2;
+        int art_y = ty + 2;
+        if (art_y + 16 < cy + ch - 10)
+            spr_draw(px, W, H, spr_card_table[card_type], art_x, art_y, 1);
+    }
 
     /* Target type at bottom */
     const char *tgt = "";

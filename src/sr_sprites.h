@@ -306,4 +306,10 @@ static const uint32_t *spr_enemy_table[] = {
 /* ── Console sprites (per room type) ─────────────────────────────── */
 #include "sr_console_sprites.h"
 
+/* ── Baked character sprites ────────────────────────────────────── */
+#include "sr_char_sprites.h"
+
+/* ── Card art sprites ───────────────────────────────────────────── */
+#include "sr_card_sprites.h"
+
 #endif /* SR_SPRITES_H */
