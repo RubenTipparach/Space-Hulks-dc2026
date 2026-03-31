@@ -64,14 +64,26 @@ static void dng_touch_ended(float sx, float sy, double time) {
             }
         }
 
-        /* Short tap — strafe based on screen half */
-        float mid_x = sapp_widthf() * 0.5f;
-        if (sx < mid_x) {
-            dng_player_try_move(&dng_state.player, dng_state.dungeon,
-                                (dng_state.player.dir + 3) % 4);
-        } else {
-            dng_player_try_move(&dng_state.player, dng_state.dungeon,
-                                (dng_state.player.dir + 1) % 4);
+        /* Convert to FB coords to check button areas */
+        float fbx2, fby2;
+        screen_to_fb(sx, sy, &fbx2, &fby2);
+
+        /* Check if tap is in a button zone (top-right deck button) */
+        bool in_button_zone = (fbx2 >= FB_WIDTH - 70 && fby2 <= 28);
+
+        /* Set click state for ui_button detection */
+        handle_screen_tap(sx, sy);
+
+        /* Short tap — strafe based on screen half, only if not on a button */
+        if (!in_button_zone) {
+            float mid_x = sapp_widthf() * 0.5f;
+            if (sx < mid_x) {
+                dng_player_try_move(&dng_state.player, dng_state.dungeon,
+                                    (dng_state.player.dir + 3) % 4);
+            } else {
+                dng_player_try_move(&dng_state.player, dng_state.dungeon,
+                                    (dng_state.player.dir + 1) % 4);
+            }
         }
     } else if (dist >= TOUCH_SWIPE_MIN_DIST) {
         /* Swipe — determine cardinal direction */

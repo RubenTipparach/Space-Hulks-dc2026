@@ -1220,10 +1220,12 @@ static void handle_screen_tap(float sx, float sy) {
     float fx, fy;
     screen_to_fb(sx, sy, &fx, &fy);
 
-    /* Set UI click state for interactive widgets */
+    /* Set UI click + hover state for interactive widgets (touch has no mouse-move) */
     ui_mouse_clicked = true;
     ui_click_x = fx;
     ui_click_y = fy;
+    ui_mouse_x = fx;
+    ui_mouse_y = fy;
 
     if (app_state == STATE_TITLE) {
         /* New Game button */
