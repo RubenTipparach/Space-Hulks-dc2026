@@ -1060,17 +1060,32 @@ static void combat_action_move_back(combat_state *cs) {
 
 /* ── Card layout helpers ─────────────────────────────────────────── */
 
-#define CARD_W  45
-#define CARD_H  54
-#define CARD_GAP 4
+#define CARD_W  54
+#define CARD_H  68
+#define CARD_GAP 2
+#define CARD_W_SEL 80  /* expanded width when selected */
+#define CARD_H_SEL 80  /* expanded height when selected */
 
 static void combat_card_rect(const combat_state *cs, int i, int *ox, int *oy) {
-    int total_w = cs->hand_count * (CARD_W + CARD_GAP) - CARD_GAP;
+    bool is_sel = (i == cs->cursor && cs->phase == CPHASE_PLAYER_TURN);
+    /* Compute total width accounting for selected card expansion */
+    int total_w = 0;
+    int sel_idx = (cs->phase == CPHASE_PLAYER_TURN) ? cs->cursor : -1;
+    for (int j = 0; j < cs->hand_count; j++) {
+        int w = (j == sel_idx) ? CARD_W_SEL : CARD_W;
+        total_w += w + CARD_GAP;
+    }
+    total_w -= CARD_GAP;
     int base_x = (FB_WIDTH - total_w) / 2;
-    int base_y = FB_HEIGHT - CARD_H - 8;
-    *ox = base_x + i * (CARD_W + CARD_GAP);
-    *oy = base_y;
-    if (i == cs->cursor && cs->phase == CPHASE_PLAYER_TURN) *oy -= 6;
+    int base_y = FB_HEIGHT - CARD_H - 4;
+
+    int x = base_x;
+    for (int j = 0; j < i; j++) {
+        int w = (j == sel_idx) ? CARD_W_SEL : CARD_W;
+        x += w + CARD_GAP;
+    }
+    *ox = x;
+    *oy = is_sel ? (FB_HEIGHT - CARD_H_SEL - 4) : base_y;
 }
 
 /* ── Touch drag input (Slay the Spire style) ─────────────────────── */
@@ -1127,7 +1142,10 @@ static void combat_touch_began(combat_state *cs, float fx, float fy) {
     for (int i = 0; i < cs->hand_count; i++) {
         int cx, cy;
         combat_card_rect(cs, i, &cx, &cy);
-        if (fx >= cx && fx < cx + CARD_W && fy >= cy && fy < cy + CARD_H) {
+        bool is_sel = (i == cs->cursor);
+        int cw = is_sel ? CARD_W_SEL : CARD_W;
+        int ch = is_sel ? CARD_H_SEL : CARD_H;
+        if (fx >= cx && fx < cx + cw && fy >= cy && fy < cy + ch) {
             cs->dragging = true;
             cs->drag_card = i;
             cs->cursor = i;
@@ -1334,6 +1352,36 @@ static void combat_draw_bar(uint32_t *px, int W, int H,
     }
 }
 
+/* ── Card effect text (used by combat and deck viewer) ──────────── */
+
+static const char *card_effect_text(int card_type) {
+    switch (card_type) {
+        case CARD_SHIELD:      return "+3 SHIELD";
+        case CARD_SHOOT:       return "3 DMG";
+        case CARD_BURST:       return "2 DMG ALL";
+        case CARD_MOVE:        return "+2 MOVE";
+        case CARD_MELEE:       return "6 DMG MELEE";
+        case CARD_OVERCHARGE:  return "+2 ENERGY";
+        case CARD_REPAIR:      return "+4 HP";
+        case CARD_STUN:        return "SKIP ENEMY\nATTACKS";
+        case CARD_FORTIFY:     return "+6 SHIELD";
+        case CARD_DOUBLE_SHOT: return "5 DMG";
+        case CARD_DASH:        return "+3 MOVE\n4 DMG";
+        case CARD_ICE:         return "FREEZE 3T\nSLOW+DMG";
+        case CARD_ACID:        return "STACK DOT\n1/STACK";
+        case CARD_FIRE:        return "BURN 3T\nSPREADS";
+        case CARD_LIGHTNING:   return "STUN 1-2T\n2 DMG";
+        case CARD_SNIPER:      return "5 DMG\nDIST 2+";
+        case CARD_SHOTGUN:     return "4 DMG\nDIST 0-1";
+        case CARD_WELDER:      return "4 DMG\nMELEE";
+        case CARD_CHAINSAW:    return "8 DMG\nMELEE";
+        case CARD_LASER:       return "4 DMG\nPRECISION";
+        case CARD_DEFLECTOR:   return "+4 SHIELD\n1 REFLECT";
+        case CARD_STUN_GUN:    return "STUN 1T\n1 DMG";
+        default:               return "";
+    }
+}
+
 /* ── Shared card rendering ───────────────────────────────────────── */
 
 static void combat_draw_card_content(uint32_t *px, int W, int H,
@@ -1349,6 +1397,27 @@ static void combat_draw_card_content(uint32_t *px, int W, int H,
     /* Background */
     uint32_t bg = selected ? 0xFF222233 : 0xFF111122;
     combat_draw_rect(px, W, H, cx, cy, cw, ch, bg);
+
+    /* Card art sprite as background (centered, drawn dim behind text) */
+    if (card_type < (int)(sizeof(spr_card_table)/sizeof(spr_card_table[0]))) {
+        int scale = selected ? 3 : 2;
+        int art_w = 16 * scale, art_h = 16 * scale;
+        int art_x = cx + (cw - art_w) / 2;
+        int art_y = cy + (ch - art_h) / 2;
+        /* Draw sprite scaled, then dim it to serve as background */
+        spr_draw(px, W, H, spr_card_table[card_type], art_x, art_y, scale);
+        /* Darken the art so text is readable */
+        uint32_t dim = affordable ? 0x44 : 0x22;
+        for (int ry = cy + 1; ry < cy + ch - 1 && ry < H; ry++)
+            for (int rx = cx + 1; rx < cx + cw - 1 && rx < W; rx++)
+                if (rx >= 0 && ry >= 0) {
+                    uint32_t p = px[ry * W + rx];
+                    int pr = ((p >> 0) & 0xFF) * dim / 255;
+                    int pg = ((p >> 8) & 0xFF) * dim / 255;
+                    int pb = ((p >> 16) & 0xFF) * dim / 255;
+                    px[ry * W + rx] = 0xFF000000 | (pb << 16) | (pg << 8) | pr;
+                }
+    }
 
     /* Border */
     uint32_t card_col = affordable ? card_colors[card_type] : 0xFF333333;
@@ -1374,41 +1443,9 @@ static void combat_draw_card_content(uint32_t *px, int W, int H,
                                cw - 16, 8, white, shadow);
 
     /* Card effect text */
-    const char *effect = "";
-    switch (card_type) {
-        case CARD_SHIELD:     effect = "+3 SHIELD"; break;
-        case CARD_SHOOT:      effect = "3 DMG"; break;
-        case CARD_BURST:      effect = "2 DMG ALL"; break;
-        case CARD_MOVE:       effect = "+2 MOVE"; break;
-        case CARD_MELEE:      effect = "6 DMG MELEE"; break;
-        case CARD_OVERCHARGE: effect = "+2 ENERGY"; break;
-        case CARD_REPAIR:     effect = "+4 HP"; break;
-        case CARD_STUN:       effect = "SKIP ENEMY\nATTACKS"; break;
-        case CARD_FORTIFY:    effect = "+6 SHIELD"; break;
-        case CARD_DOUBLE_SHOT:effect = "5 DMG"; break;
-        case CARD_DASH:       effect = "+3 MOVE\n4 DMG"; break;
-        case CARD_ICE:        effect = "FREEZE 3T\nSLOW+DMG"; break;
-        case CARD_ACID:       effect = "STACK DOT\n1/STACK"; break;
-        case CARD_FIRE:       effect = "BURN 3T\nSPREADS"; break;
-        case CARD_LIGHTNING:  effect = "STUN 1-2T\n2 DMG"; break;
-        case CARD_SNIPER:    effect = "5 DMG\nDIST 2+"; break;
-        case CARD_SHOTGUN:   effect = "4 DMG\nDIST 0-1"; break;
-        case CARD_WELDER:    effect = "4 DMG\nMELEE"; break;
-        case CARD_CHAINSAW:  effect = "8 DMG\nMELEE"; break;
-        case CARD_LASER:     effect = "4 DMG\nPRECISION"; break;
-        case CARD_DEFLECTOR: effect = "+4 SHIELD\n1 REFLECT"; break;
-        case CARD_STUN_GUN:  effect = "STUN 1T\n1 DMG"; break;
-    }
+    const char *effect = card_effect_text(card_type);
     ty = sr_draw_text_wrap(px, W, H, cx + 3, ty + 2, effect,
                            cw - 6, 8, gray, shadow);
-
-    /* Card art sprite (draw at bottom-center of card if space allows) */
-    if (card_type < (int)(sizeof(spr_card_table)/sizeof(spr_card_table[0]))) {
-        int art_x = cx + (cw - 16) / 2;
-        int art_y = ty + 2;
-        if (art_y + 16 < cy + ch - 10)
-            spr_draw(px, W, H, spr_card_table[card_type], art_x, art_y, 1);
-    }
 
     /* Target type at bottom */
     const char *tgt = "";
@@ -1677,21 +1714,27 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
 
     /* ── Hand of cards (bottom) ───────────────────────────────── */
     {
-        int card_w = CARD_W;
-        int card_h = CARD_H;
-        int card_gap = CARD_GAP;
-        int total_w = combat.hand_count * (card_w + card_gap) - card_gap;
+        int sel_idx = (combat.phase == CPHASE_PLAYER_TURN) ? combat.cursor : -1;
+        /* Compute total width with selected card expanded */
+        int total_w = 0;
+        for (int i = 0; i < combat.hand_count; i++) {
+            int w = (i == sel_idx) ? CARD_W_SEL : CARD_W;
+            total_w += w + CARD_GAP;
+        }
+        if (combat.hand_count > 0) total_w -= CARD_GAP;
         int base_x = (W - total_w) / 2;
-        int base_y = H - card_h - 4;
+        int base_y = H - CARD_H - 4;
 
+        int cx_acc = base_x;
         for (int i = 0; i < combat.hand_count; i++) {
             int card = combat.hand[i];
-            int cx = base_x + i * (card_w + card_gap);
-            int cy = base_y;
-            bool selected = (i == combat.cursor && combat.phase == CPHASE_PLAYER_TURN);
-            if (selected) cy -= 6;
-            combat_draw_card_content(px, W, H, cx, cy, card_w, card_h,
+            bool selected = (i == sel_idx);
+            int cw = selected ? CARD_W_SEL : CARD_W;
+            int ch = selected ? CARD_H_SEL : CARD_H;
+            int cy = selected ? (H - CARD_H_SEL - 4) : base_y;
+            combat_draw_card_content(px, W, H, cx_acc, cy, cw, ch,
                                      card, selected, shadow, combat.energy);
+            cx_acc += cw + CARD_GAP;
         }
     }
 
@@ -1703,7 +1746,8 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
         /* Draw line from card to drag position */
         int cx, cy;
         combat_card_rect(&combat, combat.drag_card, &cx, &cy);
-        int line_x0 = cx + CARD_W / 2;
+        bool drag_sel = (combat.drag_card == combat.cursor);
+        int line_x0 = cx + (drag_sel ? CARD_W_SEL : CARD_W) / 2;
         int line_y0 = cy;
         int line_x1 = (int)combat.drag_x;
         int line_y1 = (int)combat.drag_y;

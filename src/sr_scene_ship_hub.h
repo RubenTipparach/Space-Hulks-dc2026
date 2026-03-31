@@ -1021,35 +1021,6 @@ static void starmap_handle_key(int key_code) {
 static bool deck_view_active = false;
 static int deck_view_selected = -1; /* index of selected card for detail view, -1 = none */
 
-/* Get card effect text (shared with combat card rendering) */
-static const char *card_effect_text(int card_type) {
-    switch (card_type) {
-        case CARD_SHIELD:      return "+3 SHIELD";
-        case CARD_SHOOT:       return "3 DMG";
-        case CARD_BURST:       return "2 DMG ALL";
-        case CARD_MOVE:        return "+2 MOVE";
-        case CARD_MELEE:       return "6 DMG MELEE";
-        case CARD_OVERCHARGE:  return "+2 ENERGY";
-        case CARD_REPAIR:      return "+4 HP";
-        case CARD_STUN:        return "SKIP ENEMY\nATTACKS";
-        case CARD_FORTIFY:     return "+6 SHIELD";
-        case CARD_DOUBLE_SHOT: return "5 DMG";
-        case CARD_DASH:        return "+3 MOVE\n4 DMG";
-        case CARD_ICE:         return "FREEZE 3T\nSLOW+DMG";
-        case CARD_ACID:        return "STACK DOT\n1/STACK";
-        case CARD_FIRE:        return "BURN 3T\nSPREADS";
-        case CARD_LIGHTNING:   return "STUN 1-2T\n2 DMG";
-        case CARD_SNIPER:      return "5 DMG\nDIST 2+";
-        case CARD_SHOTGUN:     return "4 DMG\nDIST 0-1";
-        case CARD_WELDER:      return "4 DMG\nMELEE";
-        case CARD_CHAINSAW:    return "8 DMG\nMELEE";
-        case CARD_LASER:       return "4 DMG\nPRECISION";
-        case CARD_DEFLECTOR:   return "+4 SHIELD\n1 REFLECT";
-        case CARD_STUN_GUN:    return "STUN 1T\n1 DMG";
-        default:               return "";
-    }
-}
-
 /* Get card description text */
 static const char *card_description_text(int card_type) {
     switch (card_type) {
