@@ -1019,6 +1019,65 @@ static void starmap_handle_key(int key_code) {
 /* ── Deck viewer overlay ───────────────────────────────────────── */
 
 static bool deck_view_active = false;
+static int deck_view_selected = -1; /* index of selected card for detail view, -1 = none */
+
+/* Get card effect text (shared with combat card rendering) */
+static const char *card_effect_text(int card_type) {
+    switch (card_type) {
+        case CARD_SHIELD:      return "+3 SHIELD";
+        case CARD_SHOOT:       return "3 DMG";
+        case CARD_BURST:       return "2 DMG ALL";
+        case CARD_MOVE:        return "+2 MOVE";
+        case CARD_MELEE:       return "6 DMG MELEE";
+        case CARD_OVERCHARGE:  return "+2 ENERGY";
+        case CARD_REPAIR:      return "+4 HP";
+        case CARD_STUN:        return "SKIP ENEMY\nATTACKS";
+        case CARD_FORTIFY:     return "+6 SHIELD";
+        case CARD_DOUBLE_SHOT: return "5 DMG";
+        case CARD_DASH:        return "+3 MOVE\n4 DMG";
+        case CARD_ICE:         return "FREEZE 3T\nSLOW+DMG";
+        case CARD_ACID:        return "STACK DOT\n1/STACK";
+        case CARD_FIRE:        return "BURN 3T\nSPREADS";
+        case CARD_LIGHTNING:   return "STUN 1-2T\n2 DMG";
+        case CARD_SNIPER:      return "5 DMG\nDIST 2+";
+        case CARD_SHOTGUN:     return "4 DMG\nDIST 0-1";
+        case CARD_WELDER:      return "4 DMG\nMELEE";
+        case CARD_CHAINSAW:    return "8 DMG\nMELEE";
+        case CARD_LASER:       return "4 DMG\nPRECISION";
+        case CARD_DEFLECTOR:   return "+4 SHIELD\n1 REFLECT";
+        case CARD_STUN_GUN:    return "STUN 1T\n1 DMG";
+        default:               return "";
+    }
+}
+
+/* Get card description text */
+static const char *card_description_text(int card_type) {
+    switch (card_type) {
+        case CARD_SHIELD:      return "ADDS SHIELD POINTS\nTHAT ABSORB DAMAGE\nBEFORE HP.";
+        case CARD_SHOOT:       return "BASIC RANGED ATTACK.\nWORKS AT ANY DISTANCE.";
+        case CARD_BURST:       return "HITS ALL ENEMIES\nFOR REDUCED DAMAGE.";
+        case CARD_MOVE:        return "GRANTS MOVEMENT\nPOINTS TO REPOSITION\nIN COMBAT.";
+        case CARD_MELEE:       return "POWERFUL CLOSE RANGE\nATTACK. MUST BE\nADJACENT TO TARGET.";
+        case CARD_OVERCHARGE:  return "GAIN EXTRA ENERGY\nTHIS TURN. COSTS\nNOTHING TO PLAY.";
+        case CARD_REPAIR:      return "RESTORE HIT POINTS.\nHEALING PERSISTS\nBETWEEN COMBATS.";
+        case CARD_STUN:        return "ALL ENEMIES SKIP\nTHEIR NEXT ATTACK\nPHASE.";
+        case CARD_FORTIFY:     return "HEAVY SHIELD BOOST.\nGREAT FOR BRACING\nAGAINST BIG HITS.";
+        case CARD_DOUBLE_SHOT: return "TWO SHOTS AT ONE\nTARGET FOR HIGH\nSINGLE-TARGET DMG.";
+        case CARD_DASH:        return "MOVE AND STRIKE.\nGAIN MOVEMENT THEN\nDEAL DAMAGE.";
+        case CARD_ICE:         return "FREEZES TARGET FOR\n3 TURNS. SLOWED AND\nTAKES DAMAGE OVER TIME.";
+        case CARD_ACID:        return "STACKING POISON.\nEACH STACK ADDS +1\nDMG PER TURN.";
+        case CARD_FIRE:        return "BURNING DAMAGE THAT\nSPREADS TO ADJACENT\nENEMIES.";
+        case CARD_LIGHTNING:   return "CHANCE TO STUN FOR\n1-2 TURNS PLUS\nDIRECT DAMAGE.";
+        case CARD_SNIPER:      return "HIGH DAMAGE BUT\nREQUIRES DISTANCE OF\n2 OR MORE.";
+        case CARD_SHOTGUN:     return "CLOSE RANGE BLAST.\nONLY WORKS WITHIN\nDISTANCE 0-1.";
+        case CARD_WELDER:      return "MELEE TOOL USED AS\nA WEAPON. MUST BE\nADJACENT.";
+        case CARD_CHAINSAW:    return "DEVASTATING MELEE\nDAMAGE BUT COSTS\n2 ENERGY.";
+        case CARD_LASER:       return "PRECISION ENERGY\nWEAPON. IGNORES\nSHIELD.";
+        case CARD_DEFLECTOR:   return "SHIELD THAT REFLECTS\n1 DAMAGE BACK AT\nATTACKERS.";
+        case CARD_STUN_GUN:    return "STUNS ONE ENEMY FOR\n1 TURN AND DEALS\nMINOR DAMAGE.";
+        default:               return "";
+    }
+}
 
 static void draw_deck_viewer(uint32_t *px, int W, int H) {
     if (!deck_view_active) return;
@@ -1055,37 +1114,121 @@ static void draw_deck_viewer(uint32_t *px, int W, int H) {
 
         int card_type = g_player.persistent_deck[i];
         uint32_t ccol = card_colors[card_type];
+        bool is_selected = (i == deck_view_selected);
 
         /* Card background */
+        uint32_t bg = is_selected ? 0xFF222244 : 0xFF111122;
         for (int ry = cy; ry < cy + cardH && ry < H; ry++)
             for (int rx = cx; rx < cx + cardW && rx < W; rx++)
-                if (rx >= 0 && ry >= 0) px[ry * W + rx] = 0xFF111122;
+                if (rx >= 0 && ry >= 0) px[ry * W + rx] = bg;
 
-        /* Border in card color */
+        /* Border in card color (highlight if selected) */
+        uint32_t border_col = is_selected ? 0xFF00DDDD : ccol;
         for (int rx = cx; rx < cx + cardW && rx < W; rx++) {
-            if (cy >= 0 && cy < H) px[cy * W + rx] = ccol;
-            if (cy + cardH - 1 >= 0 && cy + cardH - 1 < H) px[(cy + cardH - 1) * W + rx] = ccol;
+            if (cy >= 0 && cy < H) px[cy * W + rx] = border_col;
+            if (cy + cardH - 1 >= 0 && cy + cardH - 1 < H) px[(cy + cardH - 1) * W + rx] = border_col;
         }
         for (int ry = cy; ry < cy + cardH && ry < H; ry++) {
-            if (cx >= 0 && cx < W) px[ry * W + cx] = ccol;
-            if (cx + cardW - 1 >= 0 && cx + cardW - 1 < W) px[ry * W + cx + cardW - 1] = ccol;
+            if (cx >= 0 && cx < W) px[ry * W + cx] = border_col;
+            if (cx + cardW - 1 >= 0 && cx + cardW - 1 < W) px[ry * W + cx + cardW - 1] = border_col;
+        }
+        /* Double border for selected card */
+        if (is_selected) {
+            for (int rx = cx+1; rx < cx + cardW - 1 && rx < W; rx++) {
+                if (cy+1 >= 0 && cy+1 < H) px[(cy+1) * W + rx] = border_col;
+                if (cy + cardH - 2 >= 0 && cy + cardH - 2 < H) px[(cy + cardH - 2) * W + rx] = border_col;
+            }
+            for (int ry = cy+1; ry < cy + cardH - 1 && ry < H; ry++) {
+                if (cx+1 >= 0 && cx+1 < W) px[ry * W + cx + 1] = border_col;
+                if (cx + cardW - 2 >= 0 && cx + cardW - 2 < W) px[ry * W + cx + cardW - 2] = border_col;
+            }
         }
 
         /* Card name */
         sr_draw_text_shadow(px, W, H, cx + 4, cy + 4,
                             card_names[card_type], ccol, shadow);
 
+        /* Effect text below name */
+        const char *effect = card_effect_text(card_type);
+        sr_draw_text_shadow(px, W, H, cx + 4, cy + 14,
+                            effect, 0xFF888888, shadow);
+
         /* Energy cost */
         char ebuf[8];
         snprintf(ebuf, sizeof(ebuf), "%dE", card_energy_cost[card_type]);
         sr_draw_text_shadow(px, W, H, cx + cardW - 18, cy + 4,
-                            ebuf, 0xFF888888, shadow);
+                            ebuf, 0xFF22CCEE, shadow);
+
+        /* Click detection for card selection */
+        if (ui_mouse_clicked &&
+            ui_click_x >= cx && ui_click_x < cx + cardW &&
+            ui_click_y >= cy && ui_click_y < cy + cardH) {
+            deck_view_selected = (deck_view_selected == i) ? -1 : i;
+        }
+    }
+
+    /* Detail panel for selected card */
+    if (deck_view_selected >= 0 && deck_view_selected < g_player.persistent_deck_count) {
+        int card_type = g_player.persistent_deck[deck_view_selected];
+        uint32_t ccol = card_colors[card_type];
+
+        /* Panel dimensions */
+        int pw = 200, ph = 80;
+        int px2 = (W - pw) / 2;
+        int py = H - 16 - ph - 4;
+
+        /* Panel background */
+        for (int ry = py; ry < py + ph && ry < H; ry++)
+            for (int rx = px2; rx < px2 + pw && rx < W; rx++)
+                if (rx >= 0 && ry >= 0) px[ry * W + rx] = 0xFF0A0A18;
+
+        /* Panel border */
+        for (int rx = px2; rx < px2 + pw && rx < W; rx++) {
+            if (py >= 0 && py < H) px[py * W + rx] = ccol;
+            if (py + ph - 1 >= 0 && py + ph - 1 < H) px[(py + ph - 1) * W + rx] = ccol;
+        }
+        for (int ry = py; ry < py + ph && ry < H; ry++) {
+            if (px2 >= 0 && px2 < W) px[ry * W + px2] = ccol;
+            if (px2 + pw - 1 >= 0 && px2 + pw - 1 < W) px[ry * W + px2 + pw - 1] = ccol;
+        }
+
+        /* Color stripe at top */
+        for (int ry = py + 1; ry < py + 3 && ry < H; ry++)
+            for (int rx = px2 + 1; rx < px2 + pw - 1 && rx < W; rx++)
+                px[ry * W + rx] = ccol;
+
+        /* Card name */
+        sr_draw_text_shadow(px, W, H, px2 + 6, py + 5, card_names[card_type], 0xFFFFFFFF, shadow);
+
+        /* Energy cost */
+        char ebuf[8];
+        snprintf(ebuf, sizeof(ebuf), "%dE", card_energy_cost[card_type]);
+        sr_draw_text_shadow(px, W, H, px2 + pw - 20, py + 5, ebuf, 0xFF22CCEE, shadow);
+
+        /* Target type */
+        const char *tgt = "";
+        int tt = card_targets[card_type];
+        if (tt == TARGET_SELF) tgt = "TARGET: SELF";
+        else if (tt == TARGET_ENEMY) tgt = "TARGET: 1 ENEMY";
+        else tgt = "TARGET: ALL";
+        sr_draw_text_shadow(px, W, H, px2 + 6, py + 15, tgt, 0xFF888888, shadow);
+
+        /* Effect text */
+        const char *effect = card_effect_text(card_type);
+        int ey = sr_draw_text_wrap(px, W, H, px2 + 6, py + 27, effect,
+                                   pw - 12, 8, ccol, shadow);
+
+        /* Description text */
+        const char *desc = card_description_text(card_type);
+        sr_draw_text_wrap(px, W, H, px2 + 6, ey + 4, desc,
+                          pw - 12, 8, 0xFF666666, shadow);
     }
 
     /* Close button */
     if (ui_button(px, W, H, W / 2 - 30, H - 16, 60, 14, "CLOSE",
                   0xFF111122, 0xFF222244, 0xFF333366)) {
         deck_view_active = false;
+        deck_view_selected = -1;
     }
 }
 
@@ -1168,9 +1311,13 @@ static void hub_draw_hud(uint32_t *px, int W, int H) {
     if (ui_button(px, W, H, W - 70, 14, 66, 12, deck_buf,
                   0xFF1A1A2A, 0xFF222244, 0xFF333366)) {
         deck_view_active = true;
+        deck_view_selected = -1;
     }
 
     /* Room/NPC interaction button — merged room name + action into one button */
+    /* Skip when deck viewer is open (modal) */
+    if (deck_view_active) return;
+
     int room_idx = hub_room_at_pos(g_hub.player.gx, g_hub.player.gy);
     int look_gx = g_hub.player.gx + dng_dir_dx[g_hub.player.dir];
     int look_gy = g_hub.player.gy + dng_dir_dz[g_hub.player.dir];
