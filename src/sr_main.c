@@ -512,52 +512,81 @@ static void check_random_encounter(void) {
 }
 
 /* ── Class select screen ─────────────────────────────────────────── */
+
+#define CLASS_COUNT 4
+#define CLASS_BOX_W 100
+#define CLASS_BOX_H 100
+
+static void draw_class_box(uint32_t *px, int W, int H,
+                           int bx, int by, bool sel,
+                           const uint32_t *sprite, const char *name,
+                           const char *line1, const char *line2,
+                           const char *line3, const char *line4) {
+    uint32_t shadow = 0xFF000000;
+    uint32_t white = 0xFFFFFFFF;
+    uint32_t gray = 0xFF888888;
+    uint32_t yellow = 0xFF00DDDD;
+    uint32_t border = sel ? yellow : gray;
+    combat_draw_rect_outline(px, W, H, bx, by, CLASS_BOX_W, CLASS_BOX_H, border);
+    if (sel) combat_draw_rect_outline(px, W, H, bx+1, by+1, CLASS_BOX_W-2, CLASS_BOX_H-2, border);
+    spr_draw(px, W, H, sprite, bx + 34, by + 4, 2);
+    sr_draw_text_shadow(px, W, H, bx + 8, by + 40, name, sel ? yellow : white, shadow);
+    sr_draw_text_shadow(px, W, H, bx + 8, by + 52, line1, gray, shadow);
+    sr_draw_text_shadow(px, W, H, bx + 8, by + 64, line2, gray, shadow);
+    sr_draw_text_shadow(px, W, H, bx + 8, by + 76, line3, gray, shadow);
+    sr_draw_text_shadow(px, W, H, bx + 8, by + 88, line4, gray, shadow);
+}
+
 static void draw_class_select(sr_framebuffer *fb_ptr) {
     int W = fb_ptr->width, H = fb_ptr->height;
     uint32_t *px = fb_ptr->color;
     uint32_t shadow = 0xFF000000;
     uint32_t white = 0xFFFFFFFF;
     uint32_t gray = 0xFF888888;
-    uint32_t yellow = 0xFF00DDDD;
 
     for (int i = 0; i < W * H; i++) px[i] = 0xFF0D0D11;
 
-    sr_draw_text_shadow(px, W, H, W/2 - 45, 30, "SPACE HULKS", white, shadow);
-    sr_draw_text_shadow(px, W, H, W/2 - 55, 50, "SELECT YOUR CLASS", gray, shadow);
+    sr_draw_text_shadow(px, W, H, W/2 - 45, 8, "SPACE HULKS", white, shadow);
+    sr_draw_text_shadow(px, W, H, W/2 - 55, 22, "SELECT YOUR CLASS", gray, shadow);
+
+    /* 4 classes in a row */
+    int gap = (W - CLASS_COUNT * CLASS_BOX_W) / (CLASS_COUNT + 1);
+    int by = 40;
 
     /* Scout */
     {
-        int bx = W/4 - 40, by = 80;
-        bool sel = (class_select_cursor == 0);
-        uint32_t border = sel ? yellow : gray;
-        combat_draw_rect_outline(px, W, H, bx, by, 80, 120, border);
-        if (sel) combat_draw_rect_outline(px, W, H, bx+1, by+1, 78, 118, border);
-
-        spr_draw(px, W, H, spr_scout, bx + 24, by + 8, 2);
-        sr_draw_text_shadow(px, W, H, bx + 24, by + 48, "SCOUT", sel ? yellow : white, shadow);
-        sr_draw_text_shadow(px, W, H, bx + 8, by + 62, "HP: 20", gray, shadow);
-        sr_draw_text_shadow(px, W, H, bx + 8, by + 74, "FAST", gray, shadow);
-        sr_draw_text_shadow(px, W, H, bx + 8, by + 86, "2 BURST", gray, shadow);
-        sr_draw_text_shadow(px, W, H, bx + 8, by + 98, "2 MOVE", gray, shadow);
+        int bx = gap;
+        draw_class_box(px, W, H, bx, by, class_select_cursor == 0,
+                       spr_scout, "SCOUT",
+                       "HP: 18", "NIMBLE",
+                       "SNIPER/SHOTGUN", "3 MOVE CARDS");
     }
-
     /* Marine */
     {
-        int bx = 3*W/4 - 40, by = 80;
-        bool sel = (class_select_cursor == 1);
-        uint32_t border = sel ? yellow : gray;
-        combat_draw_rect_outline(px, W, H, bx, by, 80, 120, border);
-        if (sel) combat_draw_rect_outline(px, W, H, bx+1, by+1, 78, 118, border);
-
-        spr_draw(px, W, H, spr_marine, bx + 24, by + 8, 2);
-        sr_draw_text_shadow(px, W, H, bx + 22, by + 48, "MARINE", sel ? yellow : white, shadow);
-        sr_draw_text_shadow(px, W, H, bx + 8, by + 62, "HP: 30", gray, shadow);
-        sr_draw_text_shadow(px, W, H, bx + 8, by + 74, "TOUGH", gray, shadow);
-        sr_draw_text_shadow(px, W, H, bx + 8, by + 86, "3 SHOOT", gray, shadow);
-        sr_draw_text_shadow(px, W, H, bx + 8, by + 98, "4 SHIELD", gray, shadow);
+        int bx = gap * 2 + CLASS_BOX_W;
+        draw_class_box(px, W, H, bx, by, class_select_cursor == 1,
+                       spr_marine, "MARINE",
+                       "HP: 30", "TOUGH",
+                       "3 SHOOT", "4 SHIELD");
+    }
+    /* Engineer */
+    {
+        int bx = gap * 3 + CLASS_BOX_W * 2;
+        draw_class_box(px, W, H, bx, by, class_select_cursor == 2,
+                       spr_engineer, "ENGINEER",
+                       "HP: 26", "MELEE FOCUS",
+                       "WELDER/CHNSAW", "UP CLOSE");
+    }
+    /* Scientist */
+    {
+        int bx = gap * 4 + CLASS_BOX_W * 3;
+        draw_class_box(px, W, H, bx, by, class_select_cursor == 3,
+                       spr_scientist, "SCIENTIST",
+                       "HP: 22", "PRECISION",
+                       "LASER/DEFLECT", "STUN GUN");
     }
 
-    sr_draw_text_shadow(px, W, H, W/2 - 55, H - 20,
+    sr_draw_text_shadow(px, W, H, W/2 - 55, H - 14,
                         "TAP TO SELECT  TAP AGAIN=GO", gray, shadow);
 }
 
@@ -1158,35 +1187,23 @@ static void handle_screen_tap(float sx, float sy) {
     }
 
     if (app_state == STATE_CLASS_SELECT) {
-        /* Scout box: left quarter */
-        int sb_x = FB_WIDTH/4 - 40, sb_y = 80;
-        if (fx >= sb_x && fx <= sb_x + 80 && fy >= sb_y && fy <= sb_y + 120) {
-            if (class_select_cursor == 0) {
-                selected_class = 0;
-                player_persist_init(selected_class);
-                player_scrap = 30;
-                player_sector = 0;
-                hub_generate(&g_hub);
-                app_state = STATE_SHIP_HUB;
-            } else {
-                class_select_cursor = 0;
+        int gap = (FB_WIDTH - CLASS_COUNT * CLASS_BOX_W) / (CLASS_COUNT + 1);
+        int by = 40;
+        for (int ci = 0; ci < CLASS_COUNT; ci++) {
+            int bx = gap * (ci + 1) + CLASS_BOX_W * ci;
+            if (fx >= bx && fx <= bx + CLASS_BOX_W && fy >= by && fy <= by + CLASS_BOX_H) {
+                if (class_select_cursor == ci) {
+                    selected_class = ci;
+                    player_persist_init(selected_class);
+                    player_scrap = 30;
+                    player_sector = 0;
+                    hub_generate(&g_hub);
+                    app_state = STATE_SHIP_HUB;
+                } else {
+                    class_select_cursor = ci;
+                }
+                return;
             }
-            return;
-        }
-        /* Marine box: right quarter */
-        int mb_x = 3*FB_WIDTH/4 - 40, mb_y = 80;
-        if (fx >= mb_x && fx <= mb_x + 80 && fy >= mb_y && fy <= mb_y + 120) {
-            if (class_select_cursor == 1) {
-                selected_class = 1;
-                player_persist_init(selected_class);
-                player_scrap = 30;
-                player_sector = 0;
-                hub_generate(&g_hub);
-                app_state = STATE_SHIP_HUB;
-            } else {
-                class_select_cursor = 1;
-            }
-            return;
         }
         return;
     }
@@ -1498,11 +1515,11 @@ static void event(const sapp_event *ev) {
         switch (ev->key_code) {
             case SAPP_KEYCODE_LEFT:
             case SAPP_KEYCODE_A:
-                class_select_cursor = 0;
+                if (class_select_cursor > 0) class_select_cursor--;
                 break;
             case SAPP_KEYCODE_RIGHT:
             case SAPP_KEYCODE_D:
-                class_select_cursor = 1;
+                if (class_select_cursor < CLASS_COUNT - 1) class_select_cursor++;
                 break;
             case SAPP_KEYCODE_ENTER:
             case SAPP_KEYCODE_KP_ENTER:
