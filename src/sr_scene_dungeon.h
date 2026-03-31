@@ -744,6 +744,25 @@ static void draw_dungeon_minimap(sr_framebuffer *fb_ptr) {
                 minimap_pixel(px, px0 + dx, py0 + dy, 0xFF0000CC);
     }
 
+    /* Console icons */
+    {
+        static const uint32_t mm_con_colors[] = {
+            0xFF555555, 0xFF22CCEE, 0xFF44CC44, 0xFFCC8822, 0xFFCCAA22,
+            0xFF44CCCC, 0xFF44AA88, 0xFF66AA44, 0xFF6666AA, 0xFF44CC88
+        };
+        for (int y = 1; y <= d->h; y++)
+            for (int x = 1; x <= d->w; x++) {
+                uint8_t ct = d->consoles[y][x];
+                if (ct == 0 || ct >= 10) continue;
+                int px0 = mx + (x - 1) * scale;
+                int py0 = my + (y - 1) * scale;
+                uint32_t cc = mm_con_colors[ct];
+                for (int dy = 0; dy < scale; dy++)
+                    for (int dx = 0; dx < scale; dx++)
+                        minimap_pixel(px, px0 + dx, py0 + dy, cc);
+            }
+    }
+
     draw_minimap_player(fb_ptr);
 }
 

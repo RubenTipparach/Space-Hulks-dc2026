@@ -114,8 +114,50 @@ static void hub_touch_ended(float sx, float sy, double time) {
     double duration = time - touch_start_time;
 
     if (dist < TOUCH_SWIPE_MIN_DIST && duration < TOUCH_TAP_MAX_TIME) {
-        /* Tap — convert to screen_tap for dialog/minimap/interact */
+        /* Check dialog/deck/expanded map first */
+        if (g_dialog.active || deck_view_active || dng_expanded_map) {
+            handle_screen_tap(sx, sy);
+            return;
+        }
+
+        /* Check minimap hit */
+        {
+            float fbx, fby;
+            screen_to_fb(sx, sy, &fbx, &fby);
+            sr_dungeon *md = &g_hub.dungeon;
+            int mscale = 2;
+            int mmx = FB_WIDTH - md->w * mscale - 4;
+            int mmy = 28;
+            int mmw = md->w * mscale;
+            int mmh = md->h * mscale;
+            if (fbx >= mmx && fbx <= mmx + mmw && fby >= mmy && fby <= mmy + mmh) {
+                dng_expanded_map = true;
+                return;
+            }
+        }
+
+        /* Convert to FB coords to check button areas */
+        float fbx, fby;
+        screen_to_fb(sx, sy, &fbx, &fby);
+
+        /* Check if tap is in a button zone (bottom bar or top-right deck button) */
+        bool in_button_zone = (fby >= FB_HEIGHT - 22) ||
+                              (fbx >= FB_WIDTH - 74 && fby <= 28);
+
+        /* Set click state for ui_button detection */
         handle_screen_tap(sx, sy);
+
+        /* Tap strafe — only if not on a button */
+        if (!in_button_zone) {
+            float mid_x = sapp_widthf() * 0.5f;
+            if (sx < mid_x) {
+                dng_player_try_move(&g_hub.player, &g_hub.dungeon,
+                                    (g_hub.player.dir + 3) % 4);
+            } else {
+                dng_player_try_move(&g_hub.player, &g_hub.dungeon,
+                                    (g_hub.player.dir + 1) % 4);
+            }
+        }
     } else if (dist >= TOUCH_SWIPE_MIN_DIST) {
         /* Swipe — move or turn */
         float adx = dx < 0 ? -dx : dx;

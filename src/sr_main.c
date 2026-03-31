@@ -60,7 +60,13 @@ static bool ui_button(uint32_t *px, int W, int H, int bx, int by, int bw, int bh
         for (int rx = bx; rx < bx + bw && rx < W; rx++)
             if (rx >= 0 && ry >= 0) px[ry * W + rx] = bg;
 
-    uint32_t border = hovered ? 0xFF6666CC : 0xFF4444AA;
+    /* Border = brightened version of current bg color */
+    uint32_t br = (bg >> 0) & 0xFF, bgr = (bg >> 8) & 0xFF, bb = (bg >> 16) & 0xFF;
+    int bo = hovered ? 100 : 60; /* brightness offset */
+    uint32_t border = 0xFF000000 |
+        (((bb + bo > 255 ? 255 : bb + bo)) << 16) |
+        (((bgr + bo > 255 ? 255 : bgr + bo)) << 8) |
+        ((br + bo > 255 ? 255 : br + bo));
     for (int rx = bx; rx < bx + bw && rx < W; rx++) {
         if (by >= 0 && by < H) px[by * W + rx] = border;
         if (by+bh-1 >= 0 && by+bh-1 < H) px[(by+bh-1) * W + rx] = border;
@@ -1352,60 +1358,14 @@ static void handle_screen_tap(float sx, float sy) {
         sr_dungeon *hd = &g_hub.dungeon;
         int mscale = 2;
         int mmx = FB_WIDTH - hd->w * mscale - 4;
-        int mmy = 4;   /* hub minimap matches dungeon minimap position */
+        int mmy = 28;  /* hub minimap matches dungeon minimap position */
         int mmw = hd->w * mscale;
         int mmh = hd->h * mscale;
         if (fx >= mmx && fx <= mmx + mmw && fy >= mmy && fy <= mmy + mmh) {
             dng_expanded_map = true;
             return;
         }
-        /* Tap center of screen = interact (like pressing F) */
-        {
-            int look_gx = g_hub.player.gx + dng_dir_dx[g_hub.player.dir];
-            int look_gy = g_hub.player.gy + dng_dir_dz[g_hub.player.dir];
-            int npc = hub_npc_at(look_gx, look_gy);
-            if (npc >= 0) {
-                int npc_room = g_hub.crew[npc].room;
-                int action = DIALOG_ACTION_NONE;
-                if (npc_room >= 0 && npc_room < g_hub.dungeon.room_count)
-                    action = hub_room_action_for_type(g_hub.room_types[npc_room]);
-                hub_start_dialog(npc, action);
-            } else {
-                int room_idx = hub_room_at_pos(g_hub.player.gx, g_hub.player.gy);
-                if (room_idx >= 0) {
-                    int action = hub_room_action_for_type(g_hub.room_types[room_idx]);
-                    if (action != DIALOG_ACTION_NONE) {
-                        memset(&g_dialog, 0, sizeof(g_dialog));
-                        int rt = g_hub.room_types[room_idx];
-                        snprintf(g_dialog.speaker, sizeof(g_dialog.speaker), "%s", hub_room_names[rt]);
-                        switch (action) {
-                            case DIALOG_ACTION_STARMAP:
-                                snprintf(g_dialog.lines[0], DIALOG_LINE_LEN, "ACCESSING STAR MAP...");
-                                g_dialog.line_count = 1; break;
-                            case DIALOG_ACTION_SHOP:
-                                snprintf(g_dialog.lines[0], DIALOG_LINE_LEN, "BROWSING INVENTORY...");
-                                g_dialog.line_count = 1; break;
-                            case DIALOG_ACTION_TELEPORT:
-                                if (!g_hub.mission_available) {
-                                    snprintf(g_dialog.lines[0], DIALOG_LINE_LEN, "NO MISSIONS AVAILABLE.");
-                                    g_dialog.line_count = 1;
-                                    action = DIALOG_ACTION_NONE;
-                                } else {
-                                    snprintf(g_dialog.lines[0], DIALOG_LINE_LEN, "TELEPORTER PRIMED.");
-                                    snprintf(g_dialog.lines[1], DIALOG_LINE_LEN, "READY TO DEPLOY.");
-                                    g_dialog.line_count = 2;
-                                }
-                                break;
-                            case DIALOG_ACTION_HEAL:
-                                snprintf(g_dialog.lines[0], DIALOG_LINE_LEN, "MEDICAL STATION ONLINE.");
-                                g_dialog.line_count = 1; break;
-                        }
-                        g_dialog.pending_action = action;
-                        g_dialog.active = true;
-                    }
-                }
-            }
-        }
+        /* Tapping elsewhere does nothing — interaction is via buttons in HUD */
         return;
     }
 

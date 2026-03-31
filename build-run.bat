@@ -1,6 +1,9 @@
 @echo off
 setlocal
 
+rem Regenerate indexed textures (only if source PNG is newer than .idx)
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0update-textures.ps1"
+
 echo [BUILD] StarRaster (native)...
 
 if not exist "build" mkdir "build"

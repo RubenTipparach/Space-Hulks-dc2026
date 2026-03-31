@@ -1170,44 +1170,83 @@ static void hub_draw_hud(uint32_t *px, int W, int H) {
         deck_view_active = true;
     }
 
-    /* Show what room you're in */
+    /* Room/NPC interaction button — merged room name + action into one button */
     int room_idx = hub_room_at_pos(g_hub.player.gx, g_hub.player.gy);
-    if (room_idx >= 0 && room_idx < (int)(sizeof(hub_room_names)/sizeof(hub_room_names[0]))) {
-        int rt = g_hub.room_types[room_idx];
-        const char *rn = hub_room_names[rt];
-        int rnlen = 0; for (const char *c = rn; *c; c++) rnlen++;
-        sr_draw_text_shadow(px, W, H, W/2 - rnlen * 3, H - 14,
-                            rn, hub_room_colors[rt], shadow);
-    }
-
-    /* Show NPC name when facing one */
     int look_gx = g_hub.player.gx + dng_dir_dx[g_hub.player.dir];
     int look_gy = g_hub.player.gy + dng_dir_dz[g_hub.player.dir];
     int npc = hub_npc_at(look_gx, look_gy);
+
     if (npc >= 0) {
-        const char *nn = g_hub.crew[npc].name;
-        int nnlen = 0; for (const char *c = nn; *c; c++) nnlen++;
-        sr_draw_text_shadow(px, W, H, W/2 - nnlen * 3, H - 24,
-                            nn, 0xFF00DDDD, shadow);
-        sr_draw_text_shadow(px, W, H, W/2 - 24, H - 34,
-                            "[F] TALK", 0xFF888888, shadow);
+        /* NPC in front — show "TALK: NAME" button in room color */
+        int npc_room = g_hub.crew[npc].room;
+        uint32_t rc = (npc_room >= 0 && npc_room < HUB_ROOM_COUNT)
+            ? hub_room_colors[g_hub.room_types[npc_room]] : 0xFF00DDDD;
+        /* Derive button colors from room color */
+        uint32_t r = (rc>>0)&0xFF, g = (rc>>8)&0xFF, b = (rc>>16)&0xFF;
+        uint32_t base  = 0xFF000000 | ((b/5)<<16) | ((g/5)<<8) | (r/5);
+        uint32_t hover = 0xFF000000 | ((b/3)<<16) | ((g/3)<<8) | (r/3);
+
+        char buf[32];
+        snprintf(buf, sizeof(buf), "TALK: %s", g_hub.crew[npc].name);
+        int llen = 0; for (const char *c = buf; *c; c++) llen++;
+        int bw = llen * 6 + 12, bh = 14;
+        if (ui_button(px, W, H, W/2 - bw/2, H - 18, bw, bh, buf, base, hover, rc)) {
+            int action = DIALOG_ACTION_NONE;
+            if (npc_room >= 0 && npc_room < g_hub.dungeon.room_count)
+                action = hub_room_action_for_type(g_hub.room_types[npc_room]);
+            hub_start_dialog(npc, action);
+        }
     } else if (room_idx >= 0) {
         int rt = g_hub.room_types[room_idx];
-        const char *action_label = NULL;
-        uint32_t action_col = 0xFF888888;
+        const char *btn_label = NULL;
+        uint32_t rc = hub_room_colors[rt];
+        int action = DIALOG_ACTION_NONE;
         if (rt == HUB_ROOM_TELEPORTER && g_hub.mission_available) {
-            action_label = "[F] TELEPORTER"; action_col = 0xFF22CC44;
+            btn_label = "TELEPORTER"; action = DIALOG_ACTION_TELEPORT;
         } else if (rt == HUB_ROOM_BRIDGE) {
-            action_label = "[F] STAR MAP"; action_col = 0xFF22CCEE;
+            btn_label = "BRIDGE"; action = DIALOG_ACTION_STARMAP;
         } else if (rt == HUB_ROOM_SHOP) {
-            action_label = "[F] ARMORY"; action_col = 0xFFCC8822;
+            btn_label = "ARMORY"; action = DIALOG_ACTION_SHOP;
         } else if (rt == HUB_ROOM_MEDBAY) {
-            action_label = "[F] MEDBAY"; action_col = 0xFF44CC44;
+            btn_label = "MEDBAY"; action = DIALOG_ACTION_HEAL;
+        } else if (rt == HUB_ROOM_QUARTERS) {
+            btn_label = "QUARTERS";
+        } else if (rt == HUB_ROOM_CORRIDOR) {
+            btn_label = "CORRIDOR";
         }
-        if (action_label) {
-            int allen = 0; for (const char *c = action_label; *c; c++) allen++;
-            sr_draw_text_shadow(px, W, H, W/2 - allen * 3, H - 34,
-                                action_label, action_col, shadow);
+        if (btn_label) {
+            uint32_t r = (rc>>0)&0xFF, g = (rc>>8)&0xFF, b = (rc>>16)&0xFF;
+            uint32_t base  = 0xFF000000 | ((b/5)<<16) | ((g/5)<<8) | (r/5);
+            uint32_t hover = 0xFF000000 | ((b/3)<<16) | ((g/3)<<8) | (r/3);
+
+            int llen = 0; for (const char *c = btn_label; *c; c++) llen++;
+            int bw = llen * 6 + 16, bh = 14;
+            if (action != DIALOG_ACTION_NONE) {
+                if (ui_button(px, W, H, W/2 - bw/2, H - 18, bw, bh, btn_label, base, hover, rc)) {
+                    if (action == DIALOG_ACTION_TELEPORT) {
+                        hub_show_teleport_confirm();
+                    } else {
+                        memset(&g_dialog, 0, sizeof(g_dialog));
+                        snprintf(g_dialog.speaker, sizeof(g_dialog.speaker), "%s", hub_room_names[rt]);
+                        switch (action) {
+                            case DIALOG_ACTION_STARMAP:
+                                snprintf(g_dialog.lines[0], DIALOG_LINE_LEN, "ACCESSING STAR MAP...");
+                                g_dialog.line_count = 1; break;
+                            case DIALOG_ACTION_SHOP:
+                                snprintf(g_dialog.lines[0], DIALOG_LINE_LEN, "BROWSING INVENTORY...");
+                                g_dialog.line_count = 1; break;
+                            case DIALOG_ACTION_HEAL:
+                                snprintf(g_dialog.lines[0], DIALOG_LINE_LEN, "MEDICAL STATION ONLINE.");
+                                g_dialog.line_count = 1; break;
+                        }
+                        g_dialog.pending_action = action;
+                        g_dialog.active = true;
+                    }
+                }
+            } else {
+                /* Non-interactive rooms — just show room name as label */
+                sr_draw_text_shadow(px, W, H, W/2 - llen * 3, H - 14, btn_label, rc, shadow);
+            }
         }
     }
 
