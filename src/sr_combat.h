@@ -26,13 +26,22 @@ enum {
     CARD_ACID,       /* acid: stackable DoT, 1 dmg, cost 1 */
     CARD_FIRE,       /* fire: DoT + spreads, 1 dmg, cost 1 */
     CARD_LIGHTNING,  /* lightning: stun 1-2 turns, 2 dmg, cost 2 */
+    /* Class-specific cards */
+    CARD_SNIPER,     /* sniper: 5 dmg single, requires dist>=2, cost 1 */
+    CARD_SHOTGUN,    /* shotgun: 4 dmg single, requires dist<=1, cost 1 */
+    CARD_WELDER,     /* welder: 4 dmg melee, cost 1 */
+    CARD_CHAINSAW,   /* chainsaw: 8 dmg melee, cost 2 */
+    CARD_LASER,      /* laser: 4 dmg precision single, cost 1 */
+    CARD_DEFLECTOR,  /* deflector: +4 shield, reflect 1 dmg, cost 1 */
+    CARD_STUN_GUN,   /* stun gun: stun 1 enemy 1 turn, 1 dmg, cost 1 */
     CARD_TYPE_COUNT
 };
 
 static const char *card_names[] = {
     "SHIELD", "SHOOT", "BURST", "MOVE", "MELEE",
     "OVERCHRG", "REPAIR", "STUN", "FORTIFY", "DBL SHOT", "DASH",
-    "ICE", "ACID", "FIRE", "LIGHTNING"
+    "ICE", "ACID", "FIRE", "LIGHTNING",
+    "SNIPER", "SHOTGUN", "WELDER", "CHAINSAW", "LASER", "DEFLECTR", "STUN GUN"
 };
 
 static const uint32_t card_colors[] = {
@@ -51,12 +60,20 @@ static const uint32_t card_colors[] = {
     0xFF22CCAA,  /* acid - green-teal */
     0xFF2244FF,  /* fire - bright orange-red */
     0xFFEEEE44,  /* lightning - bright cyan-yellow */
+    0xFF448844,  /* sniper - dark green */
+    0xFF2288DD,  /* shotgun - warm orange */
+    0xFF44AAFF,  /* welder - bright orange */
+    0xFF2244CC,  /* chainsaw - dark red */
+    0xFFFFFF44,  /* laser - bright cyan */
+    0xFFDDAA44,  /* deflector - steel blue */
+    0xFFCC88FF,  /* stun gun - light purple */
 };
 
 static const int card_energy_cost[] = {
     1, 1, 2, 1, 1,  /* base cards */
     0, 2, 1, 2, 2, 2, /* droppable cards */
-    1, 1, 1, 2 /* elemental cards */
+    1, 1, 1, 2, /* elemental cards */
+    1, 1, 1, 2, 1, 1, 1 /* class-specific: sniper, shotgun, welder, chainsaw, laser, deflector, stun gun */
 };
 
 /* Card target types */
@@ -78,11 +95,18 @@ static const int card_targets[] = {
     TARGET_ENEMY,         /* ACID */
     TARGET_ENEMY,         /* FIRE */
     TARGET_ENEMY,         /* LIGHTNING */
+    TARGET_ENEMY,         /* SNIPER */
+    TARGET_ENEMY,         /* SHOTGUN */
+    TARGET_ENEMY,         /* WELDER (melee) */
+    TARGET_ENEMY,         /* CHAINSAW (melee) */
+    TARGET_ENEMY,         /* LASER */
+    TARGET_SELF,          /* DEFLECTOR */
+    TARGET_ENEMY,         /* STUN GUN */
 };
 
 /* ── Character classes ───────────────────────────────────────────── */
 
-enum { CLASS_SCOUT, CLASS_MARINE };
+enum { CLASS_SCOUT, CLASS_MARINE, CLASS_ENGINEER, CLASS_SCIENTIST };
 
 typedef struct {
     int hp_max;
@@ -93,8 +117,9 @@ typedef struct {
 
 static const char_class char_classes[] = {
     [CLASS_SCOUT] = {
-        .hp_max = 20,
-        .deck_composition = { 3, 2, 2, 2, 1 }, /* 3 shield, 2 shoot, 2 burst, 2 move, 1 melee */
+        .hp_max = 18,
+        /* 2 shield, 0 shoot, 1 burst, 3 move, 0 melee, ..., 2 sniper, 2 shotgun */
+        .deck_composition = { 2, 0, 1, 3, 0, 0,0,0,0,0,0, 0,0,0,0, 2, 2 },
         .name = "SCOUT",
         .sprite = spr_scout,
     },
@@ -103,6 +128,20 @@ static const char_class char_classes[] = {
         .deck_composition = { 4, 3, 1, 1, 1 }, /* 4 shield, 3 shoot, 1 burst, 1 move, 1 melee */
         .name = "MARINE",
         .sprite = spr_marine,
+    },
+    [CLASS_ENGINEER] = {
+        .hp_max = 26,
+        /* 2 shield, 1 shoot, 1 burst, 1 move, 0 melee, ..., welder 3, chainsaw 2 */
+        .deck_composition = { 2, 1, 1, 1, 0, 0,0,0,0,0,0, 0,0,0,0, 0,0, 3, 2 },
+        .name = "ENGINEER",
+        .sprite = spr_engineer,
+    },
+    [CLASS_SCIENTIST] = {
+        .hp_max = 22,
+        /* 1 shield, 1 shoot, 1 burst, 1 move, 0 melee, ..., laser 2, deflector 2, stun_gun 2 */
+        .deck_composition = { 1, 1, 1, 1, 0, 0,0,0,0,0,0, 0,0,0,0, 0,0,0,0, 2, 2, 2 },
+        .name = "SCIENTIST",
+        .sprite = spr_scientist,
     },
 };
 
@@ -300,7 +339,7 @@ static void combat_draw_hand(combat_state *cs) {
 static void combat_generate_rewards(combat_state *cs) {
     /* Pick 3 unique droppable card types (CARD_OVERCHARGE through CARD_LIGHTNING) */
     int droppable_start = CARD_OVERCHARGE;
-    int droppable_count = CARD_TYPE_COUNT - droppable_start;
+    int droppable_count = CARD_SNIPER - droppable_start; /* exclude class-specific cards */
     for (int i = 0; i < 3; i++) {
         int attempts = 0;
         do {
@@ -628,6 +667,119 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
                 cs->enemies[t].lightning_stun = stun_turns;
                 combat_deal_damage_enemy(cs, t, 2);
                 snprintf(buf, sizeof(buf), "ZAP %s! STUN %dT", enemy_templates[cs->enemies[t].type].name, stun_turns);
+                combat_set_message(cs, buf);
+            }
+            break;
+        }
+
+        /* ── Class-specific cards ───────────────────────────── */
+        case CARD_SNIPER:
+            if (cs->player_distance >= 2) {
+                int t = cs->target;
+                while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
+                if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
+                if (t >= 0) {
+                    int dmg = 5 + cs->fire_atk_bonus;
+                    combat_deal_damage_enemy(cs, t, dmg);
+                    snprintf(buf, sizeof(buf), "SNIPE %s -%dHP!", enemy_templates[cs->enemies[t].type].name, dmg);
+                    combat_set_message(cs, buf);
+                }
+            } else {
+                snprintf(buf, sizeof(buf), "TOO CLOSE! DIST: %d (NEED 2+)", cs->player_distance);
+                combat_set_message(cs, buf);
+                cs->energy += cost;
+                return;
+            }
+            break;
+
+        case CARD_SHOTGUN:
+            if (cs->player_distance <= 1) {
+                int t = cs->target;
+                while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
+                if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
+                if (t >= 0) {
+                    int dmg = 4 + cs->fire_atk_bonus;
+                    combat_deal_damage_enemy(cs, t, dmg);
+                    snprintf(buf, sizeof(buf), "SHOTGUN %s -%dHP!", enemy_templates[cs->enemies[t].type].name, dmg);
+                    combat_set_message(cs, buf);
+                }
+            } else {
+                snprintf(buf, sizeof(buf), "TOO FAR! DIST: %d (NEED 1-)", cs->player_distance);
+                combat_set_message(cs, buf);
+                cs->energy += cost;
+                return;
+            }
+            break;
+
+        case CARD_WELDER:
+            if (cs->player_distance <= 0) {
+                int t = cs->target;
+                while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
+                if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
+                if (t >= 0) {
+                    int dmg = 4 + cs->fire_atk_bonus;
+                    combat_deal_damage_enemy(cs, t, dmg);
+                    snprintf(buf, sizeof(buf), "WELD %s -%dHP!", enemy_templates[cs->enemies[t].type].name, dmg);
+                    combat_set_message(cs, buf);
+                }
+            } else {
+                snprintf(buf, sizeof(buf), "TOO FAR! DIST: %d", cs->player_distance);
+                combat_set_message(cs, buf);
+                cs->energy += cost;
+                return;
+            }
+            break;
+
+        case CARD_CHAINSAW:
+            if (cs->player_distance <= 0) {
+                int t = cs->target;
+                while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
+                if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
+                if (t >= 0) {
+                    int dmg = 8 + cs->fire_atk_bonus;
+                    combat_deal_damage_enemy(cs, t, dmg);
+                    snprintf(buf, sizeof(buf), "CHAINSAW %s -%dHP!!", enemy_templates[cs->enemies[t].type].name, dmg);
+                    combat_set_message(cs, buf);
+                }
+            } else {
+                snprintf(buf, sizeof(buf), "TOO FAR! DIST: %d", cs->player_distance);
+                combat_set_message(cs, buf);
+                cs->energy += cost;
+                return;
+            }
+            break;
+
+        case CARD_LASER: {
+            int t = cs->target;
+            while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
+            if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
+            if (t >= 0) {
+                int dmg = 4 + cs->fire_atk_bonus;
+                combat_deal_damage_enemy(cs, t, dmg);
+                snprintf(buf, sizeof(buf), "LASER %s -%dHP", enemy_templates[cs->enemies[t].type].name, dmg);
+                combat_set_message(cs, buf);
+            }
+            break;
+        }
+
+        case CARD_DEFLECTOR:
+            cs->player_shield += 4;
+            /* Reflect 1 damage to all alive enemies */
+            for (int i = 0; i < cs->enemy_count; i++) {
+                if (cs->enemies[i].alive)
+                    combat_deal_damage_enemy(cs, i, 1);
+            }
+            combat_set_message(cs, "DEFLECTOR +4 SHIELD, 1 REFLECT");
+            break;
+
+        case CARD_STUN_GUN: {
+            int t = cs->target;
+            while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
+            if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
+            if (t >= 0) {
+                cs->enemies[t].lightning_stun = 1;
+                combat_deal_damage_enemy(cs, t, 1);
+                snprintf(buf, sizeof(buf), "STUN GUN %s! STUN 1T", enemy_templates[cs->enemies[t].type].name);
                 combat_set_message(cs, buf);
             }
             break;
@@ -1239,9 +1391,24 @@ static void combat_draw_card_content(uint32_t *px, int W, int H,
         case CARD_ACID:       effect = "STACK DOT\n1/STACK"; break;
         case CARD_FIRE:       effect = "BURN 3T\nSPREADS"; break;
         case CARD_LIGHTNING:  effect = "STUN 1-2T\n2 DMG"; break;
+        case CARD_SNIPER:    effect = "5 DMG\nDIST 2+"; break;
+        case CARD_SHOTGUN:   effect = "4 DMG\nDIST 0-1"; break;
+        case CARD_WELDER:    effect = "4 DMG\nMELEE"; break;
+        case CARD_CHAINSAW:  effect = "8 DMG\nMELEE"; break;
+        case CARD_LASER:     effect = "4 DMG\nPRECISION"; break;
+        case CARD_DEFLECTOR: effect = "+4 SHIELD\n1 REFLECT"; break;
+        case CARD_STUN_GUN:  effect = "STUN 1T\n1 DMG"; break;
     }
     ty = sr_draw_text_wrap(px, W, H, cx + 3, ty + 2, effect,
                            cw - 6, 8, gray, shadow);
+
+    /* Card art sprite (draw at bottom-center of card if space allows) */
+    if (card_type < (int)(sizeof(spr_card_table)/sizeof(spr_card_table[0]))) {
+        int art_x = cx + (cw - 16) / 2;
+        int art_y = ty + 2;
+        if (art_y + 16 < cy + ch - 10)
+            spr_draw(px, W, H, spr_card_table[card_type], art_x, art_y, 1);
+    }
 
     /* Target type at bottom */
     const char *tgt = "";

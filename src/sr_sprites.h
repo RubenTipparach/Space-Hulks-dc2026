@@ -228,6 +228,46 @@ static const uint32_t spr_marine[SPR_W * SPR_H] = {
     __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __,
 };
 
+/* Engineer — bulky armor, orange visor (welding tones) */
+static const uint32_t spr_engineer[SPR_W * SPR_H] = {
+    __, __, __, __, __, _DG, _DG, _DG, _DG, _DG, _DG, __, __, __, __, __,
+    __, __, __, __, _DG, _MG, _MG, _MG, _MG, _MG, _MG, _DG, __, __, __, __,
+    __, __, __, _DG, _MG, _MG, _OR, _OR, _OR, _OR, _MG, _MG, _DG, __, __, __,
+    __, __, __, _DG, _MG, _MG, _MG, _MG, _MG, _MG, _MG, _MG, _DG, __, __, __,
+    __, __, __, __, _DG, _DG, _DG, _MG, _MG, _DG, _DG, _DG, __, __, __, __,
+    __, __, __, _DG, _Y1, _LG, _MG, _MG, _MG, _MG, _LG, _Y1, _DG, __, __, __,
+    __, __, _DG, _Y1, _LG, _LG, _MG, _MG, _MG, _MG, _LG, _LG, _Y1, _DG, __, __,
+    __, _DG, _Y1, _LG, _LG, _MG, _MG, _LG, _LG, _MG, _MG, _LG, _LG, _Y1, _DG, __,
+    __, _DG, _Y1, _LG, __, _DG, _MG, _LG, _LG, _MG, _DG, __, _LG, _Y1, _DG, __,
+    __, __, _DG, __, __, __, _DG, _MG, _MG, _DG, __, __, __, _DG, __, __,
+    __, __, __, __, __, _DG, _Y1, _MG, _MG, _Y1, _DG, __, __, __, __, __,
+    __, __, __, __, __, _DG, _MG, _MG, _MG, _MG, _DG, __, __, __, __, __,
+    __, __, __, __, _DG, _MG, _MG, __, __, _MG, _MG, _DG, __, __, __, __,
+    __, __, __, _DG, _Y1, _MG, __, __, __, __, _MG, _Y1, _DG, __, __, __,
+    __, __, __, _DG, _DG, _DG, __, __, __, __, _DG, _DG, _DG, __, __, __,
+    __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __,
+};
+
+/* Scientist — sleek suit, cyan visor (tech/lab tones) */
+static const uint32_t spr_scientist[SPR_W * SPR_H] = {
+    __, __, __, __, __, __, _DG, _DG, _DG, _DG, __, __, __, __, __, __,
+    __, __, __, __, __, _DG, _LG, _LG, _LG, _LG, _DG, __, __, __, __, __,
+    __, __, __, __, _DG, _LG, _B3, _B3, _B3, _B3, _LG, _DG, __, __, __, __,
+    __, __, __, __, _DG, _LG, _LG, _LG, _LG, _LG, _LG, _DG, __, __, __, __,
+    __, __, __, __, __, _DG, _DG, _LG, _LG, _DG, _DG, __, __, __, __, __,
+    __, __, __, __, _DG, _WH, _LG, _LG, _LG, _LG, _WH, _DG, __, __, __, __,
+    __, __, __, _DG, _WH, _WH, _LG, _LG, _LG, _LG, _WH, _WH, _DG, __, __, __,
+    __, __, _DG, _WH, _WH, _LG, _LG, _WH, _WH, _LG, _LG, _WH, _WH, _DG, __, __,
+    __, __, _DG, _WH, __, _DG, _LG, _WH, _WH, _LG, _DG, __, _WH, _DG, __, __,
+    __, __, __, __, __, __, _DG, _LG, _LG, _DG, __, __, __, __, __, __,
+    __, __, __, __, __, __, _DG, _LG, _LG, _DG, __, __, __, __, __, __,
+    __, __, __, __, __, __, _DG, _WH, _WH, _DG, __, __, __, __, __, __,
+    __, __, __, __, __, _DG, _LG, __, __, _LG, _DG, __, __, __, __, __,
+    __, __, __, __, _DG, _LG, __, __, __, __, _LG, _DG, __, __, __, __,
+    __, __, __, __, _DG, _DG, __, __, __, __, _DG, _DG, __, __, __, __,
+    __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __,
+};
+
 /* Sprite table for enemy types (indexed by enemy_type enum) */
 static const uint32_t *spr_enemy_table[] = {
     spr_lurker,
@@ -265,5 +305,11 @@ static const uint32_t *spr_enemy_table[] = {
 
 /* ── Console sprites (per room type) ─────────────────────────────── */
 #include "sr_console_sprites.h"
+
+/* ── Baked character sprites ────────────────────────────────────── */
+#include "sr_char_sprites.h"
+
+/* ── Card art sprites ───────────────────────────────────────────── */
+#include "sr_card_sprites.h"
 
 #endif /* SR_SPRITES_H */
