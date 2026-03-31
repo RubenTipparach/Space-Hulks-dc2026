@@ -71,7 +71,7 @@ public class FloorData
 {
     public int Width { get; set; } = 20;
     public int Height { get; set; } = 20;
-    public int[,] Map { get; set; } = new int[21, 21]; // 1-indexed
+    public int[,] Map { get; set; } = new int[81, 81]; // 1-indexed, max 80x80
     public int SpawnGX { get; set; } = 3;
     public int SpawnGY { get; set; } = 10;
     public int StairsGX { get; set; } = -1;
@@ -97,6 +97,21 @@ public class FloorData
 
     public RoomData? RoomAt(int gx, int gy) =>
         Rooms.FirstOrDefault(r => r.Contains(gx, gy));
+
+    public bool RoomOverlaps(int rx, int ry, int rw, int rh, RoomData? exclude = null)
+    {
+        foreach (var room in Rooms)
+        {
+            if (room == exclude) continue;
+            // Check with 1-tile margin
+            if (rx - 1 < room.X + room.Width &&
+                rx + rw + 1 > room.X &&
+                ry - 1 < room.Y + room.Height &&
+                ry + rh + 1 > room.Y)
+                return true;
+        }
+        return false;
+    }
 }
 
 public class LevelData

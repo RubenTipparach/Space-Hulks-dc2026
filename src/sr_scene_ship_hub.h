@@ -995,6 +995,79 @@ static void starmap_handle_key(int key_code) {
     }
 }
 
+/* ── Deck viewer overlay ───────────────────────────────────────── */
+
+static bool deck_view_active = false;
+
+static void draw_deck_viewer(uint32_t *px, int W, int H) {
+    if (!deck_view_active) return;
+    uint32_t shadow = 0xFF000000;
+
+    /* Darken background */
+    for (int i = 0; i < W * H; i++) {
+        uint32_t c = px[i];
+        int r = ((c >> 0) & 0xFF) / 4;
+        int g = ((c >> 8) & 0xFF) / 4;
+        int b = ((c >> 16) & 0xFF) / 4;
+        px[i] = 0xFF000000 | (b << 16) | (g << 8) | r;
+    }
+
+    /* Title */
+    char title[32];
+    snprintf(title, sizeof(title), "DECK (%d CARDS)", g_player.persistent_deck_count);
+    int tlen = 0; for (const char *c = title; *c; c++) tlen++;
+    sr_draw_text_shadow(px, W, H, W / 2 - tlen * 3, 8, title, 0xFF00DDDD, shadow);
+
+    /* Card grid */
+    int cols = 5;
+    int cardW = 80, cardH = 28;
+    int padX = 6, padY = 4;
+    int gridW = cols * (cardW + padX) - padX;
+    int startX = (W - gridW) / 2;
+    int startY = 24;
+
+    for (int i = 0; i < g_player.persistent_deck_count; i++) {
+        int col = i % cols;
+        int row = i / cols;
+        int cx = startX + col * (cardW + padX);
+        int cy = startY + row * (cardH + padY);
+
+        int card_type = g_player.persistent_deck[i];
+        uint32_t ccol = card_colors[card_type];
+
+        /* Card background */
+        for (int ry = cy; ry < cy + cardH && ry < H; ry++)
+            for (int rx = cx; rx < cx + cardW && rx < W; rx++)
+                if (rx >= 0 && ry >= 0) px[ry * W + rx] = 0xFF111122;
+
+        /* Border in card color */
+        for (int rx = cx; rx < cx + cardW && rx < W; rx++) {
+            if (cy >= 0 && cy < H) px[cy * W + rx] = ccol;
+            if (cy + cardH - 1 >= 0 && cy + cardH - 1 < H) px[(cy + cardH - 1) * W + rx] = ccol;
+        }
+        for (int ry = cy; ry < cy + cardH && ry < H; ry++) {
+            if (cx >= 0 && cx < W) px[ry * W + cx] = ccol;
+            if (cx + cardW - 1 >= 0 && cx + cardW - 1 < W) px[ry * W + cx + cardW - 1] = ccol;
+        }
+
+        /* Card name */
+        sr_draw_text_shadow(px, W, H, cx + 4, cy + 4,
+                            card_names[card_type], ccol, shadow);
+
+        /* Energy cost */
+        char ebuf[8];
+        snprintf(ebuf, sizeof(ebuf), "%dE", card_energy_cost[card_type]);
+        sr_draw_text_shadow(px, W, H, cx + cardW - 18, cy + 4,
+                            ebuf, 0xFF888888, shadow);
+    }
+
+    /* Close button */
+    if (ui_button(px, W, H, W / 2 - 30, H - 16, 60, 14, "CLOSE",
+                  0xFF111122, 0xFF222244, 0xFF333366)) {
+        deck_view_active = false;
+    }
+}
+
 /* ── Hub scene drawing (reuses dungeon renderer with hub lighting) ── */
 
 static void hub_draw_scene(sr_framebuffer *fb_ptr) {
@@ -1068,10 +1141,13 @@ static void hub_draw_hud(uint32_t *px, int W, int H) {
     snprintf(sec_buf, sizeof(sec_buf), "SECTOR %d", player_sector + 1);
     sr_draw_text_shadow(px, W, H, W - 60, 4, sec_buf, 0xFF888888, shadow);
 
-    /* Deck size */
+    /* Deck button (clickable) */
     char deck_buf[32];
-    snprintf(deck_buf, sizeof(deck_buf), "DECK: %d CARDS", g_player.persistent_deck_count);
-    sr_draw_text_shadow(px, W, H, W - 80, 14, deck_buf, 0xFF888888, shadow);
+    snprintf(deck_buf, sizeof(deck_buf), "DECK %d", g_player.persistent_deck_count);
+    if (ui_button(px, W, H, W - 70, 14, 66, 12, deck_buf,
+                  0xFF1A1A2A, 0xFF222244, 0xFF333366)) {
+        deck_view_active = true;
+    }
 
     /* Show what room you're in */
     int room_idx = hub_room_at_pos(g_hub.player.gx, g_hub.player.gy);

@@ -6,8 +6,12 @@ public class MainForm : Form
     private int _currentFloor;
 
     private readonly GridPanel _grid;
+    private readonly Preview3DPanel _preview3D;
+    private readonly TabControl _tabs;
     private readonly ListBox _floorList;
     private readonly Label _statusLabel;
+    private Panel? _toolPanel;
+    private Panel? _floorPanel;
 
     public MainForm()
     {
@@ -18,7 +22,8 @@ public class MainForm : Form
         ForeColor = Color.White;
 
         // ── Left: Floor list ────────────────────────────
-        var floorPanel = new Panel { Dock = DockStyle.Left, Width = 140, Padding = new Padding(4) };
+        _floorPanel = new Panel { Dock = DockStyle.Left, Width = 140, Padding = new Padding(4) };
+        var floorPanel = _floorPanel;
 
         var floorLabel = new Label { Text = "FLOORS", Dock = DockStyle.Top, Height = 20, ForeColor = Color.Cyan };
         _floorList = new ListBox
@@ -52,12 +57,13 @@ public class MainForm : Form
         _grid.DataChanged += () => UpdateStatus();
 
         // ── Right: Tools ────────────────────────────────
-        var toolPanel = new Panel { Dock = DockStyle.Right, Width = 220, Padding = new Padding(4), AutoScroll = true };
+        _toolPanel = new Panel { Dock = DockStyle.Right, Width = 220, Padding = new Padding(4), AutoScroll = true };
+        var toolPanel = _toolPanel;
 
         var toolFlow = new FlowLayoutPanel
         {
-            Dock = DockStyle.Top, Height = 540, FlowDirection = FlowDirection.TopDown,
-            WrapContents = false, AutoSize = false,
+            Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown,
+            WrapContents = false, AutoScroll = true,
         };
 
         // Tool group label
@@ -189,11 +195,21 @@ public class MainForm : Form
 
         var genMenu = new ToolStripMenuItem("Generate");
         genMenu.DropDownItems.Add("Generate Floor", null, (_, _) => GenerateFloor());
-        genMenu.DropDownItems.Add("Generate Ship (3 floors)", null, (_, _) => GenerateShip());
+        genMenu.DropDownItems.Add(new ToolStripSeparator());
+        genMenu.DropDownItems.Add("Small Ship 20x20 (3 floors)", null, (_, _) => GenerateShip(20));
+        genMenu.DropDownItems.Add("Medium Ship 40x40 (3 floors)", null, (_, _) => GenerateShip(40));
+        genMenu.DropDownItems.Add("Large Ship 80x80 (3 floors)", null, (_, _) => GenerateShip(80));
         menu.Items.Add(genMenu);
+
+        var viewMenu = new ToolStripMenuItem("View");
+        viewMenu.DropDownItems.Add("3D Preview (F5)", null, (_, _) => Enter3DPreview());
+        menu.Items.Add(viewMenu);
 
         MainMenuStrip = menu;
         Controls.Add(menu);
+
+        // ── 3D Preview panel ─────────────────────────────
+        _preview3D = new Preview3DPanel { Dock = DockStyle.Fill };
 
         // ── Status bar ──────────────────────────────────
         _statusLabel = new Label
@@ -206,13 +222,67 @@ public class MainForm : Form
         };
         Controls.Add(_statusLabel);
 
+        // ── Tabbed center area ──────────────────────────
+        _tabs = new TabControl
+        {
+            Dock = DockStyle.Fill,
+            BackColor = Color.FromArgb(30, 30, 35),
+            ForeColor = Color.White,
+        };
+        var tab2D = new TabPage("2D Editor") { BackColor = Color.FromArgb(30, 30, 35) };
+        _grid.Dock = DockStyle.Fill;
+        tab2D.Controls.Add(_grid);
+
+        var tab3D = new TabPage("3D Preview") { BackColor = Color.FromArgb(18, 18, 28) };
+        tab3D.Controls.Add(_preview3D);
+
+        _tabs.TabPages.Add(tab2D);
+        _tabs.TabPages.Add(tab3D);
+        _tabs.SelectedIndexChanged += (_, _) =>
+        {
+            if (_tabs.SelectedIndex == 1)
+            {
+                // Entering 3D
+                _preview3D.Floor = _grid.Floor;
+                _preview3D.StartPreview();
+            }
+            else
+            {
+                // Back to 2D
+                _preview3D.StopPreview();
+                _grid.Invalidate();
+                UpdateStatus();
+            }
+        };
+
         // ── Layout ──────────────────────────────────────
-        Controls.Add(_grid);
+        Controls.Add(_tabs);
         Controls.Add(toolPanel);
         Controls.Add(floorPanel);
 
         // Initialize
         NewLevel();
+
+        // F5 hotkey toggles tabs
+        KeyPreview = true;
+        KeyDown += (_, e) =>
+        {
+            if (e.KeyCode == Keys.F5)
+            {
+                _tabs.SelectedIndex = _tabs.SelectedIndex == 0 ? 1 : 0;
+                e.Handled = true;
+            }
+        };
+    }
+
+    public void Enter3DPreview()
+    {
+        _tabs.SelectedIndex = 1;
+    }
+
+    public void Exit3DPreview()
+    {
+        _tabs.SelectedIndex = 0;
     }
 
     private void NewLevel()
@@ -279,7 +349,7 @@ public class MainForm : Form
         RefreshFloorList();
     }
 
-    private void GenerateShip()
+    private void GenerateShip(int gridSize = 20)
     {
         _level = new LevelData();
         _level.Floors.Clear();
@@ -287,7 +357,7 @@ public class MainForm : Form
         {
             bool hasDown = i > 0;
             bool hasUp = i < 2;
-            _level.Floors.Add(LevelGenerator.Generate(i, hasDown, hasUp, 42 + i * 777));
+            _level.Floors.Add(LevelGenerator.Generate(i, hasDown, hasUp, 42 + i * 777, gridSize, gridSize));
         }
         _currentFloor = 0;
         RefreshFloorList();
@@ -352,7 +422,7 @@ public class MainForm : Form
 
     private static Button MakeButton(string text, int width) => new()
     {
-        Text = text, Width = width, Height = 26,
+        Text = text, Width = width, Height = 24,
         FlatStyle = FlatStyle.Flat,
         BackColor = Color.FromArgb(50, 50, 60),
         ForeColor = Color.White,

@@ -98,6 +98,13 @@ static void handle_screen_tap(float sx, float sy); /* forward decl */
 
 static void game_init_ship(void); /* forward decl */
 
+/* Ship grid size based on sector difficulty: small(20), medium(40), large(80) */
+static void game_ship_size(int sector, int *out_w, int *out_h) {
+    if (sector >= 6) { *out_w = 80; *out_h = 80; }
+    else if (sector >= 3) { *out_w = 40; *out_h = 40; }
+    else { *out_w = 20; *out_h = 20; }
+}
+
 /* ── Save / Load ─────────────────────────────────────────────────── */
 
 typedef struct {
@@ -159,9 +166,10 @@ static bool game_load(void) {
     /* Regenerate dungeon with same seeds */
     memset(&dng_state, 0, sizeof(dng_state));
     dng_state.seed_base = sd.seed_base;
+    game_ship_size(player_sector, &dng_state.grid_w, &dng_state.grid_h);
     for (int fl = 0; fl <= sd.current_floor; fl++) {
         bool is_last = (fl >= current_ship.num_decks - 1);
-        dng_generate(&dng_state.floors[fl], DNG_GRID_W, DNG_GRID_H,
+        dng_generate(&dng_state.floors[fl], dng_state.grid_w, dng_state.grid_h,
                      fl > 0, !is_last,
                      dng_state.seed_base + (uint32_t)fl * 777, fl);
         dng_state.floor_generated[fl] = true;
@@ -240,7 +248,7 @@ static void game_init_ship(void) {
     for (int fl = 0; fl < current_ship.num_decks && fl < DNG_MAX_FLOORS; fl++) {
         if (!dng_state.floor_generated[fl]) continue;
         bool is_last = (fl >= current_ship.num_decks - 1);
-        dng_generate(&dng_state.floors[fl], DNG_GRID_W, DNG_GRID_H,
+        dng_generate(&dng_state.floors[fl], dng_state.grid_w, dng_state.grid_h,
                      fl > 0, !is_last,
                      dng_state.seed_base + (uint32_t)fl * 777, fl);
     }
@@ -257,8 +265,8 @@ static void game_init_ship(void) {
         memset(dd->consoles, 0, sizeof(dd->consoles));
 
         /* Build dng_room array from stored room info */
-        dng_room rooms[12];
-        for (int r = 0; r < dd->room_count && r < 12; r++) {
+        dng_room rooms[DNG_MAX_ROOMS];
+        for (int r = 0; r < dd->room_count && r < DNG_MAX_ROOMS; r++) {
             rooms[r].x = dd->room_x[r];
             rooms[r].y = dd->room_y[r];
             rooms[r].w = dd->room_w[r];
@@ -864,6 +872,8 @@ static void frame(void) {
             dng_state.dungeon = save_d;
             dng_state.player = save_p;
         }
+        if (deck_view_active)
+            draw_deck_viewer(fb.color, fb.width, fb.height);
         if (g_dialog.active)
             draw_dialog(fb.color, fb.width, fb.height);
     } else if (app_state == STATE_SHOP) {
@@ -1192,6 +1202,10 @@ static void handle_screen_tap(float sx, float sy) {
     }
 
     if (app_state == STATE_SHIP_HUB) {
+        if (deck_view_active) {
+            /* Close button handled by ui_button in draw_deck_viewer via ui_mouse_clicked */
+            return;
+        }
         if (g_dialog.active) {
             if (g_dialog.confirm_mode) {
                 /* Confirm dialog — check YES/NO button hits */
@@ -1205,7 +1219,8 @@ static void handle_screen_tap(float sx, float sy) {
                     g_dialog.active = false;
                     g_dialog.confirm_mode = false;
                     if (action == DIALOG_ACTION_TELEPORT_GO && g_hub.mission_available) {
-                        dng_game_init(&dng_state);
+                        { int sw, sh; game_ship_size(player_sector, &sw, &sh);
+                        dng_game_init_sized(&dng_state, sw, sh); }
                         game_init_ship();
                         dng_initialized = true;
                         last_player_gx = dng_state.player.gx;
@@ -1530,6 +1545,17 @@ static void event(const sapp_event *ev) {
         }
         if (ev->key_code == SAPP_KEYCODE_M) {
             dng_expanded_map = true;
+            return;
+        }
+        /* Deck viewer */
+        if (deck_view_active) {
+            if (ev->key_code == SAPP_KEYCODE_ESCAPE || ev->key_code == SAPP_KEYCODE_D) {
+                deck_view_active = false;
+            }
+            return;
+        }
+        if (ev->key_code == SAPP_KEYCODE_D) {
+            deck_view_active = true;
             return;
         }
         if (g_dialog.active) {

@@ -350,6 +350,11 @@ public class GridPanel : Panel
     private void AddRoom(int gx, int gy)
     {
         if (Floor == null) return;
+
+        // Check overlap with existing rooms (1-tile margin)
+        if (Floor.RoomOverlaps(gx, gy, RoomBrushW, RoomBrushH))
+            return;
+
         var room = new RoomData
         {
             X = gx, Y = gy, Width = RoomBrushW, Height = RoomBrushH,

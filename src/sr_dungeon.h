@@ -18,11 +18,11 @@
 
 /* ── Configuration ───────────────────────────────────────────────── */
 
-#define DNG_GRID_W       20
-#define DNG_GRID_H       20
+#define DNG_GRID_W       80
+#define DNG_GRID_H       80
 #define DNG_CELL_SIZE    2.0f
 #define DNG_HALF_CELL    1.0f   /* DNG_CELL_SIZE / 2 */
-#define DNG_RENDER_R     7      /* max grid cells rendered from player */
+#define DNG_RENDER_R     10     /* max grid cells rendered from player */
 #define DNG_NUM_RAYS     120    /* DDA visibility rays */
 #define DNG_MAX_FLOORS   16
 #define DNG_NUM_STEPS    10     /* stair step count */
@@ -58,11 +58,13 @@ typedef struct {
     /* Console entities — interactable objects at room centers */
     uint8_t consoles[DNG_GRID_H + 1][DNG_GRID_W + 1]; /* 0=none, room_type (ROOM_BRIDGE etc) */
     /* Room info for ship system */
+    #define DNG_MAX_ROOMS 24
     int room_count;
-    int room_cx[12], room_cy[12];  /* room centers */
-    int room_x[12], room_y[12], room_w[12], room_h[12]; /* room bounds */
-    int room_ship_idx[12];         /* index into ship_room array (-1 = none) */
-    bool room_light_on[12];        /* per-room ceiling light on/off */
+    int room_cx[DNG_MAX_ROOMS], room_cy[DNG_MAX_ROOMS];
+    int room_x[DNG_MAX_ROOMS], room_y[DNG_MAX_ROOMS];
+    int room_w[DNG_MAX_ROOMS], room_h[DNG_MAX_ROOMS];
+    int room_ship_idx[DNG_MAX_ROOMS];
+    bool room_light_on[DNG_MAX_ROOMS];
 } sr_dungeon;
 
 /* ── Simple RNG for dungeon generation ───────────────────────────── */
@@ -214,15 +216,23 @@ static void dng_generate(sr_dungeon *d, int w, int h, bool has_down_stairs, bool
      * Layout: [Engines] -- [rooms] -- [rooms] -- [Bridge]
      */
 
-    dng_room rooms[12];
-    int num_rooms = 5 + dng_rng_int(4); /* 5-8 rooms */
-    if (num_rooms > 12) num_rooms = 12;
+    dng_room rooms[DNG_MAX_ROOMS];
+    /* Scale room count with grid size */
+    int max_rooms = (w <= 20) ? 8 : (w <= 40) ? 14 : 22;
+    int min_rooms = (w <= 20) ? 5 : (w <= 40) ? 8 : 12;
+    int num_rooms = min_rooms + dng_rng_int(max_rooms - min_rooms + 1);
+    if (num_rooms > DNG_MAX_ROOMS) num_rooms = DNG_MAX_ROOMS;
 
-    int mid_y = h / 2;          /* central corridor Y */
+    /* Scale room sizes with grid */
+    int room_min_w = (w <= 20) ? 3 : (w <= 40) ? 4 : 5;
+    int room_max_w = (w <= 20) ? 4 : (w <= 40) ? 6 : 8;
+    int room_min_h = room_min_w;
+    int room_max_h = room_max_w;
+
+    int mid_y = h / 2;
     int corridor_y1 = mid_y;
     int corridor_y2 = mid_y;    /* 1 tile wide */
 
-    /* Ship hull boundaries (leave margin) */
     int ship_left = 3;
     int ship_right = w - 2;
     int ship_span = ship_right - ship_left;
@@ -233,32 +243,42 @@ static void dng_generate(sr_dungeon *d, int w, int h, bool has_down_stairs, bool
             d->map[mid_y][x] = 0;
     }
 
-    /* Place rooms along the corridor, set back 1 tile with a 1-wide doorway */
+    /* Place rooms along the corridor with overlap checking */
     int spacing = ship_span / (num_rooms + 1);
-    if (spacing < 4) spacing = 4;
+    if (spacing < room_max_w + 2) spacing = room_max_w + 2;
 
+    int placed = 0;
     for (int i = 0; i < num_rooms; i++) {
-        int rw = 3 + dng_rng_int(2);  /* 3-4 wide */
-        int rh = 3 + dng_rng_int(2);  /* 3-4 tall */
+        int rw = room_min_w + dng_rng_int(room_max_w - room_min_w + 1);
+        int rh = room_min_h + dng_rng_int(room_max_h - room_min_h + 1);
 
-        /* X position: evenly distributed left-to-right */
         int rx = ship_left + spacing * (i + 1) - rw / 2;
         if (rx < 2) rx = 2;
         if (rx + rw > w) rx = w - rw;
 
-        /* Alternate rooms above/below corridor, with 1-tile gap for doorway */
         int ry;
         if (i % 2 == 0) {
-            /* Port side (above corridor): room sits 1 tile above corridor */
             ry = corridor_y1 - rh - 1;
             if (ry < 2) ry = 2;
         } else {
-            /* Starboard side (below corridor): room sits 1 tile below corridor */
             ry = corridor_y2 + 2;
             if (ry + rh > h) ry = h - rh;
         }
 
-        rooms[i] = (dng_room){ rx, ry, rw, rh, rx + rw/2, ry + rh/2 };
+        /* Check overlap with existing rooms (1-tile margin) */
+        bool overlaps = false;
+        for (int j = 0; j < placed; j++) {
+            if (rx - 1 < rooms[j].x + rooms[j].w &&
+                rx + rw + 1 > rooms[j].x &&
+                ry - 1 < rooms[j].y + rooms[j].h &&
+                ry + rh + 1 > rooms[j].y) {
+                overlaps = true;
+                break;
+            }
+        }
+        if (overlaps) continue;
+
+        rooms[placed] = (dng_room){ rx, ry, rw, rh, rx + rw/2, ry + rh/2 };
 
         /* Carve room */
         for (int py = ry; py < ry + rh; py++)
@@ -269,17 +289,17 @@ static void dng_generate(sr_dungeon *d, int w, int h, bool has_down_stairs, bool
         /* Connect room to corridor with a 1-wide doorway through the gap */
         int conn_x = rx + rw / 2;
         if (i % 2 == 0) {
-            /* Room is above: carve single-tile doorway down to corridor */
             for (int y = ry + rh; y <= corridor_y1; y++)
                 if (y >= 1 && y <= h && conn_x >= 1 && conn_x <= w)
                     d->map[y][conn_x] = 0;
         } else {
-            /* Room is below: carve single-tile doorway up to corridor */
             for (int y = corridor_y2 + 1; y < ry; y++)
                 if (y >= 1 && y <= h && conn_x >= 1 && conn_x <= w)
                     d->map[y][conn_x] = 0;
         }
+        placed++;
     }
+    num_rooms = placed;
 
     /* Spawn at leftmost corridor (airlock entry) */
     d->spawn_gx = ship_left;
@@ -497,20 +517,27 @@ typedef struct {
     bool on_stairs;        /* suppress re-trigger after climb */
     uint32_t seed_base;
     int max_floors;        /* set to ship num_decks; caps stair generation */
+    int grid_w, grid_h;    /* actual grid size for this ship (20, 40, or 80) */
 } dng_game;
 
-static void dng_game_init(dng_game *g) {
+static void dng_game_init_sized(dng_game *g, int gw, int gh) {
     memset(g, 0, sizeof(*g));
     g->seed_base = 42;
     g->current_floor = 0;
+    g->grid_w = gw > 0 ? gw : 20;
+    g->grid_h = gh > 0 ? gh : 20;
 
     /* Generate floor 0 */
-    dng_generate(&g->floors[0], DNG_GRID_W, DNG_GRID_H, false, true,
+    dng_generate(&g->floors[0], g->grid_w, g->grid_h, false, true,
                  g->seed_base, 0);
     g->floor_generated[0] = true;
     g->dungeon = &g->floors[0];
 
     dng_player_init(&g->player, g->dungeon->spawn_gx, g->dungeon->spawn_gy, 2);
+}
+
+static void dng_game_init(dng_game *g) {
+    dng_game_init_sized(g, 20, 20);
 }
 
 static void dng_go_up(dng_game *g) {
@@ -520,7 +547,7 @@ static void dng_go_up(dng_game *g) {
 
     if (!g->floor_generated[g->current_floor]) {
         bool is_last = (g->current_floor >= cap - 1);
-        dng_generate(&g->floors[g->current_floor], DNG_GRID_W, DNG_GRID_H,
+        dng_generate(&g->floors[g->current_floor], g->grid_w, g->grid_h,
                      true, !is_last, g->seed_base + (uint32_t)g->current_floor * 777,
                      g->current_floor);
         g->floor_generated[g->current_floor] = true;

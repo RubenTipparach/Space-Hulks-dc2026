@@ -83,7 +83,7 @@ static const char *mission_descriptions[] = {
 
 /* ── Ship room data ─────────────────────────────────────────────── */
 
-#define SHIP_MAX_ROOMS    12
+#define SHIP_MAX_ROOMS    24
 #define SHIP_MAX_OFFICERS 8
 #define SHIP_MAX_DECKS    3
 
@@ -195,37 +195,58 @@ static void ship_generate(ship_state *ship, int difficulty, uint32_t seed) {
     /* Generate rooms per deck */
     ship->room_count = 0;
 
-    /* Core rooms every ship must have (first 4 are mandatory on deck 0) */
-    int required_rooms[] = {
-        ROOM_BRIDGE, ROOM_ENGINES, ROOM_SHIELDS, ROOM_WEAPONS,
-        ROOM_REACTOR, ROOM_MEDBAY, ROOM_CARGO, ROOM_BARRACKS
-    };
-    int num_required = 8;
-    int assigned = 0;
+    /* Build room type pool — no duplicates.
+     * Bare minimum: Bridge, Engines, Weapons.
+     * Then add from optional pool until we fill the ship. */
+    int room_pool[SHIP_MAX_ROOMS];
+    int pool_count = 0;
 
+    /* Mandatory rooms (every ship has these) */
+    room_pool[pool_count++] = ROOM_BRIDGE;
+    room_pool[pool_count++] = ROOM_ENGINES;
+    room_pool[pool_count++] = ROOM_WEAPONS;
+
+    /* Optional unique rooms — shuffled, added as space allows */
+    int optional[] = {
+        ROOM_SHIELDS, ROOM_REACTOR, ROOM_MEDBAY,
+        ROOM_CARGO, ROOM_BARRACKS, ROOM_TELEPORTER
+    };
+    int num_optional = 6;
+    /* Fisher-Yates shuffle */
+    for (int i = num_optional - 1; i > 0; i--) {
+        int j = dng_rng_int(i + 1);
+        int tmp = optional[i]; optional[i] = optional[j]; optional[j] = tmp;
+    }
+    for (int i = 0; i < num_optional; i++)
+        room_pool[pool_count++] = optional[i];
+
+    /* Total rooms across all decks */
+    int total_rooms = 0;
+    int deck_rooms[SHIP_MAX_DECKS];
+    for (int deck = 0; deck < ship->num_decks; deck++) {
+        deck_rooms[deck] = 4 + dng_rng_int(3); /* 4-6 per deck */
+        if (deck == 0 && deck_rooms[deck] < 3) deck_rooms[deck] = 3;
+        total_rooms += deck_rooms[deck];
+    }
+    if (total_rooms > SHIP_MAX_ROOMS) total_rooms = SHIP_MAX_ROOMS;
+    if (total_rooms > pool_count) total_rooms = pool_count; /* can't exceed unique types */
+
+    int assigned = 0;
     for (int deck = 0; deck < ship->num_decks; deck++) {
         ship->deck_room_start[deck] = ship->room_count;
-        int rooms_on_deck = 4 + dng_rng_int(3); /* 4-6 rooms per deck */
-        /* First deck must have at least the 4 core rooms */
-        if (deck == 0 && rooms_on_deck < 4) rooms_on_deck = 4;
-        if (rooms_on_deck + ship->room_count > SHIP_MAX_ROOMS)
-            rooms_on_deck = SHIP_MAX_ROOMS - ship->room_count;
+        int rooms_on_deck = deck_rooms[deck];
+        if (rooms_on_deck + ship->room_count > total_rooms)
+            rooms_on_deck = total_rooms - ship->room_count;
+        if (rooms_on_deck <= 0) break;
 
         for (int r = 0; r < rooms_on_deck; r++) {
+            if (assigned >= pool_count) break;
             ship_room *rm = &ship->rooms[ship->room_count];
             rm->deck = deck;
             rm->room_idx = r;
             rm->cleared = false;
             rm->visited = false;
-
-            /* Assign room type: required first, then random */
-            if (assigned < num_required) {
-                rm->type = required_rooms[assigned++];
-            } else {
-                /* Random non-bridge room — 20% chance of teleporter */
-                int types[] = { ROOM_CORRIDOR, ROOM_BARRACKS, ROOM_CARGO, ROOM_MEDBAY, ROOM_TELEPORTER };
-                rm->type = types[dng_rng_int(5)];
-            }
+            rm->type = room_pool[assigned++];
 
             /* Subsystem HP based on importance */
             switch (rm->type) {

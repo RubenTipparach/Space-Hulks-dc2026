@@ -4,12 +4,12 @@ public static class LevelGenerator
 {
     private static Random _rng = new();
 
-    public static FloorData Generate(int floorNum, bool hasDown, bool hasUp, int seed = -1)
+    public static FloorData Generate(int floorNum, bool hasDown, bool hasUp, int seed = -1, int gridW = 20, int gridH = 20)
     {
         if (seed >= 0) _rng = new Random(seed);
         else _rng = new Random();
 
-        var f = new FloorData();
+        var f = new FloorData { Width = gridW, Height = gridH };
         int w = f.Width, h = f.Height;
         f.HasDown = hasDown;
         f.HasUp = hasUp;
@@ -28,21 +28,38 @@ public static class LevelGenerator
             f.Map[midY + 1, x] = 0;
         }
 
-        // Generate rooms
-        int numRooms = 5 + _rng.Next(4); // 5-8
-        if (numRooms > 12) numRooms = 12;
+        // Scale room count and size with grid
+        int maxRooms = w <= 20 ? 8 : w <= 40 ? 14 : 22;
+        int minRooms = w <= 20 ? 5 : w <= 40 ? 8 : 12;
+        int numRooms = minRooms + _rng.Next(maxRooms - minRooms + 1);
+        int roomMinW = w <= 20 ? 3 : w <= 40 ? 4 : 5;
+        int roomMaxW = w <= 20 ? 4 : w <= 40 ? 6 : 8;
 
         int shipLeft = 3, shipRight = w - 2;
         int shipSpan = shipRight - shipLeft;
         int spacing = shipSpan / (numRooms + 1);
-        if (spacing < 4) spacing = 4;
+        if (spacing < roomMaxW + 2) spacing = roomMaxW + 2;
 
-        var roomTypes = (RoomType[])Enum.GetValues(typeof(RoomType));
+        // Build unique room type pool — mandatory first, then shuffled optional
+        var typePool = new List<RoomType> { RoomType.Bridge, RoomType.Engines, RoomType.Weapons };
+        var optional = new List<RoomType> {
+            RoomType.Shields, RoomType.Reactor, RoomType.Medbay,
+            RoomType.Cargo, RoomType.Barracks
+        };
+        // Shuffle optional
+        for (int i = optional.Count - 1; i > 0; i--)
+        {
+            int j = _rng.Next(i + 1);
+            (optional[i], optional[j]) = (optional[j], optional[i]);
+        }
+        typePool.AddRange(optional);
+        if (numRooms > typePool.Count) numRooms = typePool.Count;
+        int typeIdx = 0;
 
         for (int i = 0; i < numRooms; i++)
         {
-            int rw = 3 + _rng.Next(2); // 3-4
-            int rh = 3 + _rng.Next(2); // 3-4
+            int rw = roomMinW + _rng.Next(roomMaxW - roomMinW + 1);
+            int rh = roomMinW + _rng.Next(roomMaxW - roomMinW + 1);
             int rx = shipLeft + spacing * (i + 1) - rw / 2;
             if (rx < 2) rx = 2;
             if (rx + rw > w) rx = w - rw;
@@ -59,10 +76,13 @@ public static class LevelGenerator
                 if (ry + rh > h) ry = h - rh;
             }
 
+            // Check overlap with existing rooms (1-tile margin)
+            if (f.RoomOverlaps(rx, ry, rw, rh)) continue;
+
             var room = new RoomData
             {
                 X = rx, Y = ry, Width = rw, Height = rh,
-                Type = roomTypes[1 + _rng.Next(roomTypes.Length - 1)], // skip Corridor
+                Type = typePool[typeIdx++],
                 LightOn = true,
             };
             f.Rooms.Add(room);
