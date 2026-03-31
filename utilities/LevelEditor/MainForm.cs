@@ -201,10 +201,6 @@ public class MainForm : Form
         genMenu.DropDownItems.Add("Large Ship 80x80 (3 floors)", null, (_, _) => GenerateShip(80));
         menu.Items.Add(genMenu);
 
-        var viewMenu = new ToolStripMenuItem("View");
-        viewMenu.DropDownItems.Add("3D Preview (F5)", null, (_, _) => Enter3DPreview());
-        menu.Items.Add(viewMenu);
-
         MainMenuStrip = menu;
         Controls.Add(menu);
 
@@ -226,14 +222,16 @@ public class MainForm : Form
         _tabs = new TabControl
         {
             Dock = DockStyle.Fill,
-            BackColor = Color.FromArgb(30, 30, 35),
-            ForeColor = Color.White,
+            Alignment = TabAlignment.Top,
+            SizeMode = TabSizeMode.Fixed,
+            ItemSize = new Size(100, 26),
+            Font = new Font("Consolas", 9, FontStyle.Bold),
         };
-        var tab2D = new TabPage("2D Editor") { BackColor = Color.FromArgb(30, 30, 35) };
+        var tab2D = new TabPage("2D EDITOR") { BackColor = Color.FromArgb(30, 30, 35) };
         _grid.Dock = DockStyle.Fill;
         tab2D.Controls.Add(_grid);
 
-        var tab3D = new TabPage("3D Preview") { BackColor = Color.FromArgb(18, 18, 28) };
+        var tab3D = new TabPage("3D PREVIEW") { BackColor = Color.FromArgb(18, 18, 28) };
         tab3D.Controls.Add(_preview3D);
 
         _tabs.TabPages.Add(tab2D);
@@ -242,13 +240,11 @@ public class MainForm : Form
         {
             if (_tabs.SelectedIndex == 1)
             {
-                // Entering 3D
                 _preview3D.Floor = _grid.Floor;
                 _preview3D.StartPreview();
             }
             else
             {
-                // Back to 2D
                 _preview3D.StopPreview();
                 _grid.Invalidate();
                 UpdateStatus();
@@ -275,15 +271,8 @@ public class MainForm : Form
         };
     }
 
-    public void Enter3DPreview()
-    {
-        _tabs.SelectedIndex = 1;
-    }
-
-    public void Exit3DPreview()
-    {
-        _tabs.SelectedIndex = 0;
-    }
+    public void Enter3DPreview() => _tabs.SelectedIndex = 1;
+    public void Exit3DPreview() => _tabs.SelectedIndex = 0;
 
     private void NewLevel()
     {
@@ -311,6 +300,10 @@ public class MainForm : Form
         _currentFloor = idx;
         _grid.Floor = _level.Floors[idx];
         _grid.Invalidate();
+        // Keep 3D preview in sync
+        _preview3D.Floor = _level.Floors[idx];
+        if (_tabs.SelectedIndex == 1)
+            _preview3D.StartPreview();
         UpdateStatus();
     }
 

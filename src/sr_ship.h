@@ -646,6 +646,13 @@ static void draw_ship_hud(uint32_t *px, int W, int H, const ship_state *ship) {
         snprintf(tbuf, sizeof(tbuf), "TURN %d", ship->turns_elapsed);
         sr_draw_text_shadow(px, W, H, hud_x + 2, sy, tbuf, dim, shadow);
     }
+
+    /* Floor info in top-right (above minimap) */
+    {
+        char dbuf[16];
+        snprintf(dbuf, sizeof(dbuf), "DECK %d/%d", dng_state.current_floor + 1, ship->num_decks);
+        sr_draw_text_shadow(px, W, H, W - 50, 4, dbuf, gray, shadow);
+    }
 }
 
 /* ── Room label overlay (shown when entering a room) ────────────── */

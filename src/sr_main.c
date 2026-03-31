@@ -40,7 +40,6 @@
 #include "sr_sprites.h"
 #include "sr_scene_dungeon.h"
 #include "sr_combat.h"
-#include "sr_ship.h"
 
 /* ── UI mouse state (framebuffer coords) ─────────────────────────── */
 static float ui_mouse_x = -1, ui_mouse_y = -1;
@@ -91,6 +90,7 @@ static bool ui_row_hover(int bx, int by, int bw, int bh, bool *out_hovered) {
     return clicked;
 }
 
+#include "sr_ship.h"
 #include "sr_scene_ship_hub.h"
 #include "sr_menu.h"
 static void handle_screen_tap(float sx, float sy); /* forward decl */
@@ -306,18 +306,23 @@ static void handle_combat_end(void) {
     if (current_ship.initialized) {
         if (combat.player_won && current_combat_room >= 0) {
             current_ship.rooms[current_combat_room].cleared = true;
-            /* Console sabotage deals heavy subsystem damage */
-            int sub_dmg = console_combat ? 10 : 3;
-            ship_damage_subsystem(&current_ship, current_combat_room, sub_dmg);
 
-            for (int o = 0; o < current_ship.officer_count; o++) {
-                if (current_ship.officers[o].room_idx == current_combat_room &&
-                    current_ship.officers[o].alive) {
-                    current_ship.officers[o].alive = false;
-                    current_ship.officers[o].captured = true;
+            /* Console sabotage deals heavy subsystem damage */
+            if (console_combat) {
+                int sub_dmg = 10;
+                ship_damage_subsystem(&current_ship, current_combat_room, sub_dmg);
+
+                for (int o = 0; o < current_ship.officer_count; o++) {
+                    if (current_ship.officers[o].room_idx == current_combat_room &&
+                        current_ship.officers[o].alive) {
+                        current_ship.officers[o].alive = false;
+                        current_ship.officers[o].captured = true;
+                    }
                 }
+                /* Only check mission completion on console sabotage,
+                 * not on regular enemy kills */
+                ship_check_missions(&current_ship);
             }
-            ship_check_missions(&current_ship);
         }
         console_combat = false;
 
@@ -369,7 +374,31 @@ static void handle_combat_end(void) {
             return;
         }
 
-        /* Check if primary mission is done (bridge captured) */
+        /* Check if all enemies are dead across all floors */
+        if (combat.player_won && current_ship.boarding_active) {
+            bool any_alive = false;
+            for (int fl = 0; fl < current_ship.num_decks && fl < DNG_MAX_FLOORS; fl++) {
+                if (!dng_state.floor_generated[fl]) continue;
+                sr_dungeon *dd = &dng_state.floors[fl];
+                for (int gy = 1; gy <= dd->h && !any_alive; gy++)
+                    for (int gx = 1; gx <= dd->w && !any_alive; gx++)
+                        if (dd->aliens[gy][gx] != 0) any_alive = true;
+            }
+            if (!any_alive) {
+                current_ship.boarding_active = false;
+                int reward = 25 + player_sector * 10;
+                player_scrap += reward;
+                hub_generate(&g_hub);
+                app_state = STATE_SHIP_HUB;
+                snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "ALL HOSTILES ELIMINATED! +%d SCRAP", reward);
+                g_hub.hud_msg_timer = 120;
+                g_hub.mission_available = false;
+                current_combat_room = -1;
+                return;
+            }
+        }
+
+        /* Check if primary mission is done (bridge captured via console) */
         if (current_ship.mission.completed && current_ship.boarding_active) {
             current_ship.boarding_active = false;
             int reward = 30 + player_sector * 10;
@@ -889,8 +918,8 @@ static void frame(void) {
     } else if (app_state == STATE_SHIP_HUB) {
         dng_player_update(&g_hub.player);
         hub_draw_scene(&fb);
-        hub_draw_minimap(&fb);
         hub_draw_hud(fb.color, fb.width, fb.height);
+        hub_draw_minimap(&fb);
         if (dng_expanded_map) {
             /* Temporarily point dng_state at hub dungeon for expanded map */
             sr_dungeon *save_d = dng_state.dungeon;
@@ -949,12 +978,21 @@ static void frame(void) {
         if (current_ship.initialized && current_ship.boarding_active) {
             draw_ship_hud(fb.color, fb.width, fb.height, &current_ship);
 
+            /* Deck button (top-right, above minimap) */
+            {
+                char deckbuf[16];
+                snprintf(deckbuf, sizeof(deckbuf), "DECK %d", g_player.persistent_deck_count);
+                if (ui_button(fb.color, fb.width, fb.height, fb.width - 66, 14, 62, 12, deckbuf,
+                              0xFF1A1A2A, 0xFF222244, 0xFF333366))
+                    deck_view_active = true;
+            }
+
             /* Recolor minimap cells by ship room type */
             {
                 sr_dungeon *md = dng_state.dungeon;
                 int mscale = 2;
                 int mmx = fb.width - md->w * mscale - 4;
-                int mmy = 4;
+                int mmy = 28;
                 for (int my = 1; my <= md->h; my++) {
                     for (int mx = 1; mx <= md->w; mx++) {
                         if (md->map[my][mx] == 1) continue;
@@ -1083,6 +1121,10 @@ static void frame(void) {
             sr_draw_text_shadow(fb.color, fb.width, fb.height,
                                 3, 3, ibuf, 0xFFFFFFFF, 0xFF000000);
         }
+
+        /* Deck viewer (dungeon) */
+        if (deck_view_active)
+            draw_deck_viewer(fb.color, fb.width, fb.height);
 
         /* Expanded map overlay (drawn on top of everything) */
         if (dng_expanded_map) {
@@ -1310,7 +1352,7 @@ static void handle_screen_tap(float sx, float sy) {
         sr_dungeon *hd = &g_hub.dungeon;
         int mscale = 2;
         int mmx = FB_WIDTH - hd->w * mscale - 4;
-        int mmy = 30;  /* hub minimap starts at y=30 */
+        int mmy = 4;   /* hub minimap matches dungeon minimap position */
         int mmw = hd->w * mscale;
         int mmh = hd->h * mscale;
         if (fx >= mmx && fx <= mmx + mmw && fy >= mmy && fy <= mmy + mmh) {
@@ -1566,12 +1608,12 @@ static void event(const sapp_event *ev) {
         }
         /* Deck viewer */
         if (deck_view_active) {
-            if (ev->key_code == SAPP_KEYCODE_ESCAPE || ev->key_code == SAPP_KEYCODE_D) {
+            if (ev->key_code == SAPP_KEYCODE_ESCAPE || ev->key_code == SAPP_KEYCODE_TAB) {
                 deck_view_active = false;
             }
             return;
         }
-        if (ev->key_code == SAPP_KEYCODE_D) {
+        if (ev->key_code == SAPP_KEYCODE_TAB) {
             deck_view_active = true;
             return;
         }
@@ -1792,7 +1834,18 @@ static void event(const sapp_event *ev) {
         return; /* Consume all keys while map is open */
     }
 
+    /* Deck viewer in dungeon */
+    if (deck_view_active) {
+        if (ev->key_code == SAPP_KEYCODE_ESCAPE || ev->key_code == SAPP_KEYCODE_TAB) {
+            deck_view_active = false;
+        }
+        return;
+    }
+
     switch (ev->key_code) {
+        case SAPP_KEYCODE_TAB:
+            deck_view_active = true;
+            break;
         case SAPP_KEYCODE_M:
             dng_expanded_map = true;
             break;

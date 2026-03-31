@@ -55,7 +55,7 @@ static void dng_touch_ended(float sx, float sy, double time) {
             sr_dungeon *md = dng_state.dungeon;
             int mscale = 2;
             int mmx = FB_WIDTH - md->w * mscale - 4;
-            int mmy = 4;
+            int mmy = 28;
             int mmw = md->w * mscale;
             int mmh = md->h * mscale;
             if (fbx >= mmx && fbx <= mmx + mmw && fby >= mmy && fby <= mmy + mmh) {

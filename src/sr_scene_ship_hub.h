@@ -166,8 +166,8 @@ static hub_state g_hub;
 static void hub_generate(hub_state *hub) {
     memset(hub, 0, sizeof(*hub));
     sr_dungeon *d = &hub->dungeon;
-    d->w = DNG_GRID_W;
-    d->h = DNG_GRID_H;
+    d->w = 20;
+    d->h = 20;
     d->has_up = false;
     d->has_down = false;
 
@@ -283,6 +283,27 @@ static void hub_generate(hub_state *hub) {
             if (npc->gx >= 1 && npc->gx <= d->w && npc->gy >= 1 && npc->gy <= d->h) {
                 d->aliens[npc->gy][npc->gx] = (uint8_t)(crew_stex[i] + 1);
                 snprintf(d->alien_names[npc->gy][npc->gx], 16, "%s", npc->name);
+            }
+        }
+    }
+
+    /* Place consoles at room centers for minimap room type detection */
+    {
+        /* Map hub room types to ship ROOM_* values for expanded map coloring */
+        static const int hub_to_ship_room[] = {
+            0,              /* HUB_ROOM_CORRIDOR -> ROOM_CORRIDOR */
+            ROOM_BRIDGE,    /* HUB_ROOM_BRIDGE */
+            ROOM_TELEPORTER,/* HUB_ROOM_TELEPORTER */
+            ROOM_CARGO,     /* HUB_ROOM_SHOP (armory) -> CARGO color */
+            ROOM_BARRACKS,  /* HUB_ROOM_QUARTERS -> BARRACKS color */
+            ROOM_MEDBAY,    /* HUB_ROOM_MEDBAY */
+        };
+        for (int i = 0; i < num_rooms; i++) {
+            int rt = room_defs[i].type;
+            if (rt > 0 && rt < HUB_ROOM_COUNT) {
+                int cx = d->room_cx[i], cy = d->room_cy[i];
+                if (cx >= 1 && cx <= d->w && cy >= 1 && cy <= d->h)
+                    d->consoles[cy][cx] = (uint8_t)hub_to_ship_room[rt];
             }
         }
     }
@@ -1200,50 +1221,19 @@ static void hub_draw_hud(uint32_t *px, int W, int H) {
     }
 }
 
-/* ── Hub minimap ────────────────────────────────────────────────── */
+/* ── Hub minimap (reuses dungeon minimap) ──────────────────────── */
 
 static void hub_draw_minimap(sr_framebuffer *fb_ptr) {
-    sr_dungeon *d = &g_hub.dungeon;
-    dng_player *p = &g_hub.player;
-    int scale = 2;
-    int mx = FB_WIDTH - d->w * scale - 4;
-    int my = 30;
-    uint32_t *px = fb_ptr->color;
+    /* Temporarily swap dng_state to hub data so dungeon minimap draws it */
+    sr_dungeon *save_d = dng_state.dungeon;
+    dng_player save_p = dng_state.player;
+    dng_state.dungeon = &g_hub.dungeon;
+    dng_state.player = g_hub.player;
 
-    for (int y = 1; y <= d->h; y++) {
-        for (int x = 1; x <= d->w; x++) {
-            int px0 = mx + (x - 1) * scale;
-            int py0 = my + (y - 1) * scale;
-            uint32_t col;
-            if (d->map[y][x] == 1) col = 0xFF222222;
-            else {
-                int ri = hub_room_at_pos(x, y);
-                if (ri >= 0) col = hub_room_colors[g_hub.room_types[ri]];
-                else col = 0xFF444444;
-                /* Dim it */
-                int r = ((col >> 0) & 0xFF) / 3;
-                int g = ((col >> 8) & 0xFF) / 3;
-                int b = ((col >> 16) & 0xFF) / 3;
-                col = 0xFF000000 | (b << 16) | (g << 8) | r;
-            }
-            for (int dy = 0; dy < scale; dy++)
-                for (int dx = 0; dx < scale; dx++) {
-                    int rx = px0 + dx, ry = py0 + dy;
-                    if (rx >= 0 && rx < fb_ptr->width && ry >= 0 && ry < fb_ptr->height)
-                        px[ry * fb_ptr->width + rx] = col;
-                }
-        }
-    }
+    draw_dungeon_minimap(fb_ptr);
 
-    /* Player dot */
-    int pdx = mx + (p->gx - 1) * scale;
-    int pdy = my + (p->gy - 1) * scale;
-    for (int dy = 0; dy < scale; dy++)
-        for (int dx = 0; dx < scale; dx++) {
-            int rx = pdx + dx, ry = pdy + dy;
-            if (rx >= 0 && rx < fb_ptr->width && ry >= 0 && ry < fb_ptr->height)
-                px[ry * fb_ptr->width + rx] = 0xFF00FF00;
-        }
+    dng_state.dungeon = save_d;
+    dng_state.player = save_p;
 }
 
 #endif /* SR_SCENE_SHIP_HUB_H */

@@ -714,7 +714,7 @@ static void draw_dungeon_minimap(sr_framebuffer *fb_ptr) {
     dng_player *p = &dng_state.player;
     int scale = 2;
     int mx = FB_WIDTH - d->w * scale - 4;
-    int my = 4;
+    int my = 28;  /* below HUD text */
     uint32_t *px = fb_ptr->color;
 
     for (int y = 1; y <= d->h; y++) {
@@ -753,7 +753,7 @@ static void draw_minimap_player(sr_framebuffer *fb_ptr) {
     dng_player *p = &dng_state.player;
     int scale = 2;
     int mx = FB_WIDTH - d->w * scale - 4;
-    int my = 4;
+    int my = 28;  /* match minimap offset */
     uint32_t *px = fb_ptr->color;
 
     /* Player dot */
@@ -822,17 +822,55 @@ static void draw_expanded_map(sr_framebuffer *fb_ptr) {
     /* Title */
     sr_draw_text_shadow(px, W, H, W / 2 - 30, oy - 12, "DECK MAP", 0xFFFFFFFF, 0xFF000000);
 
+    /* Room type colors (ABGR) indexed by console type value */
+    static const uint32_t emap_room_colors[] = {
+        0xFF555555, /* 0: CORRIDOR */
+        0xFF22CCEE, /* 1: BRIDGE */
+        0xFF44CC44, /* 2: MEDBAY */
+        0xFFCC8822, /* 3: WEAPONS */
+        0xFFCCAA22, /* 4: ENGINES */
+        0xFF44CCCC, /* 5: REACTOR */
+        0xFF44AA88, /* 6: SHIELDS */
+        0xFF66AA44, /* 7: CARGO */
+        0xFF6666AA, /* 8: BARRACKS */
+        0xFF44CC88, /* 9: TELEPORTER */
+    };
+    static const char *emap_room_names[] = {
+        "CORRIDOR", "BRIDGE", "MEDBAY", "WEAPONS", "ENGINES",
+        "REACTOR", "SHIELDS", "CARGO", "BARRACKS", "TELEPORTER"
+    };
+    #define EMAP_ROOM_TYPE_COUNT 10
+
+    /* Find room type for each room (from console at center) */
+    int room_types[DNG_MAX_ROOMS];
+    for (int ri = 0; ri < d->room_count; ri++) {
+        room_types[ri] = 0;
+        uint8_t ct = d->consoles[d->room_cy[ri]][d->room_cx[ri]];
+        if (ct > 0 && ct < EMAP_ROOM_TYPE_COUNT) room_types[ri] = ct;
+        /* Also check ship_idx for rooms assigned via ship system */
+        if (room_types[ri] == 0 && d->room_ship_idx[ri] >= 0)
+            room_types[ri] = -1; /* has ship data but no console — will be colored by overlay */
+    }
+
     /* Draw cells */
     for (int gy = 1; gy <= d->h; gy++) {
         for (int gx = 1; gx <= d->w; gx++) {
             if (d->map[gy][gx] == 1) continue;
 
             uint32_t cell_col = 0xFF333333;
-
-            /* Brighten cells that belong to rooms (ship overlay recolors later) */
             int ri = dng_room_at(d, gx, gy);
-            if (ri >= 0 && ri < d->room_count && d->room_ship_idx[ri] >= 0)
-                cell_col = 0xFF444444;
+            if (ri >= 0 && ri < d->room_count) {
+                int rt = room_types[ri];
+                if (rt > 0 && rt < EMAP_ROOM_TYPE_COUNT) {
+                    uint32_t rc = emap_room_colors[rt];
+                    int rr = ((rc >> 0) & 0xFF) * 2 / 5;
+                    int rg = ((rc >> 8) & 0xFF) * 2 / 5;
+                    int rb = ((rc >> 16) & 0xFF) * 2 / 5;
+                    cell_col = 0xFF000000 | (rb << 16) | (rg << 8) | rr;
+                } else {
+                    cell_col = 0xFF444444;
+                }
+            }
 
             int px0 = ox + (gx - 1) * scale;
             int py0 = oy + (gy - 1) * scale;
@@ -841,6 +879,35 @@ static void draw_expanded_map(sr_framebuffer *fb_ptr) {
                     int rx = px0 + dx, ry = py0 + dy;
                     if (rx >= 0 && rx < W && ry >= 0 && ry < H)
                         px[ry * W + rx] = cell_col;
+                }
+        }
+    }
+
+    /* Room labels */
+    for (int ri = 0; ri < d->room_count; ri++) {
+        int rt = room_types[ri];
+        if (rt <= 0 || rt >= EMAP_ROOM_TYPE_COUNT) continue;
+        const char *name = emap_room_names[rt];
+        int cx = ox + (d->room_cx[ri] - 1) * scale + scale / 2;
+        int cy = oy + (d->room_cy[ri] - 1) * scale + scale / 2;
+        int nlen = 0; while (name[nlen]) nlen++;
+        sr_draw_text_shadow(px, W, H, cx - nlen * 3, cy - 3,
+                            name, emap_room_colors[rt], 0xFF000000);
+    }
+
+    /* Console icons on minimap */
+    for (int gy = 1; gy <= d->h; gy++) {
+        for (int gx = 1; gx <= d->w; gx++) {
+            uint8_t ct = d->consoles[gy][gx];
+            if (ct == 0 || ct >= EMAP_ROOM_TYPE_COUNT) continue;
+            int px0 = ox + (gx - 1) * scale + scale / 2 - 1;
+            int py0 = oy + (gy - 1) * scale + scale / 2 - 1;
+            uint32_t cc = emap_room_colors[ct];
+            for (int dy = 0; dy < 3; dy++)
+                for (int dx = 0; dx < 3; dx++) {
+                    int rx = px0 + dx, ry = py0 + dy;
+                    if (rx >= 0 && rx < W && ry >= 0 && ry < H)
+                        px[ry * W + rx] = cc;
                 }
         }
     }
