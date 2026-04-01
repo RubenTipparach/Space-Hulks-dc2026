@@ -173,13 +173,17 @@ void main(){
         GL.Disable(EnableCap.CullFace);
 
         _glReady = true;
-        LoadGLTextures();
     }
 
     // ── GL Textures ─────────────────────────────────────────────
 
-    private void LoadGLTextures()
+    private bool _glTexLoaded;
+    private void EnsureGLTextures()
     {
+        if (_glTexLoaded) return;
+        TextureCache.EnsureLoaded();
+        if (TextureCache.WallA == null) return; // not ready yet
+        _glTexLoaded = true;
         _glTex["wall_a"] = UploadTex(TextureCache.WallA);
         _glTex["wall_a_win"] = UploadTex(TextureCache.WallAWindow);
         _glTex["floor"] = UploadTex(TextureCache.Floor);
@@ -501,6 +505,7 @@ void main(){
         GL.Viewport(0, 0, _gl.ClientSize.Width, _gl.ClientSize.Height);
         GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
 
+        EnsureGLTextures();
         if (Floor == null) { _gl.SwapBuffers(); return; }
 
         BuildGeometry();
