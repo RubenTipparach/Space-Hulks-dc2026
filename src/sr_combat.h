@@ -35,6 +35,7 @@ enum {
     CARD_DEFLECTOR,  /* deflector: +4 shield, reflects enemy damage back, cost 1 */
     CARD_STUN_GUN,   /* stun gun: stun 1 enemy 1 turn, 1 dmg, cost 1 */
     CARD_MICROWAVE,  /* microwave: 5 dmg, if kill -> 3 dmg all, cost 2 */
+    CARD_QUICKSTEP,  /* quickstep: add 1 MOVE card to discard, cost 1 */
     CARD_TYPE_COUNT
 };
 
@@ -42,7 +43,8 @@ static const char *card_names[] = {
     "SHIELD", "SHOOT", "BURST", "MOVE", "MELEE",
     "OVERCHRG", "REPAIR", "STUN", "FORTIFY", "DBL SHOT", "DASH",
     "ICE", "ACID", "FIRE", "LIGHTNING",
-    "SNIPER", "SHOTGUN", "WELDER", "CHAINSAW", "LASER", "DEFLECTR", "STUN GUN", "MCROWAVE"
+    "SNIPER", "SHOTGUN", "WELDER", "CHAINSAW", "LASER", "DEFLECTR", "STUN GUN", "MCROWAVE",
+    "QCKSTEP"
 };
 
 static const uint32_t card_colors[] = {
@@ -69,13 +71,15 @@ static const uint32_t card_colors[] = {
     0xFFDDAA44,  /* deflector - steel blue */
     0xFFCC88FF,  /* stun gun - light purple */
     0xFF2266EE,  /* microwave - hot orange-red */
+    0xFF44EE44,  /* quickstep - bright green */
 };
 
 static const int card_energy_cost[] = {
     1, 1, 2, 1, 1,  /* base cards */
     0, 2, 1, 2, 2, 2, /* droppable cards */
     1, 1, 1, 2, /* elemental cards */
-    1, 1, 1, 2, 1, 1, 1, 2 /* class-specific: sniper, shotgun, welder, chainsaw, laser, deflector, stun gun, microwave */
+    1, 1, 1, 2, 1, 1, 1, 2, /* class-specific: sniper, shotgun, welder, chainsaw, laser, deflector, stun gun, microwave */
+    1 /* quickstep */
 };
 
 /* Card target types */
@@ -105,6 +109,7 @@ static const int card_targets[] = {
     TARGET_SELF,          /* DEFLECTOR */
     TARGET_ENEMY,         /* STUN GUN */
     TARGET_ENEMY,         /* MICROWAVE */
+    TARGET_SELF,          /* QUICKSTEP */
 };
 
 /* ── Character classes ───────────────────────────────────────────── */
@@ -121,8 +126,8 @@ typedef struct {
 static const char_class char_classes[] = {
     [CLASS_SCOUT] = {
         .hp_max = 18,
-        /* 2 shield, 0 shoot, 1 burst, 3 move, 0 melee, ..., 2 sniper, 2 shotgun */
-        .deck_composition = { 2, 0, 1, 3, 0, 0,0,0,0,0,0, 0,0,0,0, 2, 2 },
+        /* 2 shield, 0 shoot, 1 burst, 3 move, 0 melee, ..., 2 sniper, 2 shotgun, ..., 2 quickstep */
+        .deck_composition = { 2, 0, 1, 3, 0, 0,0,0,0,0,0, 0,0,0,0, 2, 2, 0,0,0,0,0,0, 2 },
         .name = "SCOUT",
         .sprite = spr_scout,
     },
@@ -164,7 +169,7 @@ typedef struct {
 } enemy_template;
 
 static const enemy_template enemy_templates[] = {
-    [ENEMY_LURKER]    = { "LURKER",     8,  2, 0, 0 },  /* melee: must be at dist 0 */
+    [ENEMY_LURKER]    = { "LURKER",     8,  2, 2, 1 },  /* ranged: attacks at dist <= 2 */
     [ENEMY_BRUTE]     = { "BRUTE",     18,  5, 1, 0 },  /* melee: attacks at dist <= 1 */
     [ENEMY_SPITTER]   = { "SPITTER",   10,  3, 3, 1 },  /* ranged: attacks at dist <= 3 */
     [ENEMY_HIVEGUARD] = { "HIVEGUARD", 24,  4, 2, 1 },  /* ranged: attacks at dist <= 2 */
@@ -254,6 +259,11 @@ typedef struct {
     /* Elemental state */
     int fire_atk_bonus;  /* +1 per burning enemy, boosts player attack dmg */
     bool player_deflect; /* true = deflector active, reflects damage back */
+
+    /* Pile viewer overlay */
+    bool deck_view_open;
+    bool discard_view_open;
+    int pile_view_selected;   /* -1 = none */
 
     /* Result */
     bool combat_over;
@@ -835,10 +845,18 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
             }
             break;
         }
+
+        case CARD_QUICKSTEP:
+            if (cs->discard_count < COMBAT_DECK_MAX) {
+                cs->discard[cs->discard_count++] = CARD_MOVE;
+            }
+            combat_set_message(cs, "QUICKSTEP! +1 MOVE");
+            break;
     }
 
-    /* Move card to discard */
-    cs->discard[cs->discard_count++] = card;
+    /* Move card to discard (movement cards are exhausted instead) */
+    if (card != CARD_MOVE && card != CARD_DASH)
+        cs->discard[cs->discard_count++] = card;
 
     /* Remove from hand */
     for (int i = hand_idx; i < cs->hand_count - 1; i++)
@@ -1062,8 +1080,11 @@ static void combat_check_victory(combat_state *cs) {
 
 static void combat_action_end_turn(combat_state *cs) {
     if (cs->phase != CPHASE_PLAYER_TURN) return;
-    for (int i = 0; i < cs->hand_count; i++)
-        cs->discard[cs->discard_count++] = cs->hand[i];
+    for (int i = 0; i < cs->hand_count; i++) {
+        int c = cs->hand[i];
+        if (c != CARD_MOVE && c != CARD_DASH)
+            cs->discard[cs->discard_count++] = c;
+    }
     cs->hand_count = 0;
     /* movement points persist between rounds */
     combat_log(cs, "-- ENEMY TURN --");
@@ -1510,6 +1531,7 @@ static const char *card_effect_text(int card_type) {
         case CARD_DEFLECTOR:   return "+4 SHIELD\nREFLECT DMG";
         case CARD_STUN_GUN:    return "STUN 1T\n1 DMG";
         case CARD_MICROWAVE:   return "5 DMG\n*3 DMG ALL";
+        case CARD_QUICKSTEP:   return "+1 MOVE\nTO DISC";
         default:               return "";
     }
 }
@@ -1586,6 +1608,120 @@ static void combat_draw_card_content(uint32_t *px, int W, int H,
     else if (tt == TARGET_ENEMY) tgt = "1 ENEMY";
     else tgt = "ALL";
     sr_draw_text_shadow(px, W, H, cx + 3, cy + ch - 10, tgt, 0xFF555555, shadow);
+}
+
+/* ── Pile viewer overlay (draw deck / discard pile browser) ─────── */
+
+static void combat_draw_pile_viewer(uint32_t *px, int W, int H,
+                                    int *pile, int pile_count, const char *title) {
+    uint32_t shadow = 0xFF000000;
+
+    /* Dim background */
+    for (int i = 0; i < W * H; i++) {
+        uint32_t c = px[i];
+        int r = ((c >> 0) & 0xFF) / 3;
+        int g = ((c >> 8) & 0xFF) / 3;
+        int b = ((c >> 16) & 0xFF) / 3;
+        px[i] = 0xFF000000 | (b << 16) | (g << 8) | r;
+    }
+
+    /* Title */
+    char tbuf[32];
+    snprintf(tbuf, sizeof(tbuf), "%s (%d)", title, pile_count);
+    sr_draw_text_shadow(px, W, H, W/2 - 40, 8, tbuf, 0xFF00DDDD, shadow);
+
+    if (pile_count == 0) {
+        sr_draw_text_shadow(px, W, H, W/2 - 20, H/2, "EMPTY", 0xFF555555, shadow);
+    } else {
+        /* Grid: 5 columns */
+        int cols = 5;
+        int cw = 80, ch = 28;
+        int pad = 4;
+        int gridW = cols * (cw + pad) - pad;
+        int startX = (W - gridW) / 2;
+        int startY = 24;
+
+        for (int i = 0; i < pile_count; i++) {
+            int col = i % cols;
+            int row = i / cols;
+            int cx = startX + col * (cw + pad);
+            int cy = startY + row * (ch + pad);
+            if (cy > H - 40) break;  /* don't draw off screen */
+
+            int card_type = pile[i];
+            bool sel = (i == combat.pile_view_selected);
+            uint32_t ccol = card_colors[card_type];
+            uint32_t bg = sel ? 0xFF222244 : 0xFF111122;
+
+            /* Background */
+            combat_draw_rect(px, W, H, cx, cy, cw, ch, bg);
+            /* Border */
+            combat_draw_rect_outline(px, W, H, cx, cy, cw, ch, sel ? 0xFF00DDDD : ccol);
+            /* Color stripe */
+            combat_draw_rect(px, W, H, cx + 1, cy + 1, cw - 2, 2, ccol);
+
+            /* Card name */
+            sr_draw_text_shadow(px, W, H, cx + 3, cy + 4, card_names[card_type],
+                                0xFFFFFFFF, shadow);
+            /* Effect */
+            const char *eff = card_effect_text(card_type);
+            sr_draw_text_shadow(px, W, H, cx + 3, cy + 14, eff, 0xFF888888, shadow);
+            /* Energy cost */
+            char ebuf[4];
+            snprintf(ebuf, sizeof(ebuf), "%d", card_energy_cost[card_type]);
+            sr_draw_text_shadow(px, W, H, cx + cw - 10, cy + 4, ebuf, 0xFF22CCEE, shadow);
+
+            /* Click detection */
+            if (ui_mouse_clicked &&
+                ui_click_x >= cx && ui_click_x < cx + cw &&
+                ui_click_y >= cy && ui_click_y < cy + ch) {
+                combat.pile_view_selected = (sel ? -1 : i);
+            }
+        }
+    }
+
+    /* Detail panel for selected card */
+    if (combat.pile_view_selected >= 0 && combat.pile_view_selected < pile_count) {
+        int card_type = pile[combat.pile_view_selected];
+        uint32_t ccol = card_colors[card_type];
+
+        int pw = 200, ph = 80;
+        int px2 = (W - pw) / 2;
+        int py = H - 20 - ph;
+
+        combat_draw_rect(px, W, H, px2, py, pw, ph, 0xFF0A0A18);
+        combat_draw_rect_outline(px, W, H, px2, py, pw, ph, ccol);
+        combat_draw_rect(px, W, H, px2 + 1, py + 1, pw - 2, 2, ccol);
+
+        sr_draw_text_shadow(px, W, H, px2 + 6, py + 5, card_names[card_type],
+                            0xFFFFFFFF, shadow);
+        char ebuf[8];
+        snprintf(ebuf, sizeof(ebuf), "%dE", card_energy_cost[card_type]);
+        sr_draw_text_shadow(px, W, H, px2 + pw - 20, py + 5, ebuf, 0xFF22CCEE, shadow);
+
+        const char *tgt = "";
+        int tt = card_targets[card_type];
+        if (tt == TARGET_SELF) tgt = "TARGET: SELF";
+        else if (tt == TARGET_ENEMY) tgt = "TARGET: 1 ENEMY";
+        else tgt = "TARGET: ALL";
+        sr_draw_text_shadow(px, W, H, px2 + 6, py + 15, tgt, 0xFF888888, shadow);
+
+        const char *effect = card_effect_text(card_type);
+        int ey = sr_draw_text_wrap(px, W, H, px2 + 6, py + 27, effect,
+                                   pw - 12, 8, ccol, shadow);
+
+        const char *desc = card_description_text(card_type);
+        sr_draw_text_wrap(px, W, H, px2 + 6, ey + 4, desc,
+                          pw - 12, 8, 0xFF666666, shadow);
+    }
+
+    /* Close button */
+    if (ui_button(px, W, H, W/2 - 30, H - 16, 60, 14, "CLOSE",
+                  0xFF111122, 0xFF222244, 0xFF333366)) {
+        combat.deck_view_open = false;
+        combat.discard_view_open = false;
+        combat.pile_view_selected = -1;
+    }
 }
 
 /* ── Main combat render ──────────────────────────────────────────── */
@@ -1977,8 +2113,29 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
         sr_draw_text_shadow(px, W, H, W - 50, 4, tbuf, gray, shadow);
 
         char dbuf[16];
-        snprintf(dbuf, sizeof(dbuf), "DECK:%d", combat.deck_count + combat.discard_count);
+        snprintf(dbuf, sizeof(dbuf), "DRAW:%d", combat.deck_count);
         sr_draw_text_shadow(px, W, H, W - 50, 14, dbuf, dim, shadow);
+
+        char rbuf[16];
+        snprintf(rbuf, sizeof(rbuf), "DISC:%d", combat.discard_count);
+        sr_draw_text_shadow(px, W, H, W - 50, 24, rbuf, dim, shadow);
+
+        /* Click DRAW to browse draw pile */
+        if (ui_mouse_clicked &&
+            ui_click_x >= W - 50 && ui_click_x < W &&
+            ui_click_y >= 14 && ui_click_y < 24) {
+            combat.deck_view_open = true;
+            combat.discard_view_open = false;
+            combat.pile_view_selected = -1;
+        }
+        /* Click DISC to browse discard pile */
+        if (ui_mouse_clicked &&
+            ui_click_x >= W - 50 && ui_click_x < W &&
+            ui_click_y >= 24 && ui_click_y < 34) {
+            combat.discard_view_open = true;
+            combat.deck_view_open = false;
+            combat.pile_view_selected = -1;
+        }
     }
 
     /* ── Action buttons (touch-friendly) ─────────────────────── */

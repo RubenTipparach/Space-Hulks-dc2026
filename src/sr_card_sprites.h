@@ -467,6 +467,7 @@ static const uint32_t *spr_card_table[] = {
     spr_card_deflector,
     spr_card_stun_gun,
     spr_card_microwave,
+    spr_card_move,  /* quickstep (reuses move art) */
 };
 
 #endif /* SR_CARD_SPRITES_H */
