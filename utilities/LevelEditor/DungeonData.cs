@@ -11,6 +11,7 @@ public enum RoomType
     Shields = 6,
     Cargo = 7,
     Barracks = 8,
+    Teleporter = 9,
 }
 
 public enum EnemyType
@@ -24,9 +25,32 @@ public enum EnemyType
 
 public enum CellType
 {
-    Wall = 1,
     Open = 0,
+    Wall = 1,
     Window = 2,
+}
+
+public enum ShipType
+{
+    Human = 0,
+    Alien = 1,
+}
+
+public enum OfficerRank
+{
+    Ensign = 0,
+    Lieutenant = 1,
+    Commander = 2,
+    Captain = 3,
+}
+
+public enum MissionType
+{
+    DestroyShip = 0,
+    CaptureOfficer = 1,
+    SabotageReactor = 2,
+    RetrieveData = 3,
+    Rescue = 4,
 }
 
 public class RoomData
@@ -38,6 +62,8 @@ public class RoomData
     public RoomType Type { get; set; } = RoomType.Corridor;
     public bool LightOn { get; set; } = true;
     public int ShipIdx { get; set; } = -1;
+    public int SubsystemHp { get; set; }
+    public int SubsystemHpMax { get; set; }
 
     public int CenterX => X + Width / 2;
     public int CenterY => Y + Height / 2;
@@ -67,6 +93,31 @@ public class LootData
     public int GY { get; set; }
 }
 
+public class OfficerData
+{
+    public int GX { get; set; }
+    public int GY { get; set; }
+    public string Name { get; set; } = "OFFICER";
+    public OfficerRank Rank { get; set; } = OfficerRank.Ensign;
+    public int RoomIdx { get; set; } = -1;
+    public EnemyType CombatType { get; set; } = EnemyType.Brute;
+}
+
+public class NpcData
+{
+    public int GX { get; set; }
+    public int GY { get; set; }
+    public string Name { get; set; } = "NPC";
+    public int DialogId { get; set; }
+}
+
+public class MissionData
+{
+    public MissionType Type { get; set; } = MissionType.DestroyShip;
+    public int TargetOfficer { get; set; } = -1;
+    public string Description { get; set; } = "";
+}
+
 public class FloorData
 {
     public int Width { get; set; } = 20;
@@ -86,6 +137,8 @@ public class FloorData
     public List<EntityData> Enemies { get; set; } = new();
     public List<ConsoleData> Consoles { get; set; } = new();
     public List<LootData> Loot { get; set; } = new();
+    public List<OfficerData> Officers { get; set; } = new();
+    public List<NpcData> Npcs { get; set; } = new();
 
     public FloorData()
     {
@@ -118,4 +171,9 @@ public class LevelData
 {
     public List<FloorData> Floors { get; set; } = new() { new FloorData() };
     public string ShipName { get; set; } = "UNNAMED SHIP";
+    public ShipType ShipType { get; set; } = ShipType.Human;
+    public bool IsHub { get; set; }
+    public int HullHp { get; set; } = 30;
+    public int HullHpMax { get; set; } = 30;
+    public List<MissionData> Missions { get; set; } = new();
 }

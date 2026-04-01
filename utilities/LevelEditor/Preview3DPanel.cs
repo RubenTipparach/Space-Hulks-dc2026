@@ -5,6 +5,8 @@ namespace SpaceHulksLevelEditor;
 public class Preview3DPanel : Panel
 {
     public FloorData? Floor { get; set; }
+    public bool ShowExterior { get; set; }
+    public ShipType ShipType { get; set; } = ShipType.Human;
 
     // Orbit camera
     private float _orbitYaw = 45f;    // degrees
@@ -47,6 +49,7 @@ public class Preview3DPanel : Panel
         [RoomType.Shields] = Color.FromArgb(65, 140, 125),
         [RoomType.Cargo] = Color.FromArgb(110, 135, 80),
         [RoomType.Barracks] = Color.FromArgb(145, 95, 95),
+        [RoomType.Teleporter] = Color.FromArgb(160, 90, 200),
     };
 
     private static readonly Dictionary<EnemyType, Color> EnemyColors = new()
@@ -252,6 +255,10 @@ public class Preview3DPanel : Panel
             }
         }
 
+        // Exterior hull (outward-facing boundary quads)
+        if (ShowExterior)
+            AddExteriorQuads(quads, camX, camY, camZ, W, H);
+
         // Entity markers (small raised quads)
         AddEntityQuads(quads, camX, camY, camZ, W, H);
 
@@ -317,6 +324,95 @@ public class Preview3DPanel : Panel
         }
     }
 
+    private void AddExteriorQuads(List<RenderQuad> quads,
+        float camX, float camY, float camZ, int W, int H)
+    {
+        if (Floor == null) return;
+        int w = Floor.Width, h = Floor.Height;
+
+        bool alien = ShipType == ShipType.Alien;
+        Bitmap? extWall = alien ? TextureCache.AlienExterior : TextureCache.ExteriorWall;
+        Bitmap? extWindow = alien ? TextureCache.AlienExteriorWindow : TextureCache.ExteriorWindow;
+        Color extCol = alien ? Color.FromArgb(120, 60, 80) : Color.FromArgb(60, 80, 130);
+        Color extSide = Darken(extCol, 0.7f);
+
+        // Side panels on grid boundaries
+        for (int gy = 1; gy <= h; gy++)
+        {
+            for (int gx = 1; gx <= w; gx++)
+            {
+                if (!IsWallLike(Floor.Map[gy, gx])) continue;
+
+                bool isWindow = Floor.Map[gy, gx] == (int)CellType.Window;
+                Bitmap? faceTex = isWindow ? extWindow : extWall;
+
+                float x0 = (gx - 1) * CellSize;
+                float x1 = gx * CellSize;
+                float z0 = (gy - 1) * CellSize;
+                float z1 = gy * CellSize;
+
+                // North boundary
+                if (gy == 1)
+                {
+                    var pts = ProjectQuad(x1, 0, z0, x0, 0, z0, x0, WallH, z0, x1, WallH, z0,
+                        camX, camY, camZ, W, H, out float d);
+                    if (pts != null) quads.Add(new RenderQuad(pts, extSide, d, faceTex, true, 0.65f));
+                }
+                // South boundary
+                if (gy == h)
+                {
+                    var pts = ProjectQuad(x0, 0, z1, x1, 0, z1, x1, WallH, z1, x0, WallH, z1,
+                        camX, camY, camZ, W, H, out float d);
+                    if (pts != null) quads.Add(new RenderQuad(pts, extSide, d, faceTex, true, 0.65f));
+                }
+                // West boundary
+                if (gx == 1)
+                {
+                    var pts = ProjectQuad(x0, 0, z0, x0, 0, z1, x0, WallH, z1, x0, WallH, z0,
+                        camX, camY, camZ, W, H, out float d);
+                    if (pts != null) quads.Add(new RenderQuad(pts, extCol, d, faceTex, true, 0.75f));
+                }
+                // East boundary
+                if (gx == w)
+                {
+                    var pts = ProjectQuad(x1, 0, z1, x1, 0, z0, x1, WallH, z0, x1, WallH, z1,
+                        camX, camY, camZ, W, H, out float d);
+                    if (pts != null) quads.Add(new RenderQuad(pts, extCol, d, faceTex, true, 0.75f));
+                }
+            }
+        }
+
+        // Roof cap (top of hull)
+        float roofY = WallH + 0.05f;
+        for (int gy = 1; gy <= h; gy++)
+        {
+            for (int gx = 1; gx <= w; gx++)
+            {
+                if (!IsWallLike(Floor.Map[gy, gx])) continue;
+                float x0 = (gx - 1) * CellSize, x1 = gx * CellSize;
+                float z0 = (gy - 1) * CellSize, z1 = gy * CellSize;
+                var pts = ProjectQuad(x0, roofY, z1, x1, roofY, z1, x1, roofY, z0, x0, roofY, z0,
+                    camX, camY, camZ, W, H, out float d);
+                if (pts != null) quads.Add(new RenderQuad(pts, extCol, d, extWall, false, 0.85f));
+            }
+        }
+
+        // Floor cap (underside of hull)
+        float floorY = -0.05f;
+        for (int gy = 1; gy <= h; gy++)
+        {
+            for (int gx = 1; gx <= w; gx++)
+            {
+                if (!IsWallLike(Floor.Map[gy, gx])) continue;
+                float x0 = (gx - 1) * CellSize, x1 = gx * CellSize;
+                float z0 = (gy - 1) * CellSize, z1 = gy * CellSize;
+                var pts = ProjectQuad(x0, floorY, z0, x1, floorY, z0, x1, floorY, z1, x0, floorY, z1,
+                    camX, camY, camZ, W, H, out float d);
+                if (pts != null) quads.Add(new RenderQuad(pts, Darken(extCol, 0.5f), d, extWall, false, 0.45f));
+            }
+        }
+    }
+
     private void AddEntityQuads(List<RenderQuad> quads,
         float camX, float camY, float camZ, int W, int H)
     {
@@ -344,6 +440,14 @@ public class Preview3DPanel : Panel
 
         foreach (var l in Floor.Loot)
             AddMarker(quads, l.GX, l.GY, Color.Gold, markerH * 2, pad * 0.7f, camX, camY, camZ, W, H);
+
+        // Officers (white diamond markers)
+        foreach (var o in Floor.Officers)
+            AddMarker(quads, o.GX, o.GY, Color.White, markerH * 2.5f, pad * 0.7f, camX, camY, camZ, W, H);
+
+        // NPCs (cyan markers)
+        foreach (var n in Floor.Npcs)
+            AddMarker(quads, n.GX, n.GY, Color.Cyan, markerH * 2.5f, pad * 0.7f, camX, camY, camZ, W, H);
     }
 
     private void AddMarker(List<RenderQuad> quads,

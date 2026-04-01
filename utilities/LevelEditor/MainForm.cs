@@ -66,7 +66,47 @@ public class MainForm : Form
             WrapContents = false, AutoScroll = true,
         };
 
-        // Tool group label
+        // ── Ship Properties ─────────────────────────────
+        toolFlow.Controls.Add(MakeLabel("SHIP PROPERTIES"));
+
+        // Ship type
+        var shipTypeCombo = new ComboBox
+        {
+            Width = 200, DropDownStyle = ComboBoxStyle.DropDownList,
+            BackColor = Color.FromArgb(40, 40, 50), ForeColor = Color.White,
+        };
+        foreach (ShipType st in Enum.GetValues<ShipType>())
+            shipTypeCombo.Items.Add(st);
+        shipTypeCombo.SelectedIndex = 0;
+        shipTypeCombo.SelectedIndexChanged += (_, _) =>
+        {
+            if (shipTypeCombo.SelectedItem is ShipType st)
+            {
+                _level.ShipType = st;
+                _preview3D.ShipType = st;
+            }
+        };
+        toolFlow.Controls.Add(shipTypeCombo);
+
+        // Hub checkbox
+        var hubCheck = new CheckBox
+        {
+            Text = "Hub Ship", ForeColor = Color.White, AutoSize = true,
+            Margin = new Padding(2, 4, 2, 2),
+        };
+        hubCheck.CheckedChanged += (_, _) => _level.IsHub = hubCheck.Checked;
+        toolFlow.Controls.Add(hubCheck);
+
+        // Show exterior toggle
+        var extCheck = new CheckBox
+        {
+            Text = "Show Exterior", ForeColor = Color.White, AutoSize = true,
+            Margin = new Padding(2, 4, 2, 2),
+        };
+        extCheck.CheckedChanged += (_, _) => _preview3D.ShowExterior = extCheck.Checked;
+        toolFlow.Controls.Add(extCheck);
+
+        // ── Draw Tools ──────────────────────────────────
         toolFlow.Controls.Add(MakeLabel("DRAW TOOLS"));
         var toolButtons = new (string label, EditTool tool)[]
         {
@@ -155,6 +195,30 @@ public class MainForm : Form
         btnLoot.Click += (_, _) => { _grid.Tool = EditTool.Loot; UpdateStatus(); };
         toolFlow.Controls.Add(btnLoot);
 
+        // Officer placement
+        var btnOfficer = MakeButton("Place Officer", 200);
+        btnOfficer.Click += (_, _) => { _grid.Tool = EditTool.Officer; UpdateStatus(); };
+        toolFlow.Controls.Add(btnOfficer);
+
+        var rankCombo = new ComboBox
+        {
+            Width = 200, DropDownStyle = ComboBoxStyle.DropDownList,
+            BackColor = Color.FromArgb(40, 40, 50), ForeColor = Color.White,
+        };
+        foreach (OfficerRank r in Enum.GetValues<OfficerRank>())
+            rankCombo.Items.Add(r);
+        rankCombo.SelectedIndex = 0;
+        rankCombo.SelectedIndexChanged += (_, _) =>
+        {
+            if (rankCombo.SelectedItem is OfficerRank r) _grid.PlaceOfficerRank = r;
+        };
+        toolFlow.Controls.Add(rankCombo);
+
+        // NPC placement
+        var btnNpc = MakeButton("Place NPC", 200);
+        btnNpc.Click += (_, _) => { _grid.Tool = EditTool.Npc; UpdateStatus(); };
+        toolFlow.Controls.Add(btnNpc);
+
         toolFlow.Controls.Add(MakeLabel("PLACEMENT"));
 
         var btnSpawn = MakeButton("Set Spawn", 200);
@@ -200,6 +264,16 @@ public class MainForm : Form
         genMenu.DropDownItems.Add("Medium Ship 40x40 (3 floors)", null, (_, _) => GenerateShip(40));
         genMenu.DropDownItems.Add("Large Ship 80x80 (3 floors)", null, (_, _) => GenerateShip(80));
         menu.Items.Add(genMenu);
+
+        var viewMenu = new ToolStripMenuItem("View");
+        var extMenuItem = new ToolStripMenuItem("Show Exterior") { CheckOnClick = true };
+        extMenuItem.CheckedChanged += (_, _) =>
+        {
+            _preview3D.ShowExterior = extMenuItem.Checked;
+            extCheck.Checked = extMenuItem.Checked;
+        };
+        viewMenu.DropDownItems.Add(extMenuItem);
+        menu.Items.Add(viewMenu);
 
         MainMenuStrip = menu;
         Controls.Add(menu);
@@ -409,8 +483,8 @@ public class MainForm : Form
                 if (f.Map[y, x] == 0) openCells++;
         _statusLabel.Text = $"Tool: {_grid.Tool} | Floor {_currentFloor} | " +
                            $"Rooms: {f.Rooms.Count} | Enemies: {f.Enemies.Count} | " +
-                           $"Consoles: {f.Consoles.Count} | Loot: {f.Loot.Count} | " +
-                           $"Open cells: {openCells}";
+                           $"Officers: {f.Officers.Count} | NPCs: {f.Npcs.Count} | " +
+                           $"Open: {openCells}";
     }
 
     private static Button MakeButton(string text, int width) => new()

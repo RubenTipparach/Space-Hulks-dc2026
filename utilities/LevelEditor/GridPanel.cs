@@ -7,6 +7,7 @@ public class GridPanel : Panel
     public EnemyType PlaceEnemyType { get; set; } = EnemyType.Lurker;
     public RoomType PlaceRoomType { get; set; } = RoomType.Bridge;
     public RoomType PlaceConsoleType { get; set; } = RoomType.Bridge;
+    public OfficerRank PlaceOfficerRank { get; set; } = OfficerRank.Ensign;
     public int PlaceStairsDir { get; set; }
     public int RoomBrushW { get; set; } = 3;
     public int RoomBrushH { get; set; } = 3;
@@ -30,6 +31,7 @@ public class GridPanel : Panel
         [RoomType.Shields] = Color.FromArgb(50, 160, 140),
         [RoomType.Cargo] = Color.FromArgb(100, 140, 60),
         [RoomType.Barracks] = Color.FromArgb(140, 80, 80),
+        [RoomType.Teleporter] = Color.FromArgb(180, 100, 220),
     };
 
     public GridPanel()
@@ -189,9 +191,9 @@ public class GridPanel : Panel
         }
 
         // Enemies
-        foreach (var e in Floor.Enemies)
+        foreach (var en in Floor.Enemies)
         {
-            Color ec = e.EnemyType switch
+            Color ec = en.EnemyType switch
             {
                 EnemyType.Lurker => Color.FromArgb(100, 200, 100),
                 EnemyType.Brute => Color.FromArgb(200, 80, 60),
@@ -199,12 +201,20 @@ public class GridPanel : Panel
                 EnemyType.Hiveguard => Color.FromArgb(80, 120, 200),
                 _ => Color.Gray,
             };
-            DrawMarker(g, e.GX, e.GY, ec, e.EnemyType.ToString()[..1]);
+            DrawMarker(g, en.GX, en.GY, ec, en.EnemyType.ToString()[..1]);
         }
 
         // Loot
         foreach (var l in Floor.Loot)
             DrawMarker(g, l.GX, l.GY, Color.Gold, "$");
+
+        // Officers
+        foreach (var o in Floor.Officers)
+            DrawMarker(g, o.GX, o.GY, Color.White, "O");
+
+        // NPCs
+        foreach (var n in Floor.Npcs)
+            DrawMarker(g, n.GX, n.GY, Color.Cyan, "N");
     }
 
     private void DrawMarker(Graphics g, int gx, int gy, Color color, string label)
@@ -235,6 +245,8 @@ public class GridPanel : Panel
                 Floor.Enemies.RemoveAll(en => en.GX == gx && en.GY == gy);
                 Floor.Consoles.RemoveAll(c => c.GX == gx && c.GY == gy);
                 Floor.Loot.RemoveAll(l => l.GX == gx && l.GY == gy);
+                Floor.Officers.RemoveAll(o => o.GX == gx && o.GY == gy);
+                Floor.Npcs.RemoveAll(n => n.GX == gx && n.GY == gy);
                 _painting = true;
                 DataChanged?.Invoke();
                 Invalidate();
@@ -300,7 +312,6 @@ public class GridPanel : Panel
             case EditTool.Enemy:
                 if (Floor.Map[gy, gx] == (int)CellType.Open)
                 {
-                    // Remove existing enemy at cell
                     Floor.Enemies.RemoveAll(en => en.GX == gx && en.GY == gy);
                     Floor.Enemies.Add(new EntityData
                     {
@@ -317,6 +328,34 @@ public class GridPanel : Panel
                     Floor.Consoles.Add(new ConsoleData
                     {
                         GX = gx, GY = gy, RoomType = PlaceConsoleType
+                    });
+                }
+                break;
+
+            case EditTool.Officer:
+                if (Floor.Map[gy, gx] == (int)CellType.Open)
+                {
+                    Floor.Officers.RemoveAll(o => o.GX == gx && o.GY == gy);
+                    int oIdx = Floor.Officers.Count;
+                    Floor.Officers.Add(new OfficerData
+                    {
+                        GX = gx, GY = gy,
+                        Rank = PlaceOfficerRank,
+                        Name = $"{PlaceOfficerRank}".ToUpper() + $" OFFICER{oIdx:D2}",
+                    });
+                }
+                break;
+
+            case EditTool.Npc:
+                if (Floor.Map[gy, gx] == (int)CellType.Open)
+                {
+                    Floor.Npcs.RemoveAll(n => n.GX == gx && n.GY == gy);
+                    int nIdx = Floor.Npcs.Count;
+                    Floor.Npcs.Add(new NpcData
+                    {
+                        GX = gx, GY = gy,
+                        Name = $"NPC{nIdx:D2}",
+                        DialogId = nIdx,
                     });
                 }
                 break;
@@ -358,6 +397,8 @@ public class GridPanel : Panel
                 Floor.Enemies.RemoveAll(en => en.GX == gx && en.GY == gy);
                 Floor.Consoles.RemoveAll(c => c.GX == gx && c.GY == gy);
                 Floor.Loot.RemoveAll(l => l.GX == gx && l.GY == gy);
+                Floor.Officers.RemoveAll(o => o.GX == gx && o.GY == gy);
+                Floor.Npcs.RemoveAll(n => n.GX == gx && n.GY == gy);
                 if (Floor.HasUp && Floor.StairsGX == gx && Floor.StairsGY == gy)
                     Floor.HasUp = false;
                 if (Floor.HasDown && Floor.DownGX == gx && Floor.DownGY == gy)
@@ -413,6 +454,8 @@ public enum EditTool
     Room,
     Enemy,
     Console,
+    Officer,
+    Npc,
     Spawn,
     StairsUp,
     StairsDown,
