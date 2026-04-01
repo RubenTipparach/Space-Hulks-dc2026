@@ -16,6 +16,7 @@ static struct {
     float room_light_color[3];
     float room_light_brightness;
     float room_light_radius;
+    int   draw_distance;
 } hub_cfg;
 
 static void hub_load_config(void) {
@@ -35,12 +36,15 @@ static void hub_load_config(void) {
     hub_cfg.room_light_color[2] = rl_color[2];
     hub_cfg.room_light_brightness = sr_config_float(&cfg, "room_light.brightness", 1.5f);
     hub_cfg.room_light_radius     = sr_config_float(&cfg, "room_light.radius", 8.0f);
+    hub_cfg.draw_distance = (int)sr_config_float(&cfg, "draw_distance", 10.0f);
+    if (hub_cfg.draw_distance > DNG_RENDER_R) hub_cfg.draw_distance = DNG_RENDER_R;
+    if (hub_cfg.draw_distance < 1) hub_cfg.draw_distance = 1;
 
     sr_config_free(&cfg);
-    printf("[hub] Config loaded: ambient(%.2f) torch(%.2f) fog(%.2f/%.2f/%.1f) room_light(%.1f/%.1f)\n",
+    printf("[hub] Config loaded: ambient(%.2f) torch(%.2f) fog(%.2f/%.2f/%.1f) room_light(%.1f/%.1f) draw_dist(%d)\n",
            hub_cfg.ambient_brightness, hub_cfg.torch_brightness,
            hub_cfg.fog_base, hub_cfg.fog_boost, hub_cfg.fog_falloff,
-           hub_cfg.room_light_brightness, hub_cfg.room_light_radius);
+           hub_cfg.room_light_brightness, hub_cfg.room_light_radius, hub_cfg.draw_distance);
 }
 
 /* ── Hub room types ─────────────────────────────────────────────── */
@@ -321,7 +325,9 @@ static float hub_fog_vertex_intensity(float wx, float wy, float wz) {
     float dz = p->z - wz;
     float dist = sqrtf(dx*dx + dy*dy + dz*dz) / DNG_CELL_SIZE;
 
-    float base = hub_cfg.fog_base;
+    /* ambient + fog_base + fog_boost = max brightness (near player) */
+    /* ambient + fog_base             = min brightness (far away)   */
+    float base = hub_cfg.ambient_brightness + hub_cfg.fog_base;
     if (dist > hub_cfg.fog_near) {
         float fade = 1.0f - (dist - hub_cfg.fog_near) / hub_cfg.fog_falloff;
         if (fade < 0.0f) fade = 0.0f;
@@ -329,6 +335,30 @@ static float hub_fog_vertex_intensity(float wx, float wy, float wz) {
     } else {
         base += hub_cfg.fog_boost;
     }
+
+    /* Room ceiling light */
+    if (dng_cur_room_light >= 0) {
+        float rl_radius = hub_cfg.room_light_radius;
+        float ldx = dng_cur_rl_x - wx;
+        float ldy = dng_cur_rl_y - wy;
+        float ldz = dng_cur_rl_z - wz;
+        float ldist = sqrtf(ldx*ldx + ldy*ldy + ldz*ldz);
+
+        if (ldist < rl_radius) {
+            float la;
+            if (ldist <= 0.5f) {
+                la = 1.0f;
+            } else {
+                la = 1.0f - (ldist - 0.5f) / (rl_radius - 0.5f);
+                la *= la;
+            }
+
+            float rl_lum = hub_cfg.room_light_brightness *
+                (hub_cfg.room_light_color[0] + hub_cfg.room_light_color[1] + hub_cfg.room_light_color[2]) / 3.0f;
+            base += rl_lum * la;
+        }
+    }
+
     if (base > 1.0f) base = 1.0f;
     return base;
 }
@@ -1230,9 +1260,12 @@ static void hub_draw_scene(sr_framebuffer *fb_ptr) {
     dng_state.dungeon = d;
     dng_state.player = *p;
 
-    /* Use fog mode (mode 1) for hub — hub_mode flag makes it fully lit */
+    /* Use fog mode (mode 1) for hub with hub-specific fog function */
     int save_light_mode = dng_light_mode;
+    int save_render_radius = dng_render_radius;
     dng_light_mode = 1;
+    dng_fog_fn = hub_fog_vertex_intensity;
+    dng_render_radius = hub_cfg.draw_distance;
     dng_sprites_unlit = true;
     dng_wall_texture = ITEX_WALL_A;
     dng_skip_pillars = true;
@@ -1244,6 +1277,8 @@ static void hub_draw_scene(sr_framebuffer *fb_ptr) {
     dng_state.dungeon = save_dungeon;
     dng_state.player = save_player;
     dng_light_mode = save_light_mode;
+    dng_render_radius = save_render_radius;
+    dng_fog_fn = NULL;
     dng_sprites_unlit = false;
     dng_wall_texture = -1;
     dng_skip_pillars = false;
