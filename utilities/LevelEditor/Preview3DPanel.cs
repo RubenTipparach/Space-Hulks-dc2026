@@ -395,20 +395,28 @@ public class Preview3DPanel : Panel
             }
         }
 
-        // Roof cap (covers ALL cells — solid hull top)
-        float roofY = ExtWallH + 0.05f;
+        // Roof lip (just the edge strips, not a solid cap that hides interior)
+        float roofY = ExtWallH;
         float rx0 = -Off, rz0 = -Off;
         float rx1 = w * CellSize + Off, rz1 = h * CellSize + Off;
-        // Draw roof as one large quad
-        var roofPts = ProjectQuad(rx0, roofY, rz1, rx1, roofY, rz1, rx1, roofY, rz0, rx0, roofY, rz0,
-            camX, camY, camZ, W, H, out float roofD);
-        if (roofPts != null) quads.Add(new RenderQuad(roofPts, extCol, roofD, extWall, false, 0.85f));
+        float lip = CellSize; // 1-cell-wide roof edge strip
 
-        // Floor cap (underside)
-        float floorY = -0.1f;
-        var floorPts = ProjectQuad(rx0, floorY, rz0, rx1, floorY, rz0, rx1, floorY, rz1, rx0, floorY, rz1,
-            camX, camY, camZ, W, H, out float floorD);
-        if (floorPts != null) quads.Add(new RenderQuad(floorPts, Darken(extCol, 0.5f), floorD, extWall, false, 0.45f));
+        // North edge strip
+        var rnPts = ProjectQuad(rx0, roofY, rz0, rx1, roofY, rz0, rx1, roofY, rz0 + lip, rx0, roofY, rz0 + lip,
+            camX, camY, camZ, W, H, out float rnD);
+        if (rnPts != null) quads.Add(new RenderQuad(rnPts, extCol, rnD, extWall, false, 0.85f));
+        // South edge strip
+        var rsPts = ProjectQuad(rx0, roofY, rz1 - lip, rx1, roofY, rz1 - lip, rx1, roofY, rz1, rx0, roofY, rz1,
+            camX, camY, camZ, W, H, out float rsD);
+        if (rsPts != null) quads.Add(new RenderQuad(rsPts, extCol, rsD, extWall, false, 0.85f));
+        // West edge strip
+        var rwPts = ProjectQuad(rx0, roofY, rz0 + lip, rx0 + lip, roofY, rz0 + lip, rx0 + lip, roofY, rz1 - lip, rx0, roofY, rz1 - lip,
+            camX, camY, camZ, W, H, out float rwD);
+        if (rwPts != null) quads.Add(new RenderQuad(rwPts, extCol, rwD, extWall, false, 0.8f));
+        // East edge strip
+        var rePts = ProjectQuad(rx1 - lip, roofY, rz0 + lip, rx1, roofY, rz0 + lip, rx1, roofY, rz1 - lip, rx1 - lip, roofY, rz1 - lip,
+            camX, camY, camZ, W, H, out float reD);
+        if (rePts != null) quads.Add(new RenderQuad(rePts, extCol, reD, extWall, false, 0.8f));
     }
 
     private void AddEntityQuads(List<RenderQuad> quads,
