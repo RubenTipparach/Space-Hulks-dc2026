@@ -168,9 +168,8 @@ void main(){
 
         GL.ClearColor(0.07f, 0.07f, 0.11f, 1f);
         GL.Enable(EnableCap.DepthTest);
-        GL.Enable(EnableCap.CullFace);
-        GL.CullFace(CullFaceMode.Back);
-        GL.FrontFace(FrontFaceDirection.Cw); // interior walls are CW from inside
+        GL.DepthFunc(DepthFunction.Lequal); // allow coplanar exterior faces
+        GL.Disable(EnableCap.CullFace);
 
         _glReady = true;
         LoadGLTextures();
@@ -362,12 +361,22 @@ void main(){
         bool[,] inside = new bool[h + 2, w + 2];
         var queue = new Queue<(int, int)>();
 
-        // Seed from spawn
+        // Seed from spawn + all open cells (any reachable open cell is inside)
         int sx = Floor.SpawnGX, sy = Floor.SpawnGY;
-        if (sx >= 1 && sx <= w && sy >= 1 && sy <= h)
+        if (sx >= 1 && sx <= w && sy >= 1 && sy <= h && !IsWallLike(Floor.Map[sy, sx]))
         {
             inside[sy, sx] = true;
             queue.Enqueue((sy, sx));
+        }
+        // Also seed from all room centers as fallback
+        foreach (var room in Floor.Rooms)
+        {
+            int rcx = room.CenterX, rcy = room.CenterY;
+            if (rcx >= 1 && rcx <= w && rcy >= 1 && rcy <= h && !inside[rcy, rcx] && !IsWallLike(Floor.Map[rcy, rcx]))
+            {
+                inside[rcy, rcx] = true;
+                queue.Enqueue((rcy, rcx));
+            }
         }
 
         // Flood fill through open cells
