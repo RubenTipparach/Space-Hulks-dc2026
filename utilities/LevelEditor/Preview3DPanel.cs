@@ -526,8 +526,30 @@ void main(){
 
         // Pass 1: interior geometry
         DrawBatches(_batches);
-        // Pass 2: exterior geometry
+        // Pass 2: exterior geometry (filled)
         DrawBatches(_extBatches);
+        // Pass 3: exterior wireframe overlay
+        if (ShowExterior)
+        {
+            GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Line);
+            GL.Uniform1(_useTexLoc, 0); // no texture for wireframe
+            GL.LineWidth(1.5f);
+            // Re-draw exterior batches as lines with bright color
+            foreach (var (texId, data) in _extBatches)
+            {
+                if (data.Count == 0) continue;
+                // Rewrite vertex colors to white for wireframe
+                float[] arr = data.ToArray();
+                for (int i = 0; i < arr.Length; i += 9)
+                {
+                    arr[i + 5] = 0.7f; arr[i + 6] = 0.8f; arr[i + 7] = 1f; arr[i + 8] = 1f;
+                }
+                GL.BindBuffer(BufferTarget.ArrayBuffer, _vbo);
+                GL.BufferData(BufferTarget.ArrayBuffer, arr.Length * sizeof(float), arr, BufferUsageHint.StreamDraw);
+                GL.DrawArrays(PrimitiveType.Triangles, 0, arr.Length / 9);
+            }
+            GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Fill);
+        }
 
         GL.BindVertexArray(0);
         GL.UseProgram(0);
