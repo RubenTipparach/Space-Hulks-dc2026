@@ -32,7 +32,7 @@ enum {
     CARD_WELDER,     /* welder: 4 dmg melee, cost 1 */
     CARD_CHAINSAW,   /* chainsaw: 8 dmg melee, cost 2 */
     CARD_LASER,      /* laser: 4 dmg precision single, cost 1 */
-    CARD_DEFLECTOR,  /* deflector: +4 shield, reflect 1 dmg, cost 1 */
+    CARD_DEFLECTOR,  /* deflector: +4 shield, reflects enemy damage back, cost 1 */
     CARD_STUN_GUN,   /* stun gun: stun 1 enemy 1 turn, 1 dmg, cost 1 */
     CARD_MICROWAVE,  /* microwave: 5 dmg, if kill -> 3 dmg all, cost 2 */
     CARD_TYPE_COUNT
@@ -253,6 +253,7 @@ typedef struct {
 
     /* Elemental state */
     int fire_atk_bonus;  /* +1 per burning enemy, boosts player attack dmg */
+    bool player_deflect; /* true = deflector active, reflects damage back */
 
     /* Result */
     bool combat_over;
@@ -791,12 +792,8 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
 
         case CARD_DEFLECTOR:
             cs->player_shield += 4;
-            /* Reflect 1 damage to all alive enemies */
-            for (int i = 0; i < cs->enemy_count; i++) {
-                if (cs->enemies[i].alive)
-                    combat_deal_damage_enemy(cs, i, 1);
-            }
-            combat_set_message(cs, "DEFLECTOR +4 SHIELD, 1 REFLECT");
+            cs->player_deflect = true;
+            combat_set_message(cs, "DEFLECTOR +4 SHIELD, REFLECT ON");
             break;
 
         case CARD_STUN_GUN: {
@@ -981,6 +978,7 @@ static void combat_update(combat_state *cs) {
             cs->anim_timer--;
         } else {
             cs->player_shield = 0; /* shield expires at start of new turn */
+            cs->player_deflect = false; /* deflector expires with shield */
             cs->energy = cs->energy_max; /* refill energy each turn */
             combat_draw_hand(cs);
             cs->cursor = 0;
@@ -1021,10 +1019,19 @@ static void combat_update(combat_state *cs) {
             if (dmg < 1) dmg = 1;
             combat_log(cs, "%s attacks for %d",
                        enemy_templates[e->type].name, dmg);
-            combat_deal_damage_player(cs, dmg);
-            snprintf(buf, sizeof(buf), "%s ATTACKS -%dHP",
-                     enemy_templates[e->type].name, dmg);
-            combat_set_message(cs, buf);
+            if (cs->player_deflect) {
+                /* Deflector reflects all damage back to attacker */
+                combat_deal_damage_enemy(cs, cs->enemy_atk_idx, dmg);
+                combat_log(cs, "  deflector reflects %d back!", dmg);
+                snprintf(buf, sizeof(buf), "REFLECT %d -> %s",
+                         dmg, enemy_templates[e->type].name);
+                combat_set_message(cs, buf);
+            } else {
+                combat_deal_damage_player(cs, dmg);
+                snprintf(buf, sizeof(buf), "%s ATTACKS -%dHP",
+                         enemy_templates[e->type].name, dmg);
+                combat_set_message(cs, buf);
+            }
         }
 
         /* When this enemy's anim is done, move to next attacker */
@@ -1437,7 +1444,7 @@ static const char *card_effect_text(int card_type) {
         case CARD_WELDER:      return "4 DMG\nMELEE";
         case CARD_CHAINSAW:    return "8 DMG\nMELEE";
         case CARD_LASER:       return "4 DMG\nPRECISION";
-        case CARD_DEFLECTOR:   return "+4 SHIELD\n1 REFLECT";
+        case CARD_DEFLECTOR:   return "+4 SHIELD\nREFLECT DMG";
         case CARD_STUN_GUN:    return "STUN 1T\n1 DMG";
         case CARD_MICROWAVE:   return "5 DMG\n*3 DMG ALL";
         default:               return "";

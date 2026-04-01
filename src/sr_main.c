@@ -115,87 +115,212 @@ static void game_ship_size(int sector, int *out_w, int *out_h) {
 
 /* ── Save / Load ─────────────────────────────────────────────────── */
 
+#define SAVE_VERSION 2
+
+/*  Save header — fixed-size portion written first.
+ *  After the header, each generated dungeon floor (sr_dungeon) is
+ *  written sequentially.  On WASM the whole blob is persisted to
+ *  localStorage so it survives page reloads.                         */
 typedef struct {
     uint32_t magic;
-    int selected_class;
-    int current_floor;
-    int player_gx, player_gy, player_dir;
-    /* persistent player */
-    int hp, hp_max;
-    int persistent_deck_count;
-    int persistent_deck[COMBAT_DECK_MAX];
-    /* dungeon RNG seed */
+    uint32_t version;
+
+    /* Scene / progression */
+    int  app_state_saved;          /* STATE_RUNNING or STATE_COMBAT */
+    int  selected_class;
+    int  player_scrap_saved;
+    int  player_sector_saved;
+
+    /* Persistent player */
+    player_persist player;
+
+    /* Ship */
+    ship_state ship;
+
+    /* Dungeon meta */
+    int      current_floor;
     uint32_t seed_base;
-    /* combat state (if in combat) */
-    int in_combat;
-} save_data;
+    int      grid_w, grid_h;
+    int      max_floors;
+    bool     floor_generated[DNG_MAX_FLOORS];
 
-static void game_save(void) {
-    save_data sd;
-    memset(&sd, 0, sizeof(sd));
-    sd.magic = SAVE_MAGIC;
-    sd.selected_class = selected_class;
-    sd.current_floor = dng_state.current_floor;
-    sd.player_gx = dng_state.player.gx;
-    sd.player_gy = dng_state.player.gy;
-    sd.player_dir = dng_state.player.dir;
-    sd.hp = g_player.hp;
-    sd.hp_max = g_player.hp_max;
-    sd.persistent_deck_count = g_player.persistent_deck_count;
-    memcpy(sd.persistent_deck, g_player.persistent_deck,
-           sizeof(int) * g_player.persistent_deck_count);
-    sd.seed_base = dng_state.seed_base;
-    sd.in_combat = (app_state == STATE_COMBAT) ? 1 : 0;
+    /* Player position */
+    int player_gx, player_gy, player_dir;
 
-    FILE *f = fopen(SAVE_FILE, "wb");
-    if (f) {
-        fwrite(&sd, sizeof(sd), 1, f);
-        fclose(f);
-    }
+    /* Combat (only meaningful when app_state_saved == STATE_COMBAT) */
+    bool         in_combat;
+    combat_state combat_snap;
+    int          saved_combat_room;
+    bool         saved_console_combat;
+} save_header;
+
+/* ── WASM persistence helpers ────────────────────────────────────── */
+
+#if defined(__EMSCRIPTEN__)
+
+/* Copy virtual-FS save file → localStorage (base-64) */
+static void save_persist_wasm(void) {
+    EM_ASM({
+        try {
+            var bytes = FS.readFile('/spacehulks.sav');
+            var binary = '';
+            var chunk = 8192;
+            for (var i = 0; i < bytes.length; i += chunk) {
+                var end = Math.min(i + chunk, bytes.length);
+                for (var j = i; j < end; j++)
+                    binary += String.fromCharCode(bytes[j]);
+            }
+            localStorage.setItem('spacehulks_save', btoa(binary));
+        } catch(e) { console.warn('save_persist_wasm:', e); }
+    });
 }
 
-static bool game_load(void) {
-    FILE *f = fopen(SAVE_FILE, "rb");
-    if (!f) return false;
-    save_data sd;
-    if (fread(&sd, sizeof(sd), 1, f) != 1 || sd.magic != SAVE_MAGIC) {
-        fclose(f); return false;
+/* Copy localStorage → virtual-FS save file (called once at startup) */
+static void save_restore_wasm(void) {
+    EM_ASM({
+        try {
+            var b64 = localStorage.getItem('spacehulks_save');
+            if (!b64) return;
+            var binary = atob(b64);
+            var bytes = new Uint8Array(binary.length);
+            for (var i = 0; i < binary.length; i++)
+                bytes[i] = binary.charCodeAt(i);
+            FS.writeFile('/spacehulks.sav', bytes);
+        } catch(e) { console.warn('save_restore_wasm:', e); }
+    });
+}
+#endif /* __EMSCRIPTEN__ */
+
+/* ── Save ────────────────────────────────────────────────────────── */
+
+static void game_save(void) {
+    /* Only save while exploring or fighting */
+    if (app_state != STATE_RUNNING && app_state != STATE_COMBAT) return;
+
+    save_header hdr;
+    memset(&hdr, 0, sizeof(hdr));
+    hdr.magic   = SAVE_MAGIC;
+    hdr.version = SAVE_VERSION;
+
+    hdr.app_state_saved     = app_state;
+    hdr.selected_class      = selected_class;
+    hdr.player_scrap_saved  = player_scrap;
+    hdr.player_sector_saved = player_sector;
+
+    hdr.player = g_player;
+    hdr.ship   = current_ship;
+
+    hdr.current_floor = dng_state.current_floor;
+    hdr.seed_base     = dng_state.seed_base;
+    hdr.grid_w        = dng_state.grid_w;
+    hdr.grid_h        = dng_state.grid_h;
+    hdr.max_floors    = dng_state.max_floors;
+    memcpy(hdr.floor_generated, dng_state.floor_generated,
+           sizeof(hdr.floor_generated));
+
+    hdr.player_gx  = dng_state.player.gx;
+    hdr.player_gy  = dng_state.player.gy;
+    hdr.player_dir = dng_state.player.dir;
+
+    hdr.in_combat             = (app_state == STATE_COMBAT);
+    hdr.combat_snap           = combat;
+    hdr.saved_combat_room     = current_combat_room;
+    hdr.saved_console_combat  = console_combat;
+
+    FILE *f = fopen(SAVE_FILE, "wb");
+    if (!f) return;
+    fwrite(&hdr, sizeof(hdr), 1, f);
+
+    /* Write each generated floor */
+    for (int i = 0; i < DNG_MAX_FLOORS; i++) {
+        if (dng_state.floor_generated[i])
+            fwrite(&dng_state.floors[i], sizeof(sr_dungeon), 1, f);
     }
     fclose(f);
 
-    selected_class = sd.selected_class;
-    player_persist_init(selected_class);
-    g_player.hp = sd.hp;
-    g_player.hp_max = sd.hp_max;
-    g_player.persistent_deck_count = sd.persistent_deck_count;
-    memcpy(g_player.persistent_deck, sd.persistent_deck,
-           sizeof(int) * sd.persistent_deck_count);
+#if defined(__EMSCRIPTEN__)
+    save_persist_wasm();
+#endif
+}
 
-    /* Regenerate dungeon with same seeds */
-    memset(&dng_state, 0, sizeof(dng_state));
-    dng_state.seed_base = sd.seed_base;
-    game_ship_size(player_sector, &dng_state.grid_w, &dng_state.grid_h);
-    for (int fl = 0; fl <= sd.current_floor; fl++) {
-        bool is_last = (fl >= current_ship.num_decks - 1);
-        dng_generate(&dng_state.floors[fl], dng_state.grid_w, dng_state.grid_h,
-                     fl > 0, !is_last,
-                     dng_state.seed_base + (uint32_t)fl * 777, fl);
-        dng_state.floor_generated[fl] = true;
+/* ── Load ────────────────────────────────────────────────────────── */
+
+static bool game_load(void) {
+#if defined(__EMSCRIPTEN__)
+    save_restore_wasm();
+#endif
+
+    FILE *f = fopen(SAVE_FILE, "rb");
+    if (!f) return false;
+
+    save_header hdr;
+    if (fread(&hdr, sizeof(hdr), 1, f) != 1 ||
+        hdr.magic != SAVE_MAGIC || hdr.version != SAVE_VERSION) {
+        fclose(f); return false;
     }
-    dng_state.current_floor = sd.current_floor;
-    dng_state.dungeon = &dng_state.floors[sd.current_floor];
-    dng_player_init(&dng_state.player, sd.player_gx, sd.player_gy, sd.player_dir);
+
+    /* Restore dungeon floors */
+    memset(&dng_state, 0, sizeof(dng_state));
+    memcpy(dng_state.floor_generated, hdr.floor_generated,
+           sizeof(dng_state.floor_generated));
+    for (int i = 0; i < DNG_MAX_FLOORS; i++) {
+        if (dng_state.floor_generated[i]) {
+            if (fread(&dng_state.floors[i], sizeof(sr_dungeon), 1, f) != 1) {
+                fclose(f); return false;
+            }
+        }
+    }
+    fclose(f);
+
+    /* Restore progression */
+    selected_class = hdr.selected_class;
+    player_scrap   = hdr.player_scrap_saved;
+    player_sector  = hdr.player_sector_saved;
+
+    /* Restore player */
+    g_player = hdr.player;
+
+    /* Restore ship */
+    current_ship = hdr.ship;
+
+    /* Restore dungeon meta */
+    dng_state.current_floor = hdr.current_floor;
+    dng_state.seed_base     = hdr.seed_base;
+    dng_state.grid_w        = hdr.grid_w;
+    dng_state.grid_h        = hdr.grid_h;
+    dng_state.max_floors    = hdr.max_floors;
+    dng_state.dungeon       = &dng_state.floors[hdr.current_floor];
+
+    /* Restore player position */
+    dng_player_init(&dng_state.player,
+                    hdr.player_gx, hdr.player_gy, hdr.player_dir);
     dng_initialized = true;
-    game_init_ship();
+
+    /* Restore combat if saved mid-fight */
+    if (hdr.in_combat) {
+        combat              = hdr.combat_snap;
+        current_combat_room = hdr.saved_combat_room;
+        console_combat      = hdr.saved_console_combat;
+        app_state = STATE_COMBAT;
+    } else {
+        current_combat_room = -1;
+        console_combat      = false;
+        app_state = STATE_RUNNING;
+    }
 
     return true;
 }
 
 static bool game_has_save(void) {
+#if defined(__EMSCRIPTEN__)
+    save_restore_wasm();
+#endif
     FILE *f = fopen(SAVE_FILE, "rb");
     if (!f) return false;
-    uint32_t magic = 0;
-    bool ok = (fread(&magic, 4, 1, f) == 1 && magic == SAVE_MAGIC);
+    save_header hdr;
+    memset(&hdr, 0, sizeof(hdr));
+    bool ok = (fread(&hdr, sizeof(hdr), 1, f) == 1 &&
+               hdr.magic == SAVE_MAGIC && hdr.version == SAVE_VERSION);
     fclose(f);
     return ok;
 }
@@ -973,6 +1098,16 @@ static void frame(void) {
         draw_class_select(&fb);
     } else if (app_state == STATE_COMBAT) {
         combat_update(&combat);
+        /* Auto-save at the start of each player turn */
+        {
+            static int last_saved_turn = -1;
+            if (combat.phase == CPHASE_PLAYER_TURN &&
+                combat.turn != last_saved_turn) {
+                last_saved_turn = combat.turn;
+                game_save();
+            }
+            if (combat.combat_over) last_saved_turn = -1;
+        }
         draw_combat_scene(&fb);
     } else if (app_state == STATE_SHIP_HUB) {
         dng_player_update(&g_hub.player);
@@ -1292,7 +1427,7 @@ static void handle_screen_tap(float sx, float sy) {
             if (game_load()) {
                 last_player_gx = dng_state.player.gx;
                 last_player_gy = dng_state.player.gy;
-                app_state = STATE_RUNNING;
+                /* app_state restored by game_load() */
             }
             return;
         }
@@ -1574,7 +1709,7 @@ static void event(const sapp_event *ev) {
                 } else if (save_exists && game_load()) {
                     last_player_gx = dng_state.player.gx;
                     last_player_gy = dng_state.player.gy;
-                    app_state = STATE_RUNNING;
+                    /* app_state restored by game_load() */
                 }
                 break;
             default: break;
