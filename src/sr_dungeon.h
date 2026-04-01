@@ -22,7 +22,8 @@
 #define DNG_GRID_H       80
 #define DNG_CELL_SIZE    2.0f
 #define DNG_HALF_CELL    1.0f   /* DNG_CELL_SIZE / 2 */
-#define DNG_RENDER_R     10     /* max grid cells rendered from player */
+#define DNG_RENDER_R     20     /* max grid cells rendered from player (compile-time max) */
+static int  dng_render_radius = 10;   /* runtime draw distance in cells (max DNG_RENDER_R) */
 #define DNG_NUM_RAYS     120    /* DDA visibility rays */
 #define DNG_MAX_FLOORS   16
 #define DNG_NUM_STEPS    10     /* stair step count */
@@ -475,7 +476,7 @@ static void dng_build_visibility(const dng_player *p, const sr_dungeon *d) {
             /* Distance check (Manhattan would miss corners, use Chebyshev) */
             int ddx = nx - pgx; if (ddx < 0) ddx = -ddx;
             int ddz = nz - pgz; if (ddz < 0) ddz = -ddz;
-            if (ddx > DNG_RENDER_R || ddz > DNG_RENDER_R) continue;
+            if (ddx > dng_render_radius || ddz > dng_render_radius) continue;
 
             if (d->map[nz][nx] == 1) {
                 /* Wall cell — mark visible (for face rendering) but don't spread through */

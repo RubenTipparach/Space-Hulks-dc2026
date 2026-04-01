@@ -58,11 +58,15 @@ static void dng_load_config(void) {
     dng_cfg.room_light_brightness = sr_config_float(&cfg, "room_light.brightness", 1.2f);
     dng_cfg.room_light_radius     = sr_config_float(&cfg, "room_light.radius", 5.0f);
 
+    dng_render_radius = (int)sr_config_float(&cfg, "draw_distance", 10.0f);
+    if (dng_render_radius > DNG_RENDER_R) dng_render_radius = DNG_RENDER_R;
+    if (dng_render_radius < 1) dng_render_radius = 1;
+
     sr_config_free(&cfg);
-    printf("[dungeon] Config loaded: torch(%.1f/%.1f/%.1f) ambient(%.2f) fog(%d levels) room_light(%.1f/%.1f)\n",
+    printf("[dungeon] Config loaded: torch(%.1f/%.1f/%.1f) ambient(%.2f) fog(%d levels) room_light(%.1f/%.1f) draw_dist(%d)\n",
            dng_cfg.light_brightness, dng_cfg.light_min_range, dng_cfg.light_attn_dist,
            dng_cfg.ambient_brightness, dng_cfg.fog_levels,
-           dng_cfg.room_light_brightness, dng_cfg.room_light_radius);
+           dng_cfg.room_light_brightness, dng_cfg.room_light_radius, dng_render_radius);
 }
 
 /* ── Game state ──────────────────────────────────────────────────── */
@@ -82,6 +86,7 @@ static bool dng_expanded_map = false;
 static bool dng_sprites_unlit = false;  /* true = sprites skip fog tint */
 static int  dng_wall_texture = -1;     /* -1 = default ITEX_BRICK, else override */
 static bool dng_skip_pillars = false;  /* true = don't draw corner pillars */
+static float (*dng_fog_fn)(float, float, float) = NULL; /* override for fog vertex intensity */
 
 /* ── Per-cell room light (set before drawing each cell) ─────────── */
 
@@ -220,6 +225,10 @@ static float dng_fog_vertex_intensity(float wx, float wy, float wz) {
     return base;
 }
 
+static inline float dng_get_fog_intensity(float wx, float wy, float wz) {
+    return dng_fog_fn ? dng_fog_fn(wx, wy, wz) : dng_fog_vertex_intensity(wx, wy, wz);
+}
+
 /* ── Wall / floor drawing ────────────────────────────────────────── */
 
 static void dng_draw_wall(sr_framebuffer *fb_ptr, const sr_mat4 *mvp,
@@ -244,10 +253,10 @@ static void dng_draw_wall(sr_framebuffer *fb_ptr, const sr_mat4 *mvp,
             sr_vert_world(dx,dy,dz, 0,v_scale, 0xFFFFFFFF, dx,dy,dz, nx,ny,nz),
             tex, mvp);
     } else {
-        uint32_t ca = pal_intensity_color(dng_fog_vertex_intensity(ax,ay,az));
-        uint32_t cb = pal_intensity_color(dng_fog_vertex_intensity(bx,by,bz));
-        uint32_t cc = pal_intensity_color(dng_fog_vertex_intensity(cx,cy,cz));
-        uint32_t cd = pal_intensity_color(dng_fog_vertex_intensity(dx,dy,dz));
+        uint32_t ca = pal_intensity_color(dng_get_fog_intensity(ax,ay,az));
+        uint32_t cb = pal_intensity_color(dng_get_fog_intensity(bx,by,bz));
+        uint32_t cc = pal_intensity_color(dng_get_fog_intensity(cx,cy,cz));
+        uint32_t cd = pal_intensity_color(dng_get_fog_intensity(dx,dy,dz));
         sr_draw_quad_indexed(fb_ptr,
             sr_vert_c(ax,ay,az, 0,0, ca),
             sr_vert_c(bx,by,bz, u_scale,0, cb),
@@ -284,10 +293,10 @@ static void dng_draw_hquad(sr_framebuffer *fb_ptr, const sr_mat4 *mvp,
             sr_vert_world(dx,dy,dz, u0,v1, 0xFFFFFFFF, dx,dy,dz, nx,ny,nz),
             tex, mvp);
     } else {
-        uint32_t ca = pal_intensity_color(dng_fog_vertex_intensity(ax,ay,az));
-        uint32_t cb = pal_intensity_color(dng_fog_vertex_intensity(bx,by,bz));
-        uint32_t cc = pal_intensity_color(dng_fog_vertex_intensity(cx,cy,cz));
-        uint32_t cd = pal_intensity_color(dng_fog_vertex_intensity(dx,dy,dz));
+        uint32_t ca = pal_intensity_color(dng_get_fog_intensity(ax,ay,az));
+        uint32_t cb = pal_intensity_color(dng_get_fog_intensity(bx,by,bz));
+        uint32_t cc = pal_intensity_color(dng_get_fog_intensity(cx,cy,cz));
+        uint32_t cd = pal_intensity_color(dng_get_fog_intensity(dx,dy,dz));
         sr_draw_quad_indexed(fb_ptr,
             sr_vert_c(ax,ay,az, u0,v0, ca),
             sr_vert_c(bx,by,bz, u1,v0, cb),
@@ -332,10 +341,10 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
     float P = DNG_PILLAR_PAD;
 
     int pgx = p->gx, pgy = p->gy;
-    int gx0 = pgx - DNG_RENDER_R; if (gx0 < 1) gx0 = 1;
-    int gx1 = pgx + DNG_RENDER_R; if (gx1 > d->w) gx1 = d->w;
-    int gy0 = pgy - DNG_RENDER_R; if (gy0 < 1) gy0 = 1;
-    int gy1 = pgy + DNG_RENDER_R; if (gy1 > d->h) gy1 = d->h;
+    int gx0 = pgx - dng_render_radius; if (gx0 < 1) gx0 = 1;
+    int gx1 = pgx + dng_render_radius; if (gx1 > d->w) gx1 = d->w;
+    int gy0 = pgy - dng_render_radius; if (gy0 < 1) gy0 = 1;
+    int gy1 = pgy + dng_render_radius; if (gy1 > d->h) gy1 = d->h;
 
     const sr_indexed_texture *wall_tex = (dng_wall_texture >= 0)
         ? &itextures[dng_wall_texture] : &itextures[ITEX_BRICK];
@@ -627,7 +636,7 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
                 if (dng_sprites_unlit) {
                     tint = 0xFFFFFFFF;
                 } else {
-                    float fog_i = dng_fog_vertex_intensity(cx, 0, cz);
+                    float fog_i = dng_get_fog_intensity(cx, 0, cz);
                     tint = pal_intensity_color(fog_i);
                 }
 
@@ -670,7 +679,7 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
                 if (dng_sprites_unlit) {
                     tint = 0xFFFFFFFF;
                 } else {
-                    float fog_i = dng_fog_vertex_intensity(ccx, 0, ccz);
+                    float fog_i = dng_get_fog_intensity(ccx, 0, ccz);
                     tint = pal_intensity_color(fog_i);
                 }
 
