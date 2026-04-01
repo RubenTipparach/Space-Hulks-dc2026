@@ -356,7 +356,7 @@ void main(){
         int roofTex = Tex("roof");
         Color ec = alien ? Color.FromArgb(120, 60, 80) : Color.FromArgb(60, 80, 130);
         Color es = Darken(ec, 0.7f);
-        const float Off = 0.15f, ExtH = WallH + 0.6f;
+        const float ExtH = WallH + 0.6f;
 
         // Flood-fill from grid edges to find "outside" cells.
         // Walls block the flood — everything not reached is "inside" the ship.
@@ -395,18 +395,19 @@ void main(){
                 float x0 = (gx - 1) * Cell, x1 = gx * Cell;
                 float z0 = (gy - 1) * Cell, z1 = gy * Cell;
 
-                // Exterior wall faces at boundaries with outside
+                // Exterior wall faces flush with grid at boundaries with outside
                 if (outside[gy - 1, gx])
-                    WallQuad(ft, x1, 0, z0 - Off, x0, 0, z0 - Off, x0, ExtH, z0 - Off, x1, ExtH, z0 - Off, es);
+                    WallQuad(ft, x1, 0, z0, x0, 0, z0, x0, ExtH, z0, x1, ExtH, z0, es);
                 if (outside[gy + 1, gx])
-                    WallQuad(ft, x0, 0, z1 + Off, x1, 0, z1 + Off, x1, ExtH, z1 + Off, x0, ExtH, z1 + Off, es);
+                    WallQuad(ft, x0, 0, z1, x1, 0, z1, x1, ExtH, z1, x0, ExtH, z1, es);
                 if (outside[gy, gx - 1])
-                    WallQuad(ft, x0 - Off, 0, z0, x0 - Off, 0, z1, x0 - Off, ExtH, z1, x0 - Off, ExtH, z0, ec);
+                    WallQuad(ft, x0, 0, z0, x0, 0, z1, x0, ExtH, z1, x0, ExtH, z0, ec);
                 if (outside[gy, gx + 1])
-                    WallQuad(ft, x1 + Off, 0, z1, x1 + Off, 0, z0, x1 + Off, ExtH, z0, x1 + Off, ExtH, z1, ec);
+                    WallQuad(ft, x1, 0, z1, x1, 0, z0, x1, ExtH, z0, x1, ExtH, z1, ec);
 
-                // Roof cap over every inside cell (solid hull top)
-                FlatQuad(roofTex, x0, ExtH, z0, x1, z1, Darken(ec, 0.85f));
+                // Roof only over wall cells (not corridors/rooms — those stay visible)
+                if (IsWallLike(Floor.Map[gy, gx]))
+                    FlatQuad(roofTex, x0, ExtH, z0, x1, z1, Darken(ec, 0.85f));
             }
         }
     }
