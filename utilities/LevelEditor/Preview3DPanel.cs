@@ -356,7 +356,7 @@ void main(){
         int roofTex = Tex("roof");
         Color ec = alien ? Color.FromArgb(120, 60, 80) : Color.FromArgb(60, 80, 130);
         Color es = Darken(ec, 0.7f);
-        const float ExtH = WallH + 0.6f;
+        const float ExtH = WallH;
 
         // Flood-fill from grid edges to find "outside" cells.
         // Walls block the flood — everything not reached is "inside" the ship.
