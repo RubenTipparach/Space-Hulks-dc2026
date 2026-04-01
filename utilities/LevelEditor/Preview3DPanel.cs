@@ -313,9 +313,6 @@ void main(){
 
                     int sideTex = isWin ? winTex : wallTex;
 
-                    // Top face
-                    FlatQuad(wallTex, x0, WallH, z0, x1, z1, wc);
-
                     // Side faces (only if adjacent is open)
                     Color sc1 = Darken(wc, 0.6f), sc2 = Darken(wc, 0.75f);
 
