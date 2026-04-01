@@ -169,9 +169,9 @@ void main(){
 
         GL.ClearColor(0.07f, 0.07f, 0.11f, 1f);
         GL.Enable(EnableCap.DepthTest);
-        GL.DepthFunc(DepthFunction.Less);
-        GL.Disable(EnableCap.CullFace);
-        GL.Enable(EnableCap.PolygonOffsetFill);
+        GL.Enable(EnableCap.CullFace);
+        GL.CullFace(CullFaceMode.Back);
+        GL.FrontFace(FrontFaceDirection.Ccw);
 
         _glReady = true;
     }
@@ -270,12 +270,13 @@ void main(){
             b = new List<float>(4096);
             dict[tex] = b;
         }
+        // CCW winding for GL front face
         Vert(b, x0, y0, z0, u0, v0, col);
+        Vert(b, x2, y2, z2, u2, v2, col);
         Vert(b, x1, y1, z1, u1, v1, col);
-        Vert(b, x2, y2, z2, u2, v2, col);
         Vert(b, x0, y0, z0, u0, v0, col);
-        Vert(b, x2, y2, z2, u2, v2, col);
         Vert(b, x3, y3, z3, u3, v3, col);
+        Vert(b, x2, y2, z2, u2, v2, col);
     }
 
     // Emit a wall-side quad (vertical face) with proper UVs
@@ -521,11 +522,9 @@ void main(){
         GL.UniformMatrix4(_mvpLoc, false, ref mvp);
         GL.BindVertexArray(_vao);
 
-        // Pass 1: interior geometry (pushed back slightly in depth)
-        GL.PolygonOffset(1f, 1f);
+        // Pass 1: interior geometry
         DrawBatches(_batches);
-        // Pass 2: exterior geometry (at true depth, wins over interior)
-        GL.PolygonOffset(0f, 0f);
+        // Pass 2: exterior geometry
         DrawBatches(_extBatches);
 
         GL.BindVertexArray(0);
