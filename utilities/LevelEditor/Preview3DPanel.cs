@@ -297,6 +297,109 @@ void main(){
                   x1, y, z1, 1, 1, x0, y, z1, 0, 1, col);
     }
 
+    // Compute hull inside mask (shared by interior + exterior)
+    private bool[,]? _hullInside;
+
+    private void ComputeHullMask(int w, int h)
+    {
+        _hullInside = new bool[h + 2, w + 2];
+        if (Floor == null) return;
+        var queue = new Queue<(int, int)>();
+
+        int sx = Floor.SpawnGX, sy = Floor.SpawnGY;
+        if (sx >= 1 && sx <= w && sy >= 1 && sy <= h && !IsWallLike(Floor.Map[sy, sx]))
+        {
+            _hullInside[sy, sx] = true;
+            queue.Enqueue((sy, sx));
+        }
+        foreach (var room in Floor.Rooms)
+        {
+            int rcx = room.CenterX, rcy = room.CenterY;
+            if (rcx >= 1 && rcx <= w && rcy >= 1 && rcy <= h && !_hullInside[rcy, rcx] && !IsWallLike(Floor.Map[rcy, rcx]))
+            {
+                _hullInside[rcy, rcx] = true;
+                queue.Enqueue((rcy, rcx));
+            }
+        }
+
+        while (queue.Count > 0)
+        {
+            var (cy, cx) = queue.Dequeue();
+            int[] dy = { -1, 1, 0, 0 }, dx = { 0, 0, -1, 1 };
+            for (int d = 0; d < 4; d++)
+            {
+                int ny = cy + dy[d], nx = cx + dx[d];
+                if (ny < 1 || ny > h || nx < 1 || nx > w) continue;
+                if (_hullInside[ny, nx]) continue;
+                if (IsWallLike(Floor.Map[ny, nx])) continue;
+                _hullInside[ny, nx] = true;
+                queue.Enqueue((ny, nx));
+            }
+        }
+
+        // Expand walls iteratively until stable (fills wall gaps between rooms)
+        bool changed = true;
+        while (changed)
+        {
+            changed = false;
+            var toExpand = new List<(int y, int x)>();
+            for (int gy = 1; gy <= h; gy++)
+                for (int gx = 1; gx <= w; gx++)
+                    if (IsWallLike(Floor.Map[gy, gx]) && !_hullInside[gy, gx])
+                        if ((gy > 1 && _hullInside[gy - 1, gx]) || (gy < h && _hullInside[gy + 1, gx]) ||
+                            (gx > 1 && _hullInside[gy, gx - 1]) || (gx < w && _hullInside[gy, gx + 1]))
+                            toExpand.Add((gy, gx));
+            foreach (var (ey, ex) in toExpand)
+            {
+                _hullInside[ey, ex] = true;
+                changed = true;
+            }
+        }
+
+        // Extend room sides
+        foreach (var room in Floor.Rooms)
+        {
+            int rx = room.X, ry = room.Y, rw = room.Width, rh = room.Height;
+            // North wall: inward = +1 (toward room which is south of the wall)
+            ExtendRoomSide(_hullInside, w, h, ry - 1, rx, rx + rw - 1, true, -1);
+            // South wall: inward = -1 (toward room)
+            ExtendRoomSide(_hullInside, w, h, ry + rh, rx, rx + rw - 1, true, +1);
+            // West wall: inward = +1
+            ExtendRoomSide(_hullInside, w, h, rx - 1, ry, ry + rh - 1, false, -1);
+            // East wall: inward = -1
+            ExtendRoomSide(_hullInside, w, h, rx + rw, ry, ry + rh - 1, false, +1);
+        }
+    }
+
+    private void ExtendRoomSide(bool[,] inside, int w, int h, int line, int from, int to, bool horizontal, int inwardDir)
+    {
+        // Only extend if the side faces inward (toward other inside cells)
+        // inwardDir: +1 or -1, the direction from the wall toward the ship interior
+        if (Floor == null) return;
+        bool any = false;
+        for (int i = from; i <= to; i++)
+        {
+            int gy = horizontal ? line : i, gx = horizontal ? i : line;
+            if (gy >= 1 && gy <= h && gx >= 1 && gx <= w && inside[gy, gx]) { any = true; break; }
+        }
+        if (!any) return;
+        // Check that this side faces interior (the opposite side of the wall from the room)
+        // by checking if cells on the inward side are inside
+        bool facesInward = false;
+        for (int i = from; i <= to; i++)
+        {
+            int gy = horizontal ? line + inwardDir : i, gx = horizontal ? i : line + inwardDir;
+            if (gy >= 1 && gy <= h && gx >= 1 && gx <= w && inside[gy, gx]) { facesInward = true; break; }
+        }
+        if (!facesInward) return;
+        for (int i = from; i <= to; i++)
+        {
+            int gy = horizontal ? line : i, gx = horizontal ? i : line;
+            if (gy >= 1 && gy <= h && gx >= 1 && gx <= w && IsWallLike(Floor.Map[gy, gx]))
+                inside[gy, gx] = true;
+        }
+    }
+
     private void BuildGeometry()
     {
         foreach (var b in _batches.Values) b.Clear();
@@ -309,6 +412,12 @@ void main(){
         int wallTex = alien ? Tex("bricks") : Tex("wall_a");
         int winTex = alien ? Tex("bricks") : Tex("wall_a_win");
         int floorTex = alien ? Tex("stone") : Tex("floor");
+
+        // Compute hull mask first (used by both interior + exterior)
+        if (ShowExterior)
+            ComputeHullMask(w, h);
+        else
+            _hullInside = null;
 
         for (int gy = 1; gy <= h; gy++)
         {
@@ -327,18 +436,28 @@ void main(){
                         wc = Lerp(wc, RoomColors[room.Type], 0.3f);
 
                     int sideTex = isWin ? winTex : wallTex;
-
-                    // Side faces (only if adjacent is open)
                     Color sc1 = Darken(wc, 0.6f), sc2 = Darken(wc, 0.75f);
 
-                    if (gy > 1 && !IsWallLike(Floor.Map[gy - 1, gx]))
-                        WallQuad(sideTex, x0, 0, z0, x1, 0, z0, x1, WallH, z0, x0, WallH, z0, sc1);
-                    if (gy < h && !IsWallLike(Floor.Map[gy + 1, gx]))
-                        WallQuad(sideTex, x1, 0, z1, x0, 0, z1, x0, WallH, z1, x1, WallH, z1, sc1);
-                    if (gx > 1 && !IsWallLike(Floor.Map[gy, gx - 1]))
-                        WallQuad(sideTex, x0, 0, z1, x0, 0, z0, x0, WallH, z0, x0, WallH, z1, sc2);
-                    if (gx < w && !IsWallLike(Floor.Map[gy, gx + 1]))
-                        WallQuad(sideTex, x1, 0, z0, x1, 0, z1, x1, WallH, z1, x1, WallH, z0, sc2);
+                    // Interior side faces: only if adjacent is open AND adjacent is inside hull
+                    // (skip faces that face outside the hull — exterior handles those)
+                    bool n = gy > 1 && !IsWallLike(Floor.Map[gy - 1, gx]);
+                    bool s = gy < h && !IsWallLike(Floor.Map[gy + 1, gx]);
+                    bool we = gx > 1 && !IsWallLike(Floor.Map[gy, gx - 1]);
+                    bool e = gx < w && !IsWallLike(Floor.Map[gy, gx + 1]);
+
+                    // If hull mask exists, also require neighbor to be inside hull
+                    if (_hullInside != null)
+                    {
+                        n = n && _hullInside[gy - 1, gx];
+                        s = s && _hullInside[gy + 1, gx];
+                        we = we && _hullInside[gy, gx - 1];
+                        e = e && _hullInside[gy, gx + 1];
+                    }
+
+                    if (n) WallQuad(sideTex, x0, 0, z0, x1, 0, z0, x1, WallH, z0, x0, WallH, z0, sc1);
+                    if (s) WallQuad(sideTex, x1, 0, z1, x0, 0, z1, x0, WallH, z1, x1, WallH, z1, sc1);
+                    if (we) WallQuad(sideTex, x0, 0, z1, x0, 0, z0, x0, WallH, z0, x0, WallH, z1, sc2);
+                    if (e) WallQuad(sideTex, x1, 0, z0, x1, 0, z1, x1, WallH, z1, x1, WallH, z0, sc2);
                 }
                 else
                 {
@@ -352,11 +471,11 @@ void main(){
             }
         }
 
-        // Exterior (rendered in second pass so it draws on top)
-        if (ShowExterior)
+        // Exterior (rendered in second pass)
+        if (ShowExterior && _hullInside != null)
         {
             _emitToExt = true;
-            BuildExterior(w, h, alien);
+            BuildExteriorFromMask(w, h, alien);
             _emitToExt = false;
         }
 
@@ -364,140 +483,36 @@ void main(){
         BuildEntities();
     }
 
-    private void BuildExterior(int w, int h, bool alien)
+    private void BuildExteriorFromMask(int w, int h, bool alien)
     {
-        if (Floor == null) return;
+        if (Floor == null || _hullInside == null) return;
         int extW = alien ? Tex("alien_ext") : Tex("ext_wall");
         int extWin = alien ? Tex("alien_ext_win") : Tex("ext_win");
-        // Fallback if exterior textures didn't load
         if (extW == 0) extW = Tex("wall_a");
         if (extWin == 0) extWin = Tex("wall_a_win");
         Color ec = alien ? Color.FromArgb(120, 60, 80) : Color.FromArgb(255, 255, 255);
-        Color es = Darken(ec, 0.85f);
         const float ExtH = WallH;
+        Color sN = Darken(ec, 0.6f);
+        Color sE = Darken(ec, 0.75f);
 
-        // Build "inside" mask: flood fill from spawn through open cells,
-        // then expand to include adjacent walls. This ensures corridors
-        // and rooms are inside even if they touch the grid edge.
-        bool[,] inside = new bool[h + 2, w + 2];
-        var queue = new Queue<(int, int)>();
-
-        // Seed from spawn + all open cells (any reachable open cell is inside)
-        int sx = Floor.SpawnGX, sy = Floor.SpawnGY;
-        if (sx >= 1 && sx <= w && sy >= 1 && sy <= h && !IsWallLike(Floor.Map[sy, sx]))
-        {
-            inside[sy, sx] = true;
-            queue.Enqueue((sy, sx));
-        }
-        // Also seed from all room centers as fallback
-        foreach (var room in Floor.Rooms)
-        {
-            int rcx = room.CenterX, rcy = room.CenterY;
-            if (rcx >= 1 && rcx <= w && rcy >= 1 && rcy <= h && !inside[rcy, rcx] && !IsWallLike(Floor.Map[rcy, rcx]))
-            {
-                inside[rcy, rcx] = true;
-                queue.Enqueue((rcy, rcx));
-            }
-        }
-
-        // Flood fill through open cells
-        while (queue.Count > 0)
-        {
-            var (cy, cx) = queue.Dequeue();
-            int[] dy = { -1, 1, 0, 0 }, dx = { 0, 0, -1, 1 };
-            for (int d = 0; d < 4; d++)
-            {
-                int ny = cy + dy[d], nx = cx + dx[d];
-                if (ny < 1 || ny > h || nx < 1 || nx > w) continue;
-                if (inside[ny, nx]) continue;
-                if (IsWallLike(Floor.Map[ny, nx])) continue;
-                inside[ny, nx] = true;
-                queue.Enqueue((ny, nx));
-            }
-        }
-
-        // Expand: walls adjacent to reachable open cells are also inside
-        // Collect first to avoid cascade (reading modified array)
-        var toExpand = new List<(int y, int x)>();
-        for (int gy = 1; gy <= h; gy++)
-            for (int gx = 1; gx <= w; gx++)
-                if (IsWallLike(Floor.Map[gy, gx]) && !inside[gy, gx])
-                    if ((gy > 1 && inside[gy - 1, gx]) || (gy < h && inside[gy + 1, gx]) ||
-                        (gx > 1 && inside[gy, gx - 1]) || (gx < w && inside[gy, gx + 1]))
-                        toExpand.Add((gy, gx));
-        foreach (var (ey, ex) in toExpand)
-            inside[ey, ex] = true;
-
-        // Extend room sides: if any wall on a room's side is inside,
-        // mark ALL walls on that side as inside (smooth hull along rooms)
-        foreach (var room in Floor.Rooms)
-        {
-            int rx = room.X, ry = room.Y, rw = room.Width, rh = room.Height;
-            // North side (y = ry - 1)
-            if (ry > 1)
-            {
-                bool any = false;
-                for (int x = rx; x < rx + rw; x++)
-                    if (x >= 1 && x <= w && inside[ry - 1, x]) { any = true; break; }
-                if (any)
-                    for (int x = rx; x < rx + rw; x++)
-                        if (x >= 1 && x <= w && IsWallLike(Floor.Map[ry - 1, x])) inside[ry - 1, x] = true;
-            }
-            // South side (y = ry + rh)
-            if (ry + rh <= h)
-            {
-                bool any = false;
-                for (int x = rx; x < rx + rw; x++)
-                    if (x >= 1 && x <= w && inside[ry + rh, x]) { any = true; break; }
-                if (any)
-                    for (int x = rx; x < rx + rw; x++)
-                        if (x >= 1 && x <= w && IsWallLike(Floor.Map[ry + rh, x])) inside[ry + rh, x] = true;
-            }
-            // West side (x = rx - 1)
-            if (rx > 1)
-            {
-                bool any = false;
-                for (int y = ry; y < ry + rh; y++)
-                    if (y >= 1 && y <= h && inside[y, rx - 1]) { any = true; break; }
-                if (any)
-                    for (int y = ry; y < ry + rh; y++)
-                        if (y >= 1 && y <= h && IsWallLike(Floor.Map[y, rx - 1])) inside[y, rx - 1] = true;
-            }
-            // East side (x = rx + rw)
-            if (rx + rw <= w)
-            {
-                bool any = false;
-                for (int y = ry; y < ry + rh; y++)
-                    if (y >= 1 && y <= h && inside[y, rx + rw]) { any = true; break; }
-                if (any)
-                    for (int y = ry; y < ry + rh; y++)
-                        if (y >= 1 && y <= h && IsWallLike(Floor.Map[y, rx + rw])) inside[y, rx + rw] = true;
-            }
-        }
-
-        // Draw exterior walls at boundaries (inside cell next to non-inside)
-        // Reversed winding from interior so backface culling shows outside only
-        Color sN = Darken(ec, 0.6f);  // north/south shading
-        Color sE = Darken(ec, 0.75f); // east/west shading
         for (int gy = 1; gy <= h; gy++)
         {
             for (int gx = 1; gx <= w; gx++)
             {
-                if (!inside[gy, gx]) continue;
+                if (!_hullInside[gy, gx]) continue;
 
                 bool isWin = Floor.Map[gy, gx] == (int)CellType.Window;
                 int ft = isWin ? extWin : extW;
                 float x0 = (gx - 1) * Cell, x1 = gx * Cell;
                 float z0 = (gy - 1) * Cell, z1 = gy * Cell;
 
-                // Reversed winding (swap v0↔v1, v2↔v3 from interior)
-                if (!inside[gy - 1, gx])
+                if (!_hullInside[gy - 1, gx])
                     WallQuad(ft, x0, 0, z0, x1, 0, z0, x1, ExtH, z0, x0, ExtH, z0, sN);
-                if (!inside[gy + 1, gx])
+                if (!_hullInside[gy + 1, gx])
                     WallQuad(ft, x1, 0, z1, x0, 0, z1, x0, ExtH, z1, x1, ExtH, z1, sN);
-                if (!inside[gy, gx - 1])
+                if (!_hullInside[gy, gx - 1])
                     WallQuad(ft, x0, 0, z1, x0, 0, z0, x0, ExtH, z0, x0, ExtH, z1, sE);
-                if (!inside[gy, gx + 1])
+                if (!_hullInside[gy, gx + 1])
                     WallQuad(ft, x1, 0, z0, x1, 0, z1, x1, ExtH, z1, x1, ExtH, z0, sE);
             }
         }

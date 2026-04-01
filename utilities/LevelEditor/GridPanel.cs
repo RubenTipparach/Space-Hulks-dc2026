@@ -227,6 +227,31 @@ public class GridPanel : Panel
 
     private static bool IsWallLike(int c) => c == (int)CellType.Wall || c == (int)CellType.Window;
 
+    private void ExtendSide(bool[,] inside, int w, int h, int line, int from, int to, bool horiz, int inDir)
+    {
+        if (Floor == null) return;
+        bool any = false;
+        for (int i = from; i <= to; i++)
+        {
+            int gy = horiz ? line : i, gx = horiz ? i : line;
+            if (gy >= 1 && gy <= h && gx >= 1 && gx <= w && inside[gy, gx]) { any = true; break; }
+        }
+        if (!any) return;
+        bool facesIn = false;
+        for (int i = from; i <= to; i++)
+        {
+            int gy = horiz ? line + inDir : i, gx = horiz ? i : line + inDir;
+            if (gy >= 1 && gy <= h && gx >= 1 && gx <= w && inside[gy, gx]) { facesIn = true; break; }
+        }
+        if (!facesIn) return;
+        for (int i = from; i <= to; i++)
+        {
+            int gy = horiz ? line : i, gx = horiz ? i : line;
+            if (gy >= 1 && gy <= h && gx >= 1 && gx <= w && IsWallLike(Floor!.Map[gy, gx]))
+                inside[gy, gx] = true;
+        }
+    }
+
     private void DrawExteriorPerimeter(Graphics g, int w, int h)
     {
         if (Floor == null) return;
@@ -268,58 +293,33 @@ public class GridPanel : Panel
             }
         }
 
-        // Expand: walls adjacent to reachable open cells (collect first to avoid cascade)
-        var toExpand = new List<(int y, int x)>();
-        for (int gy = 1; gy <= h; gy++)
-            for (int gx = 1; gx <= w; gx++)
-                if (IsWallLike(Floor.Map[gy, gx]) && !inside[gy, gx])
-                    if ((gy > 1 && inside[gy - 1, gx]) || (gy < h && inside[gy + 1, gx]) ||
-                        (gx > 1 && inside[gy, gx - 1]) || (gx < w && inside[gy, gx + 1]))
-                        toExpand.Add((gy, gx));
-        foreach (var (ey, ex) in toExpand)
-            inside[ey, ex] = true;
+        // Expand walls iteratively until stable (fills wall gaps between rooms)
+        bool changed = true;
+        while (changed)
+        {
+            changed = false;
+            var toExpand = new List<(int y, int x)>();
+            for (int gy = 1; gy <= h; gy++)
+                for (int gx = 1; gx <= w; gx++)
+                    if (IsWallLike(Floor.Map[gy, gx]) && !inside[gy, gx])
+                        if ((gy > 1 && inside[gy - 1, gx]) || (gy < h && inside[gy + 1, gx]) ||
+                            (gx > 1 && inside[gy, gx - 1]) || (gx < w && inside[gy, gx + 1]))
+                            toExpand.Add((gy, gx));
+            foreach (var (ey, ex) in toExpand)
+            {
+                inside[ey, ex] = true;
+                changed = true;
+            }
+        }
 
-        // Extend room sides: if any wall on a room's side is inside,
-        // mark ALL walls on that side (smooth hull along rooms)
+        // Extend room sides that face interior
         foreach (var room in Floor.Rooms)
         {
             int rx = room.X, ry = room.Y, rw = room.Width, rh = room.Height;
-            if (ry > 1)
-            {
-                bool any = false;
-                for (int x = rx; x < rx + rw; x++)
-                    if (x >= 1 && x <= w && inside[ry - 1, x]) { any = true; break; }
-                if (any)
-                    for (int x = rx; x < rx + rw; x++)
-                        if (x >= 1 && x <= w && IsWallLike(Floor.Map[ry - 1, x])) inside[ry - 1, x] = true;
-            }
-            if (ry + rh <= h)
-            {
-                bool any = false;
-                for (int x = rx; x < rx + rw; x++)
-                    if (x >= 1 && x <= w && inside[ry + rh, x]) { any = true; break; }
-                if (any)
-                    for (int x = rx; x < rx + rw; x++)
-                        if (x >= 1 && x <= w && IsWallLike(Floor.Map[ry + rh, x])) inside[ry + rh, x] = true;
-            }
-            if (rx > 1)
-            {
-                bool any = false;
-                for (int y = ry; y < ry + rh; y++)
-                    if (y >= 1 && y <= h && inside[y, rx - 1]) { any = true; break; }
-                if (any)
-                    for (int y = ry; y < ry + rh; y++)
-                        if (y >= 1 && y <= h && IsWallLike(Floor.Map[y, rx - 1])) inside[y, rx - 1] = true;
-            }
-            if (rx + rw <= w)
-            {
-                bool any = false;
-                for (int y = ry; y < ry + rh; y++)
-                    if (y >= 1 && y <= h && inside[y, rx + rw]) { any = true; break; }
-                if (any)
-                    for (int y = ry; y < ry + rh; y++)
-                        if (y >= 1 && y <= h && IsWallLike(Floor.Map[y, rx + rw])) inside[y, rx + rw] = true;
-            }
+            ExtendSide(inside, w, h, ry - 1, rx, rx + rw - 1, true, -1);
+            ExtendSide(inside, w, h, ry + rh, rx, rx + rw - 1, true, +1);
+            ExtendSide(inside, w, h, rx - 1, ry, ry + rh - 1, false, -1);
+            ExtendSide(inside, w, h, rx + rw, ry, ry + rh - 1, false, +1);
         }
 
         // Draw perimeter lines where inside meets non-inside
