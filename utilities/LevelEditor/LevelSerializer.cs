@@ -31,17 +31,32 @@ public static class LevelSerializer
         public List<EntityData> Enemies { get; set; } = new();
         public List<ConsoleData> Consoles { get; set; } = new();
         public List<LootData> Loot { get; set; } = new();
+        public List<OfficerData> Officers { get; set; } = new();
+        public List<NpcData> Npcs { get; set; } = new();
     }
 
     private class LevelDto
     {
         public string ShipName { get; set; } = "";
+        public ShipType ShipType { get; set; } = ShipType.Human;
+        public bool IsHub { get; set; }
+        public int HullHp { get; set; } = 30;
+        public int HullHpMax { get; set; } = 30;
+        public List<MissionData> Missions { get; set; } = new();
         public List<FloorDto> Floors { get; set; } = new();
     }
 
     public static string Serialize(LevelData level)
     {
-        var dto = new LevelDto { ShipName = level.ShipName };
+        var dto = new LevelDto
+        {
+            ShipName = level.ShipName,
+            ShipType = level.ShipType,
+            IsHub = level.IsHub,
+            HullHp = level.HullHp,
+            HullHpMax = level.HullHpMax,
+            Missions = level.Missions,
+        };
         foreach (var f in level.Floors)
         {
             var fd = new FloorDto
@@ -54,6 +69,7 @@ public static class LevelSerializer
                 HasDown = f.HasDown,
                 Rooms = f.Rooms, Enemies = f.Enemies,
                 Consoles = f.Consoles, Loot = f.Loot,
+                Officers = f.Officers, Npcs = f.Npcs,
             };
             // Convert 2D array to jagged (1-indexed rows 1..h, cols 1..w)
             fd.Map = new int[f.Height][];
@@ -72,7 +88,16 @@ public static class LevelSerializer
     {
         var dto = JsonSerializer.Deserialize<LevelDto>(json, Options)
                   ?? throw new Exception("Invalid JSON");
-        var level = new LevelData { ShipName = dto.ShipName, Floors = new() };
+        var level = new LevelData
+        {
+            ShipName = dto.ShipName,
+            ShipType = dto.ShipType,
+            IsHub = dto.IsHub,
+            HullHp = dto.HullHp,
+            HullHpMax = dto.HullHpMax,
+            Missions = dto.Missions,
+            Floors = new(),
+        };
         foreach (var fd in dto.Floors)
         {
             var f = new FloorData
@@ -85,6 +110,7 @@ public static class LevelSerializer
                 HasDown = fd.HasDown,
                 Rooms = fd.Rooms, Enemies = fd.Enemies,
                 Consoles = fd.Consoles, Loot = fd.Loot,
+                Officers = fd.Officers, Npcs = fd.Npcs,
             };
             for (int y = 0; y < fd.Height && y < fd.Map.Length; y++)
                 for (int x = 0; x < fd.Width && x < fd.Map[y].Length; x++)

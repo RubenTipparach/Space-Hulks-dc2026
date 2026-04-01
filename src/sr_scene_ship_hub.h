@@ -170,6 +170,73 @@ static hub_state g_hub;
 static void hub_generate(hub_state *hub) {
     memset(hub, 0, sizeof(*hub));
     sr_dungeon *d = &hub->dungeon;
+
+    /* Try to load hub from JSON level file */
+    const char *hub_path = "levels/hub.json";
+    if (lvl_file_exists(hub_path)) {
+        lvl_loaded lvl = lvl_load(hub_path);
+        if (lvl.valid && lvl.is_hub && lvl.num_floors > 0) {
+            printf("[hub] Loading hub layout from %s\n", hub_path);
+            int floor_tok = sr_json_array_get(&lvl.json, lvl.floors_arr, 0);
+            lvl_load_floor(d, &lvl.json, floor_tok);
+
+            /* Load NPCs from floor data */
+            int npcs_arr = sr_json_find(&lvl.json, floor_tok, "npcs");
+            if (npcs_arr >= 0) {
+                hub->crew_count = sr_json_array_len(&lvl.json, npcs_arr);
+                if (hub->crew_count > HUB_MAX_CREW) hub->crew_count = HUB_MAX_CREW;
+                for (int i = 0; i < hub->crew_count; i++) {
+                    int npc_tok = sr_json_array_get(&lvl.json, npcs_arr, i);
+                    if (npc_tok < 0) continue;
+                    hub_npc *npc = &hub->crew[i];
+                    sr_json_str(&lvl.json, sr_json_find(&lvl.json, npc_tok, "name"),
+                                npc->name, 24);
+                    npc->gx = sr_json_int(&lvl.json, sr_json_find(&lvl.json, npc_tok, "gX"), 0);
+                    npc->gy = sr_json_int(&lvl.json, sr_json_find(&lvl.json, npc_tok, "gY"), 0);
+                    npc->dialog_id = sr_json_int(&lvl.json, sr_json_find(&lvl.json, npc_tok, "dialogId"), i);
+                    npc->room = i; /* map NPC index to room index */
+                    npc->active = true;
+                }
+            }
+
+            /* Map room types from dungeon room data */
+            for (int i = 0; i < d->room_count; i++) {
+                /* Use consoles placed by JSON to infer room type */
+                int cx = d->room_cx[i], cy = d->room_cy[i];
+                if (cx >= 1 && cx <= d->w && cy >= 1 && cy <= d->h && d->consoles[cy][cx] > 0)
+                    hub->room_types[i] = d->consoles[cy][cx];
+                else
+                    hub->room_types[i] = HUB_ROOM_CORRIDOR;
+                d->room_light_on[i] = true;
+            }
+
+            dng_player_init(&hub->player, d->spawn_gx, d->spawn_gy, 1);
+
+            /* Place NPC sprites in the dungeon grid */
+            {
+                static const int crew_stex[] = {
+                    STEX_CREW_CAPTAIN, STEX_CREW_SERGEANT, STEX_CREW_QUARTERMASTER,
+                    STEX_CREW_PRIVATE, STEX_CREW_DOCTOR, STEX_CREW_CAPTAIN
+                };
+                for (int i = 0; i < hub->crew_count; i++) {
+                    hub_npc *npc = &hub->crew[i];
+                    if (!npc->active) continue;
+                    int stex = (i < 6) ? crew_stex[i] : STEX_CREW_CAPTAIN;
+                    if (npc->gx >= 1 && npc->gx <= d->w && npc->gy >= 1 && npc->gy <= d->h) {
+                        d->aliens[npc->gy][npc->gx] = (uint8_t)(stex + 1);
+                        snprintf(d->alien_names[npc->gy][npc->gx], 16, "%s", npc->name);
+                    }
+                }
+            }
+
+            hub->mission_available = true;
+            hub->initialized = true;
+            printf("[hub] Loaded: %d rooms, %d NPCs\n", d->room_count, hub->crew_count);
+            return;
+        }
+    }
+
+    /* Fallback: hardcoded hub layout */
     d->w = 20;
     d->h = 20;
     d->has_up = false;
