@@ -10,6 +10,7 @@ public class Preview3DPanel : Panel
 {
     public FloorData? Floor { get; set; }
     public bool ShowExterior { get; set; } = true;
+    public int HullPadding { get; set; } = 1; // wall layers from interior
     public ShipType ShipType { get; set; } = ShipType.Human;
 
     private GLControl? _gl;
@@ -337,16 +338,19 @@ void main(){
             }
         }
 
-        // Expand one layer of walls (collect first to avoid cascade)
-        var toExpand = new List<(int y, int x)>();
-        for (int gy = 1; gy <= h; gy++)
-            for (int gx = 1; gx <= w; gx++)
-                if (IsWallLike(Floor.Map[gy, gx]) && !_hullInside[gy, gx])
-                    if ((gy > 1 && _hullInside[gy - 1, gx]) || (gy < h && _hullInside[gy + 1, gx]) ||
-                        (gx > 1 && _hullInside[gy, gx - 1]) || (gx < w && _hullInside[gy, gx + 1]))
-                        toExpand.Add((gy, gx));
-        foreach (var (ey, ex) in toExpand)
-            _hullInside[ey, ex] = true;
+        // Expand N layers of walls (one pass per layer, collect-then-mark)
+        for (int layer = 0; layer < HullPadding; layer++)
+        {
+            var toExpand = new List<(int y, int x)>();
+            for (int gy = 1; gy <= h; gy++)
+                for (int gx = 1; gx <= w; gx++)
+                    if (IsWallLike(Floor.Map[gy, gx]) && !_hullInside[gy, gx])
+                        if ((gy > 1 && _hullInside[gy - 1, gx]) || (gy < h && _hullInside[gy + 1, gx]) ||
+                            (gx > 1 && _hullInside[gy, gx - 1]) || (gx < w && _hullInside[gy, gx + 1]))
+                            toExpand.Add((gy, gx));
+            foreach (var (ey, ex) in toExpand)
+                _hullInside[ey, ex] = true;
+        }
 
         // Extend room sides
         foreach (var room in Floor.Rooms)

@@ -144,6 +144,13 @@ public class MainForm : Form
         extCheck.CheckedChanged += (_, _) => _preview3D.ShowExterior = extCheck.Checked;
         toolFlow.Controls.Add(extCheck);
 
+        // Hull padding
+        toolFlow.Controls.Add(MakeLabel("Hull Padding:"));
+        var hullPad = new NumericUpDown { Minimum = 1, Maximum = 10, Value = 1, Width = 60,
+            BackColor = Color.FromArgb(40, 40, 50), ForeColor = Color.White };
+        hullPad.ValueChanged += (_, _) => _preview3D.HullPadding = (int)hullPad.Value;
+        toolFlow.Controls.Add(hullPad);
+
         // ── Draw Tools ──────────────────────────────────
         toolFlow.Controls.Add(MakeLabel("DRAW TOOLS"));
         var toolButtons = new (string label, EditTool tool)[]
