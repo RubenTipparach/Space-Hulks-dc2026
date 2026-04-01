@@ -69,14 +69,16 @@ public class Preview3DPanel : Panel
     public Preview3DPanel()
     {
         DoubleBuffered = true;
+        _timer = new System.Windows.Forms.Timer { Interval = 16 }; // ~60fps
+        _timer.Tick += (_, _) => _gl?.Invalidate();
+    }
 
+    private void EnsureGL()
+    {
+        if (_gl != null) return;
         try
         {
-            _gl = new GLControl(new GLControlSettings
-            {
-                Profile = ContextProfile.Core,
-                API = ContextAPI.OpenGL,
-            });
+            _gl = new GLControl();
             _gl.Dock = DockStyle.Fill;
             _gl.Load += (_, _) => InitGL();
             _gl.Paint += (_, _) => Render();
@@ -88,16 +90,17 @@ public class Preview3DPanel : Panel
             _gl.KeyDown += OnGLKey;
             Controls.Add(_gl);
         }
-        catch { /* GL not available */ }
-
-        _timer = new System.Windows.Forms.Timer { Interval = 16 }; // ~60fps
-        _timer.Tick += (_, _) => _gl?.Invalidate();
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"GLControl failed: {ex.Message}");
+        }
     }
 
     public void StartPreview()
     {
         if (Floor == null) return;
         TextureCache.EnsureLoaded();
+        EnsureGL(); // create GL control lazily on first 3D preview
         _tgtX = Floor.Width * Cell / 2f;
         _tgtZ = Floor.Height * Cell / 2f;
         _dist = Math.Max(Floor.Width, Floor.Height) * Cell * 0.8f;
@@ -184,6 +187,7 @@ void main(){
         _glTex["ext_win"] = UploadTex(TextureCache.ExteriorWindow);
         _glTex["alien_ext"] = UploadTex(TextureCache.AlienExterior);
         _glTex["alien_ext_win"] = UploadTex(TextureCache.AlienExteriorWindow);
+        _glTex["roof"] = UploadTex(TextureCache.Ceiling);
     }
 
     private static int UploadTex(Bitmap? bmp)
@@ -353,6 +357,38 @@ void main(){
         Color es = Darken(ec, 0.7f);
         const float Off = 0.3f, ExtH = WallH + 0.6f;
 
+        // Shrink-wrap: for each wall cell, draw exterior face on any side
+        // that faces outside the ship (adjacent cell is out of bounds or empty row/col
+        // with no wall between it and the grid edge = "outside")
+        // Simple approach: a wall cell gets an exterior face if its neighbor is
+        // out-of-bounds OR if there's a continuous path of non-wall cells to the edge.
+        // For efficiency, use flood-fill from edges to mark "outside" cells.
+
+        bool[,] outside = new bool[h + 2, w + 2]; // 1-indexed, +1 for boundary
+        // Flood fill from all edge cells that are open
+        var queue = new Queue<(int, int)>();
+        // Seed: all out-of-bounds border cells
+        for (int x = 0; x <= w + 1; x++) { outside[0, x] = true; queue.Enqueue((0, x)); outside[h + 1, x] = true; queue.Enqueue((h + 1, x)); }
+        for (int y = 1; y <= h; y++) { outside[y, 0] = true; queue.Enqueue((y, 0)); outside[y, w + 1] = true; queue.Enqueue((y, w + 1)); }
+
+        while (queue.Count > 0)
+        {
+            var (cy, cx) = queue.Dequeue();
+            int[] dy = { -1, 1, 0, 0 }, dx = { 0, 0, -1, 1 };
+            for (int d = 0; d < 4; d++)
+            {
+                int ny = cy + dy[d], nx = cx + dx[d];
+                if (ny < 0 || ny > h + 1 || nx < 0 || nx > w + 1) continue;
+                if (outside[ny, nx]) continue;
+                // In-bounds cell that is NOT wall-like → mark as outside
+                if (ny >= 1 && ny <= h && nx >= 1 && nx <= w && IsWallLike(Floor.Map[ny, nx]))
+                    continue; // wall blocks flood
+                outside[ny, nx] = true;
+                queue.Enqueue((ny, nx));
+            }
+        }
+
+        // Now draw exterior faces: for each wall cell, if neighbor is "outside"
         for (int gy = 1; gy <= h; gy++)
         {
             for (int gx = 1; gx <= w; gx++)
@@ -363,20 +399,28 @@ void main(){
                 float x0 = (gx - 1) * Cell, x1 = gx * Cell;
                 float z0 = (gy - 1) * Cell, z1 = gy * Cell;
 
-                if (gy == 1) WallQuad(ft, x1, 0, z0 - Off, x0, 0, z0 - Off, x0, ExtH, z0 - Off, x1, ExtH, z0 - Off, es);
-                if (gy == h) WallQuad(ft, x0, 0, z1 + Off, x1, 0, z1 + Off, x1, ExtH, z1 + Off, x0, ExtH, z1 + Off, es);
-                if (gx == 1) WallQuad(ft, x0 - Off, 0, z0, x0 - Off, 0, z1, x0 - Off, ExtH, z1, x0 - Off, ExtH, z0, ec);
-                if (gx == w) WallQuad(ft, x1 + Off, 0, z1, x1 + Off, 0, z0, x1 + Off, ExtH, z0, x1 + Off, ExtH, z1, ec);
+                // North: neighbor at gy-1
+                if (outside[gy - 1, gx])
+                    WallQuad(ft, x1, 0, z0 - Off, x0, 0, z0 - Off, x0, ExtH, z0 - Off, x1, ExtH, z0 - Off, es);
+                // South: neighbor at gy+1
+                if (outside[gy + 1, gx])
+                    WallQuad(ft, x0, 0, z1 + Off, x1, 0, z1 + Off, x1, ExtH, z1 + Off, x0, ExtH, z1 + Off, es);
+                // West: neighbor at gx-1
+                if (outside[gy, gx - 1])
+                    WallQuad(ft, x0 - Off, 0, z0, x0 - Off, 0, z1, x0 - Off, ExtH, z1, x0 - Off, ExtH, z0, ec);
+                // East: neighbor at gx+1
+                if (outside[gy, gx + 1])
+                    WallQuad(ft, x1 + Off, 0, z1, x1 + Off, 0, z0, x1 + Off, ExtH, z0, x1 + Off, ExtH, z1, ec);
+
+                // Roof cap for exterior-facing wall cells (use roof/metal texture)
+                int roofTex = Tex("roof");
+                if (outside[gy - 1, gx] || outside[gy + 1, gx] || outside[gy, gx - 1] || outside[gy, gx + 1])
+                    FlatQuad(roofTex, x0 - (outside[gy, gx - 1] ? Off : 0), ExtH,
+                             z0 - (outside[gy - 1, gx] ? Off : 0),
+                             x1 + (outside[gy, gx + 1] ? Off : 0),
+                             z1 + (outside[gy + 1, gx] ? Off : 0), ec);
             }
         }
-
-        // Roof lip (edge strips, not solid)
-        float rx0 = -Off, rz0 = -Off, rx1 = w * Cell + Off, rz1 = h * Cell + Off;
-        float lip = Cell;
-        FlatQuad(extW, rx0, ExtH, rz0, rx1, rz0 + lip, ec);
-        FlatQuad(extW, rx0, ExtH, rz1 - lip, rx1, rz1, ec);
-        FlatQuad(extW, rx0, ExtH, rz0 + lip, rx0 + lip, rz1 - lip, Darken(ec, 0.9f));
-        FlatQuad(extW, rx1 - lip, ExtH, rz0 + lip, rx1, rz1 - lip, Darken(ec, 0.9f));
     }
 
     private void BuildEntities()
