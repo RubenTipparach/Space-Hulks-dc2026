@@ -390,8 +390,8 @@ public class MainForm : Form
             Dock = DockStyle.Fill,
             Alignment = TabAlignment.Top,
             SizeMode = TabSizeMode.Fixed,
-            ItemSize = new Size(100, 26),
-            Font = new Font("Consolas", 9, FontStyle.Bold),
+            ItemSize = new Size(160, 32),
+            Font = new Font("Consolas", 11, FontStyle.Bold),
         };
         var tab2D = new TabPage("2D EDITOR") { BackColor = Color.FromArgb(30, 30, 35) };
         _grid.Dock = DockStyle.Fill;
