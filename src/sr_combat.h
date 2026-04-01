@@ -34,6 +34,7 @@ enum {
     CARD_LASER,      /* laser: 4 dmg precision single, cost 1 */
     CARD_DEFLECTOR,  /* deflector: +4 shield, reflect 1 dmg, cost 1 */
     CARD_STUN_GUN,   /* stun gun: stun 1 enemy 1 turn, 1 dmg, cost 1 */
+    CARD_MICROWAVE,  /* microwave: 5 dmg, if kill -> 3 dmg all, cost 2 */
     CARD_TYPE_COUNT
 };
 
@@ -41,7 +42,7 @@ static const char *card_names[] = {
     "SHIELD", "SHOOT", "BURST", "MOVE", "MELEE",
     "OVERCHRG", "REPAIR", "STUN", "FORTIFY", "DBL SHOT", "DASH",
     "ICE", "ACID", "FIRE", "LIGHTNING",
-    "SNIPER", "SHOTGUN", "WELDER", "CHAINSAW", "LASER", "DEFLECTR", "STUN GUN"
+    "SNIPER", "SHOTGUN", "WELDER", "CHAINSAW", "LASER", "DEFLECTR", "STUN GUN", "MCROWAVE"
 };
 
 static const uint32_t card_colors[] = {
@@ -67,13 +68,14 @@ static const uint32_t card_colors[] = {
     0xFFFFFF44,  /* laser - bright cyan */
     0xFFDDAA44,  /* deflector - steel blue */
     0xFFCC88FF,  /* stun gun - light purple */
+    0xFF2266EE,  /* microwave - hot orange-red */
 };
 
 static const int card_energy_cost[] = {
     1, 1, 2, 1, 1,  /* base cards */
     0, 2, 1, 2, 2, 2, /* droppable cards */
     1, 1, 1, 2, /* elemental cards */
-    1, 1, 1, 2, 1, 1, 1 /* class-specific: sniper, shotgun, welder, chainsaw, laser, deflector, stun gun */
+    1, 1, 1, 2, 1, 1, 1, 2 /* class-specific: sniper, shotgun, welder, chainsaw, laser, deflector, stun gun, microwave */
 };
 
 /* Card target types */
@@ -102,6 +104,7 @@ static const int card_targets[] = {
     TARGET_ENEMY,         /* LASER */
     TARGET_SELF,          /* DEFLECTOR */
     TARGET_ENEMY,         /* STUN GUN */
+    TARGET_ENEMY,         /* MICROWAVE */
 };
 
 /* ── Character classes ───────────────────────────────────────────── */
@@ -138,8 +141,8 @@ static const char_class char_classes[] = {
     },
     [CLASS_SCIENTIST] = {
         .hp_max = 22,
-        /* 1 shield, 1 shoot, 1 burst, 1 move, 0 melee, ..., laser 2, deflector 2, stun_gun 2 */
-        .deck_composition = { 1, 1, 1, 1, 0, 0,0,0,0,0,0, 0,0,0,0, 0,0,0,0, 2, 2, 2 },
+        /* 1 shield, 1 shoot, 1 burst, 1 move, 0 melee, ..., laser 2, deflector 2, stun_gun 1, microwave 2 */
+        .deck_composition = { 1, 1, 1, 1, 0, 0,0,0,0,0,0, 0,0,0,0, 0,0,0,0, 2, 2, 1, 2 },
         .name = "SCIENTIST",
         .sprite = spr_scientist,
     },
@@ -807,6 +810,33 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
             }
             break;
         }
+
+        case CARD_MICROWAVE: {
+            int t = cs->target;
+            while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
+            if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
+            if (t >= 0) {
+                int dmg = 5 + cs->fire_atk_bonus;
+                combat_deal_damage_enemy(cs, t, dmg);
+                if (!cs->enemies[t].alive) {
+                    /* Kill chain: 3 dmg to all surviving enemies */
+                    int chain_kills = 0;
+                    for (int i = 0; i < cs->enemy_count; i++) {
+                        if (i != t && cs->enemies[i].alive) {
+                            combat_deal_damage_enemy(cs, i, 3);
+                            chain_kills++;
+                        }
+                    }
+                    snprintf(buf, sizeof(buf), "MCRWAVE %s KILL! 3DMG ALL",
+                             enemy_templates[cs->enemies[t].type].name);
+                } else {
+                    snprintf(buf, sizeof(buf), "MCRWAVE %s -%dHP",
+                             enemy_templates[cs->enemies[t].type].name, dmg);
+                }
+                combat_set_message(cs, buf);
+            }
+            break;
+        }
     }
 
     /* Move card to discard */
@@ -1408,6 +1438,7 @@ static const char *card_effect_text(int card_type) {
         case CARD_LASER:       return "4 DMG\nPRECISION";
         case CARD_DEFLECTOR:   return "+4 SHIELD\n1 REFLECT";
         case CARD_STUN_GUN:    return "STUN 1T\n1 DMG";
+        case CARD_MICROWAVE:   return "5 DMG\n*3 DMG ALL";
         default:               return "";
     }
 }
