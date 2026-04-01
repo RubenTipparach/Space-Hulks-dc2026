@@ -425,19 +425,15 @@ void main(){
             _yOff = 0;
             BuildFloorGeometry(Floor, alien);
 
-            // Ghost: adjacent floors offset vertically and transparent
+            // Ghost: all other floors transparent at their Y offset
             if (ShowGhostFloors && Level != null && Level.Floors.Count > 1)
             {
                 int ci = CurrentFloorIndex;
-                if (ci > 0)
+                for (int fi = 0; fi < Level.Floors.Count; fi++)
                 {
-                    _yOff = -FloorSpacing;
-                    BuildGhostFloor(Level.Floors[ci - 1], alien, 0.2f);
-                }
-                if (ci < Level.Floors.Count - 1)
-                {
-                    _yOff = FloorSpacing;
-                    BuildGhostFloor(Level.Floors[ci + 1], alien, 0.2f);
+                    if (fi == ci) continue;
+                    _yOff = (fi - ci) * FloorSpacing;
+                    BuildGhostFloor(Level.Floors[fi], alien, 0.2f);
                 }
                 _yOff = 0;
             }
