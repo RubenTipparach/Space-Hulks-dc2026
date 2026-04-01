@@ -169,8 +169,9 @@ void main(){
 
         GL.ClearColor(0.07f, 0.07f, 0.11f, 1f);
         GL.Enable(EnableCap.DepthTest);
-        GL.DepthFunc(DepthFunction.Lequal);
+        GL.DepthFunc(DepthFunction.Less);
         GL.Disable(EnableCap.CullFace);
+        GL.Enable(EnableCap.PolygonOffsetFill);
 
         _glReady = true;
     }
@@ -365,8 +366,8 @@ void main(){
         if (Floor == null) return;
         int extW = alien ? Tex("alien_ext") : Tex("ext_wall");
         int extWin = alien ? Tex("alien_ext_win") : Tex("ext_win");
-        Color ec = alien ? Color.FromArgb(120, 60, 80) : Color.FromArgb(60, 80, 130);
-        Color es = Darken(ec, 0.7f);
+        Color ec = alien ? Color.FromArgb(120, 60, 80) : Color.FromArgb(255, 255, 255);
+        Color es = Darken(ec, 0.85f);
         const float ExtH = WallH;
 
         // Build "inside" mask: flood fill from spawn through open cells,
@@ -515,9 +516,11 @@ void main(){
         GL.UniformMatrix4(_mvpLoc, false, ref mvp);
         GL.BindVertexArray(_vao);
 
-        // Pass 1: interior geometry
+        // Pass 1: interior geometry (pushed back slightly in depth)
+        GL.PolygonOffset(1f, 1f);
         DrawBatches(_batches);
-        // Pass 2: exterior geometry (draws on top at same depth via LEQUAL)
+        // Pass 2: exterior geometry (at true depth, wins over interior)
+        GL.PolygonOffset(0f, 0f);
         DrawBatches(_extBatches);
 
         GL.BindVertexArray(0);
