@@ -10,6 +10,7 @@ public class GridPanel : Panel
     public OfficerRank PlaceOfficerRank { get; set; } = OfficerRank.Ensign;
     public EnemyType PlaceOfficerCombatType { get; set; } = EnemyType.Brute;
     public ShipType ShipType { get; set; } = ShipType.Human;
+    public int HullPadding { get; set; } = 1;
     public int PlaceStairsDir { get; set; }
     public int RoomBrushW { get; set; } = 3;
     public int RoomBrushH { get; set; } = 3;
@@ -293,16 +294,19 @@ public class GridPanel : Panel
             }
         }
 
-        // Expand one layer of walls (collect first to avoid cascade)
-        var toExpand = new List<(int y, int x)>();
-        for (int gy = 1; gy <= h; gy++)
-            for (int gx = 1; gx <= w; gx++)
-                if (IsWallLike(Floor.Map[gy, gx]) && !inside[gy, gx])
-                    if ((gy > 1 && inside[gy - 1, gx]) || (gy < h && inside[gy + 1, gx]) ||
-                        (gx > 1 && inside[gy, gx - 1]) || (gx < w && inside[gy, gx + 1]))
-                        toExpand.Add((gy, gx));
-        foreach (var (ey, ex) in toExpand)
-            inside[ey, ex] = true;
+        // Expand N layers of walls
+        for (int layer = 0; layer < HullPadding; layer++)
+        {
+            var toExpand = new List<(int y, int x)>();
+            for (int gy = 1; gy <= h; gy++)
+                for (int gx = 1; gx <= w; gx++)
+                    if (IsWallLike(Floor.Map[gy, gx]) && !inside[gy, gx])
+                        if ((gy > 1 && inside[gy - 1, gx]) || (gy < h && inside[gy + 1, gx]) ||
+                            (gx > 1 && inside[gy, gx - 1]) || (gx < w && inside[gy, gx + 1]))
+                            toExpand.Add((gy, gx));
+            foreach (var (ey, ex) in toExpand)
+                inside[ey, ex] = true;
+        }
 
         // Extend room sides that face interior
         foreach (var room in Floor.Rooms)

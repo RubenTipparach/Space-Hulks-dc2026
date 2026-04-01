@@ -148,7 +148,7 @@ public class MainForm : Form
         toolFlow.Controls.Add(MakeLabel("Hull Padding:"));
         var hullPad = new NumericUpDown { Minimum = 0, Maximum = 10, Value = 1, Width = 60,
             BackColor = Color.FromArgb(40, 40, 50), ForeColor = Color.White };
-        hullPad.ValueChanged += (_, _) => _preview3D.HullPadding = (int)hullPad.Value;
+        hullPad.ValueChanged += (_, _) => { _preview3D.HullPadding = (int)hullPad.Value; _grid.HullPadding = (int)hullPad.Value; _grid.Invalidate(); };
         toolFlow.Controls.Add(hullPad);
 
         // ── Draw Tools ──────────────────────────────────
