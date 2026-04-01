@@ -279,6 +279,49 @@ public class GridPanel : Panel
         foreach (var (ey, ex) in toExpand)
             inside[ey, ex] = true;
 
+        // Extend room sides: if any wall on a room's side is inside,
+        // mark ALL walls on that side (smooth hull along rooms)
+        foreach (var room in Floor.Rooms)
+        {
+            int rx = room.X, ry = room.Y, rw = room.Width, rh = room.Height;
+            if (ry > 1)
+            {
+                bool any = false;
+                for (int x = rx; x < rx + rw; x++)
+                    if (x >= 1 && x <= w && inside[ry - 1, x]) { any = true; break; }
+                if (any)
+                    for (int x = rx; x < rx + rw; x++)
+                        if (x >= 1 && x <= w && IsWallLike(Floor.Map[ry - 1, x])) inside[ry - 1, x] = true;
+            }
+            if (ry + rh <= h)
+            {
+                bool any = false;
+                for (int x = rx; x < rx + rw; x++)
+                    if (x >= 1 && x <= w && inside[ry + rh, x]) { any = true; break; }
+                if (any)
+                    for (int x = rx; x < rx + rw; x++)
+                        if (x >= 1 && x <= w && IsWallLike(Floor.Map[ry + rh, x])) inside[ry + rh, x] = true;
+            }
+            if (rx > 1)
+            {
+                bool any = false;
+                for (int y = ry; y < ry + rh; y++)
+                    if (y >= 1 && y <= h && inside[y, rx - 1]) { any = true; break; }
+                if (any)
+                    for (int y = ry; y < ry + rh; y++)
+                        if (y >= 1 && y <= h && IsWallLike(Floor.Map[y, rx - 1])) inside[y, rx - 1] = true;
+            }
+            if (rx + rw <= w)
+            {
+                bool any = false;
+                for (int y = ry; y < ry + rh; y++)
+                    if (y >= 1 && y <= h && inside[y, rx + rw]) { any = true; break; }
+                if (any)
+                    for (int y = ry; y < ry + rh; y++)
+                        if (y >= 1 && y <= h && IsWallLike(Floor.Map[y, rx + rw])) inside[y, rx + rw] = true;
+            }
+        }
+
         // Draw perimeter lines where inside meets non-inside
         using var pen = new Pen(Color.FromArgb(200, 40, 120, 255), 2);
         for (int gy = 1; gy <= h; gy++)
