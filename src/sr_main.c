@@ -246,7 +246,58 @@ static char dng_hud_msg[64];         /* temporary HUD message for dungeon scene 
 static int  dng_hud_msg_timer = 0;   /* frames remaining to show message */
 
 static void game_init_ship(void) {
-    /* Generate ship based on current floor as difficulty */
+    /* Try to load a hand-designed level file first */
+    const char *level_path = "levels/sample_enemy_ship.json";
+    if (lvl_file_exists(level_path)) {
+        lvl_loaded lvl = lvl_load(level_path);
+        if (lvl.valid && !lvl.is_hub) {
+            printf("[game] Loading level from %s (%d floors)\n", level_path, lvl.num_floors);
+
+            /* Populate ship state from JSON */
+            lvl_load_ship(&current_ship, &lvl.json, lvl.root);
+            dng_state.max_floors = current_ship.num_decks;
+
+            /* Load all floors directly from JSON */
+            lvl_load_all_floors(&lvl, dng_state.floors,
+                                dng_state.floor_generated, DNG_MAX_FLOORS);
+            dng_state.dungeon = &dng_state.floors[dng_state.current_floor];
+
+            /* Set grid size from first floor */
+            dng_state.grid_w = dng_state.floors[0].w;
+            dng_state.grid_h = dng_state.floors[0].h;
+
+            /* JSON already contains enemies/consoles, but we still need to
+               link room_ship_idx and place consoles for rooms that have subsystems */
+            for (int deck = 0; deck < current_ship.num_decks && deck < DNG_MAX_FLOORS; deck++) {
+                if (!dng_state.floor_generated[deck]) continue;
+                sr_dungeon *dd = &dng_state.floors[deck];
+
+                int start = current_ship.deck_room_start[deck];
+                int count = current_ship.deck_room_count[deck];
+                for (int r = 0; r < count && r < dd->room_count; r++) {
+                    dd->room_ship_idx[r] = start + r;
+                }
+
+                /* Place consoles at room centers if not already placed by JSON */
+                for (int r = 0; r < count && r < dd->room_count; r++) {
+                    ship_room *rm = &current_ship.rooms[start + r];
+                    if (rm->type == ROOM_CORRIDOR) continue;
+                    int cx = dd->room_cx[r], cy = dd->room_cy[r];
+                    if (cx >= 1 && cx <= dd->w && cy >= 1 && cy <= dd->h &&
+                        dd->map[cy][cx] == 0 && dd->consoles[cy][cx] == 0) {
+                        dd->consoles[cy][cx] = (uint8_t)rm->type;
+                    }
+                }
+            }
+
+            printf("[game] Level loaded: %s (%d decks, %d rooms, %d officers)\n",
+                   current_ship.name, current_ship.num_decks,
+                   current_ship.room_count, current_ship.officer_count);
+            return;
+        }
+    }
+
+    /* Fallback: procedural generation */
     int difficulty = dng_state.current_floor;
     uint32_t ship_seed = dng_state.seed_base + 9999;
     ship_generate(&current_ship, difficulty, ship_seed);
