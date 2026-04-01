@@ -10,7 +10,7 @@ public class Preview3DPanel : Panel
 {
     public FloorData? Floor { get; set; }
     public bool ShowExterior { get; set; } = true;
-    public int HullPadding { get; set; } = 1; // wall layers from interior
+    public int HullPadding { get; set; } = 0; // wall layers from interior
     public ShipType ShipType { get; set; } = ShipType.Human;
 
     private GLControl? _gl;

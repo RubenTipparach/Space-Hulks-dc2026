@@ -10,7 +10,7 @@ public class GridPanel : Panel
     public OfficerRank PlaceOfficerRank { get; set; } = OfficerRank.Ensign;
     public EnemyType PlaceOfficerCombatType { get; set; } = EnemyType.Brute;
     public ShipType ShipType { get; set; } = ShipType.Human;
-    public int HullPadding { get; set; } = 1;
+    public int HullPadding { get; set; } = 0;
     public int PlaceStairsDir { get; set; }
     public int RoomBrushW { get; set; } = 3;
     public int RoomBrushH { get; set; } = 3;
