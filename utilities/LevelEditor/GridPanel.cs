@@ -8,6 +8,8 @@ public class GridPanel : Panel
     public RoomType PlaceRoomType { get; set; } = RoomType.Bridge;
     public RoomType PlaceConsoleType { get; set; } = RoomType.Bridge;
     public OfficerRank PlaceOfficerRank { get; set; } = OfficerRank.Ensign;
+    public EnemyType PlaceOfficerCombatType { get; set; } = EnemyType.Brute;
+    public ShipType ShipType { get; set; } = ShipType.Human;
     public int PlaceStairsDir { get; set; }
     public int RoomBrushW { get; set; } = 3;
     public int RoomBrushH { get; set; } = 3;
@@ -18,7 +20,6 @@ public class GridPanel : Panel
     private new const int Margin = 30;
     private bool _painting;
     private int _hoverGX = -1, _hoverGY = -1;
-
 
     private static readonly Dictionary<RoomType, Color> RoomColors = new()
     {
@@ -61,6 +62,7 @@ public class GridPanel : Panel
         g.Clear(Color.FromArgb(20, 20, 25));
 
         TextureCache.EnsureLoaded();
+        bool alien = ShipType == ShipType.Alien;
 
         int w = Floor.Width, h = Floor.Height;
 
@@ -96,15 +98,14 @@ public class GridPanel : Panel
                 // Draw texture background then color overlay
                 Bitmap? cellTex = cell switch
                 {
-                    (int)CellType.Wall => TextureCache.WallA,
-                    (int)CellType.Window => TextureCache.WallAWindow,
-                    _ => TextureCache.Floor,
+                    (int)CellType.Wall => alien ? TextureCache.Bricks : TextureCache.WallA,
+                    (int)CellType.Window => alien ? TextureCache.Bricks : TextureCache.WallAWindow,
+                    _ => alien ? TextureCache.Stone : TextureCache.Floor,
                 };
 
                 if (cellTex != null)
                 {
                     g.DrawImage(cellTex, rect);
-                    // Blend computed color on top to preserve room tints and theme
                     using var overlay = new SolidBrush(Color.FromArgb(140, bg));
                     g.FillRectangle(overlay, rect);
                 }
@@ -136,6 +137,8 @@ public class GridPanel : Panel
 
             // Room label
             string label = room.Type.ToString().ToUpper();
+            if (room.SubsystemHpMax > 0)
+                label += $" [{room.SubsystemHp}/{room.SubsystemHpMax}]";
             using var font = new Font("Consolas", 7);
             g.DrawString(label, font, Brushes.White, px + 3, py + 2);
 
@@ -172,25 +175,19 @@ public class GridPanel : Panel
     {
         if (Floor == null) return;
 
-        // Spawn
         DrawMarker(g, Floor.SpawnGX, Floor.SpawnGY, Color.Lime, "S");
 
-        // Up-stairs
         if (Floor.HasUp)
             DrawMarker(g, Floor.StairsGX, Floor.StairsGY, Color.Green, "UP");
-
-        // Down-stairs
         if (Floor.HasDown)
             DrawMarker(g, Floor.DownGX, Floor.DownGY, Color.Blue, "DN");
 
-        // Consoles
         foreach (var c in Floor.Consoles)
         {
             var rc = RoomColors.GetValueOrDefault(c.RoomType, Color.Gray);
             DrawMarker(g, c.GX, c.GY, rc, "C");
         }
 
-        // Enemies
         foreach (var en in Floor.Enemies)
         {
             Color ec = en.EnemyType switch
@@ -204,15 +201,12 @@ public class GridPanel : Panel
             DrawMarker(g, en.GX, en.GY, ec, en.EnemyType.ToString()[..1]);
         }
 
-        // Loot
         foreach (var l in Floor.Loot)
             DrawMarker(g, l.GX, l.GY, Color.Gold, "$");
 
-        // Officers
         foreach (var o in Floor.Officers)
             DrawMarker(g, o.GX, o.GY, Color.White, "O");
 
-        // NPCs
         foreach (var n in Floor.Npcs)
             DrawMarker(g, n.GX, n.GY, Color.Cyan, "N");
     }
@@ -229,6 +223,8 @@ public class GridPanel : Panel
         g.DrawString(label, font, Brushes.White, px + 1, py + 1);
     }
 
+    // ── Input ────────────────────────────────────────────
+
     protected override void OnMouseDown(MouseEventArgs e)
     {
         base.OnMouseDown(e);
@@ -237,25 +233,209 @@ public class GridPanel : Panel
 
         if (e.Button == MouseButtons.Right)
         {
-            // Right-click: always erase to wall
-            if (InBounds(gx, gy))
+            if (!InBounds(gx, gy)) return;
+
+            // Check for room/entity context menu first
+            var room = Floor.RoomAt(gx, gy);
+            var enemy = Floor.Enemies.FirstOrDefault(en => en.GX == gx && en.GY == gy);
+            var officer = Floor.Officers.FirstOrDefault(o => o.GX == gx && o.GY == gy);
+            var npc = Floor.Npcs.FirstOrDefault(n => n.GX == gx && n.GY == gy);
+
+            if (room != null || enemy != null || officer != null || npc != null)
             {
-                Floor.Map[gy, gx] = (int)CellType.Wall;
-                // Remove entities at this cell
-                Floor.Enemies.RemoveAll(en => en.GX == gx && en.GY == gy);
-                Floor.Consoles.RemoveAll(c => c.GX == gx && c.GY == gy);
-                Floor.Loot.RemoveAll(l => l.GX == gx && l.GY == gy);
-                Floor.Officers.RemoveAll(o => o.GX == gx && o.GY == gy);
-                Floor.Npcs.RemoveAll(n => n.GX == gx && n.GY == gy);
-                _painting = true;
-                DataChanged?.Invoke();
-                Invalidate();
+                ShowContextMenu(gx, gy, room, enemy, officer, npc, e.Location);
+                return;
             }
+
+            // Default: paint wall
+            Floor.Map[gy, gx] = (int)CellType.Wall;
+            Floor.Consoles.RemoveAll(c => c.GX == gx && c.GY == gy);
+            Floor.Loot.RemoveAll(l => l.GX == gx && l.GY == gy);
+            _painting = true;
+            DataChanged?.Invoke();
+            Invalidate();
             return;
         }
 
         _painting = true;
         ApplyTool(gx, gy);
+    }
+
+    private void ShowContextMenu(int gx, int gy, RoomData? room,
+        EntityData? enemy, OfficerData? officer, NpcData? npc, Point screenPos)
+    {
+        var menu = new ContextMenuStrip();
+        menu.BackColor = Color.FromArgb(40, 40, 50);
+        menu.ForeColor = Color.White;
+
+        if (room != null)
+        {
+            menu.Items.Add($"--- Room: {room.Type} ---").Enabled = false;
+
+            menu.Items.Add(room.LightOn ? "Turn Light Off" : "Turn Light On", null, (_, _) =>
+            {
+                room.LightOn = !room.LightOn;
+                DataChanged?.Invoke(); Invalidate();
+            });
+
+            var typeMenu = new ToolStripMenuItem("Change Type");
+            foreach (RoomType rt in Enum.GetValues<RoomType>())
+            {
+                var r = rt;
+                var item = typeMenu.DropDownItems.Add(rt.ToString(), null, (_, _) =>
+                {
+                    room.Type = r;
+                    DataChanged?.Invoke(); Invalidate();
+                });
+                if (rt == room.Type)
+                    item.Font = new Font(item.Font, FontStyle.Bold);
+            }
+            menu.Items.Add(typeMenu);
+
+            menu.Items.Add($"Set Subsystem HP (now {room.SubsystemHp}/{room.SubsystemHpMax})...", null, (_, _) =>
+            {
+                string? input = ShowInputDialog("Subsystem HP (hp/max):", $"{room.SubsystemHp}/{room.SubsystemHpMax}");
+                if (input != null)
+                {
+                    var parts = input.Split('/');
+                    if (parts.Length == 2 && int.TryParse(parts[0].Trim(), out int hp) && int.TryParse(parts[1].Trim(), out int max))
+                    {
+                        room.SubsystemHp = hp;
+                        room.SubsystemHpMax = max;
+                        DataChanged?.Invoke(); Invalidate();
+                    }
+                }
+            });
+
+            menu.Items.Add("Delete Room", null, (_, _) =>
+            {
+                Floor!.Rooms.Remove(room);
+                DataChanged?.Invoke(); Invalidate();
+            });
+
+            menu.Items.Add(new ToolStripSeparator());
+        }
+
+        if (enemy != null)
+        {
+            menu.Items.Add($"--- Enemy: {enemy.Name} ({enemy.EnemyType}) ---").Enabled = false;
+            menu.Items.Add("Rename...", null, (_, _) =>
+            {
+                string? name = ShowInputDialog("Enemy name:", enemy.Name);
+                if (name != null) { enemy.Name = name; DataChanged?.Invoke(); Invalidate(); }
+            });
+            menu.Items.Add("Delete Enemy", null, (_, _) =>
+            {
+                Floor!.Enemies.Remove(enemy);
+                DataChanged?.Invoke(); Invalidate();
+            });
+            menu.Items.Add(new ToolStripSeparator());
+        }
+
+        if (officer != null)
+        {
+            menu.Items.Add($"--- Officer: {officer.Name} ({officer.Rank}) ---").Enabled = false;
+            menu.Items.Add("Rename...", null, (_, _) =>
+            {
+                string? name = ShowInputDialog("Officer name:", officer.Name);
+                if (name != null) { officer.Name = name; DataChanged?.Invoke(); Invalidate(); }
+            });
+
+            var rankMenu = new ToolStripMenuItem("Change Rank");
+            foreach (OfficerRank r in Enum.GetValues<OfficerRank>())
+            {
+                var rank = r;
+                rankMenu.DropDownItems.Add(r.ToString(), null, (_, _) =>
+                {
+                    officer.Rank = rank;
+                    DataChanged?.Invoke(); Invalidate();
+                });
+            }
+            menu.Items.Add(rankMenu);
+
+            var combatMenu = new ToolStripMenuItem($"Combat Type ({officer.CombatType})");
+            foreach (EnemyType et in Enum.GetValues<EnemyType>())
+            {
+                if (et == EnemyType.None) continue;
+                var ct = et;
+                combatMenu.DropDownItems.Add(et.ToString(), null, (_, _) =>
+                {
+                    officer.CombatType = ct;
+                    DataChanged?.Invoke(); Invalidate();
+                });
+            }
+            menu.Items.Add(combatMenu);
+
+            menu.Items.Add("Delete Officer", null, (_, _) =>
+            {
+                Floor!.Officers.Remove(officer);
+                DataChanged?.Invoke(); Invalidate();
+            });
+            menu.Items.Add(new ToolStripSeparator());
+        }
+
+        if (npc != null)
+        {
+            menu.Items.Add($"--- NPC: {npc.Name} (Dialog {npc.DialogId}) ---").Enabled = false;
+            menu.Items.Add("Rename...", null, (_, _) =>
+            {
+                string? name = ShowInputDialog("NPC name:", npc.Name);
+                if (name != null) { npc.Name = name; DataChanged?.Invoke(); Invalidate(); }
+            });
+            menu.Items.Add("Set Dialog ID...", null, (_, _) =>
+            {
+                string? val = ShowInputDialog("Dialog ID:", npc.DialogId.ToString());
+                if (val != null && int.TryParse(val, out int id))
+                {
+                    npc.DialogId = id;
+                    DataChanged?.Invoke(); Invalidate();
+                }
+            });
+            menu.Items.Add("Delete NPC", null, (_, _) =>
+            {
+                Floor!.Npcs.Remove(npc);
+                DataChanged?.Invoke(); Invalidate();
+            });
+        }
+
+        // Remove trailing separator if present
+        if (menu.Items.Count > 0 && menu.Items[^1] is ToolStripSeparator)
+            menu.Items.RemoveAt(menu.Items.Count - 1);
+
+        menu.Show(this, screenPos);
+    }
+
+    private static string? ShowInputDialog(string prompt, string defaultValue)
+    {
+        var form = new Form
+        {
+            Text = prompt, Width = 320, Height = 140,
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            StartPosition = FormStartPosition.CenterParent,
+            BackColor = Color.FromArgb(30, 30, 35),
+            ForeColor = Color.White,
+            MaximizeBox = false, MinimizeBox = false,
+        };
+        var lbl = new Label { Text = prompt, Left = 10, Top = 10, Width = 280, ForeColor = Color.White };
+        var txt = new TextBox
+        {
+            Left = 10, Top = 32, Width = 280, Text = defaultValue,
+            BackColor = Color.FromArgb(40, 40, 50), ForeColor = Color.White,
+        };
+        var btnOk = new Button
+        {
+            Text = "OK", Left = 140, Top = 62, Width = 70, DialogResult = DialogResult.OK,
+            FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(50, 50, 60), ForeColor = Color.White,
+        };
+        var btnCancel = new Button
+        {
+            Text = "Cancel", Left = 220, Top = 62, Width = 70, DialogResult = DialogResult.Cancel,
+            FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(50, 50, 60), ForeColor = Color.White,
+        };
+        form.Controls.AddRange(new Control[] { lbl, txt, btnOk, btnCancel });
+        form.AcceptButton = btnOk;
+        form.CancelButton = btnCancel;
+        return form.ShowDialog() == DialogResult.OK ? txt.Text : null;
     }
 
     protected override void OnMouseMove(MouseEventArgs e)
@@ -286,6 +466,8 @@ public class GridPanel : Panel
         base.OnMouseUp(e);
         _painting = false;
     }
+
+    // ── Tool application ─────────────────────────────────
 
     private void ApplyTool(int gx, int gy)
     {
@@ -341,6 +523,7 @@ public class GridPanel : Panel
                     {
                         GX = gx, GY = gy,
                         Rank = PlaceOfficerRank,
+                        CombatType = PlaceOfficerCombatType,
                         Name = $"{PlaceOfficerRank}".ToUpper() + $" OFFICER{oIdx:D2}",
                     });
                 }
@@ -413,8 +596,6 @@ public class GridPanel : Panel
     private void AddRoom(int gx, int gy)
     {
         if (Floor == null) return;
-
-        // Check overlap with existing rooms (1-tile margin)
         if (Floor.RoomOverlaps(gx, gy, RoomBrushW, RoomBrushH))
             return;
 
@@ -424,7 +605,6 @@ public class GridPanel : Panel
             Type = PlaceRoomType, LightOn = true,
         };
 
-        // Carve the room
         for (int py = room.Y; py < room.Y + room.Height; py++)
             for (int px = room.X; px < room.X + room.Width; px++)
                 if (InBounds(px, py))
@@ -448,17 +628,7 @@ public class GridPanel : Panel
 
 public enum EditTool
 {
-    Corridor,
-    Wall,
-    Window,
-    Room,
-    Enemy,
-    Console,
-    Officer,
-    Npc,
-    Spawn,
-    StairsUp,
-    StairsDown,
-    Loot,
-    Eraser,
+    Corridor, Wall, Window, Room,
+    Enemy, Console, Officer, Npc,
+    Spawn, StairsUp, StairsDown, Loot, Eraser,
 }

@@ -13,6 +13,19 @@ public class MainForm : Form
     private Panel? _toolPanel;
     private Panel? _floorPanel;
 
+    // Ship property controls (need refresh on load)
+    private TextBox _shipNameBox = null!;
+    private NumericUpDown _hullHpNum = null!, _hullHpMaxNum = null!;
+    private ComboBox _shipTypeCombo = null!;
+    private CheckBox _hubCheck = null!;
+
+    // Mission editor controls
+    private ListBox _missionList = null!;
+    private ComboBox _missionTypeCombo = null!;
+    private NumericUpDown _missionTargetNum = null!;
+    private TextBox _missionDescBox = null!;
+    private bool _updatingMission;
+
     public MainForm()
     {
         Text = "Space Hulks Level Editor";
@@ -69,33 +82,56 @@ public class MainForm : Form
         // ── Ship Properties ─────────────────────────────
         toolFlow.Controls.Add(MakeLabel("SHIP PROPERTIES"));
 
+        // Ship name
+        toolFlow.Controls.Add(MakeLabel("Name:"));
+        _shipNameBox = new TextBox
+        {
+            Width = 200, Text = "UNNAMED SHIP",
+            BackColor = Color.FromArgb(40, 40, 50), ForeColor = Color.White,
+        };
+        _shipNameBox.TextChanged += (_, _) => _level.ShipName = _shipNameBox.Text;
+        toolFlow.Controls.Add(_shipNameBox);
+
         // Ship type
-        var shipTypeCombo = new ComboBox
+        _shipTypeCombo = new ComboBox
         {
             Width = 200, DropDownStyle = ComboBoxStyle.DropDownList,
             BackColor = Color.FromArgb(40, 40, 50), ForeColor = Color.White,
         };
         foreach (ShipType st in Enum.GetValues<ShipType>())
-            shipTypeCombo.Items.Add(st);
-        shipTypeCombo.SelectedIndex = 0;
-        shipTypeCombo.SelectedIndexChanged += (_, _) =>
+            _shipTypeCombo.Items.Add(st);
+        _shipTypeCombo.SelectedIndex = 0;
+        _shipTypeCombo.SelectedIndexChanged += (_, _) =>
         {
-            if (shipTypeCombo.SelectedItem is ShipType st)
+            if (_shipTypeCombo.SelectedItem is ShipType st)
             {
                 _level.ShipType = st;
                 _preview3D.ShipType = st;
+                _grid.ShipType = st;
             }
         };
-        toolFlow.Controls.Add(shipTypeCombo);
+        toolFlow.Controls.Add(_shipTypeCombo);
+
+        // Hull HP
+        toolFlow.Controls.Add(MakeLabel("Hull HP / Max:"));
+        var hullFlow = new FlowLayoutPanel { Width = 200, Height = 28, FlowDirection = FlowDirection.LeftToRight };
+        _hullHpNum = new NumericUpDown { Minimum = 0, Maximum = 999, Value = 30, Width = 70,
+            BackColor = Color.FromArgb(40, 40, 50), ForeColor = Color.White };
+        _hullHpNum.ValueChanged += (_, _) => _level.HullHp = (int)_hullHpNum.Value;
+        _hullHpMaxNum = new NumericUpDown { Minimum = 0, Maximum = 999, Value = 30, Width = 70,
+            BackColor = Color.FromArgb(40, 40, 50), ForeColor = Color.White };
+        _hullHpMaxNum.ValueChanged += (_, _) => _level.HullHpMax = (int)_hullHpMaxNum.Value;
+        hullFlow.Controls.AddRange(new Control[] { _hullHpNum, _hullHpMaxNum });
+        toolFlow.Controls.Add(hullFlow);
 
         // Hub checkbox
-        var hubCheck = new CheckBox
+        _hubCheck = new CheckBox
         {
             Text = "Hub Ship", ForeColor = Color.White, AutoSize = true,
             Margin = new Padding(2, 4, 2, 2),
         };
-        hubCheck.CheckedChanged += (_, _) => _level.IsHub = hubCheck.Checked;
-        toolFlow.Controls.Add(hubCheck);
+        _hubCheck.CheckedChanged += (_, _) => _level.IsHub = _hubCheck.Checked;
+        toolFlow.Controls.Add(_hubCheck);
 
         // Show exterior toggle
         var extCheck = new CheckBox
@@ -159,13 +195,6 @@ public class MainForm : Form
         roomH.ValueChanged += (_, _) => _grid.RoomBrushH = (int)roomH.Value;
         toolFlow.Controls.Add(roomH);
 
-        var btnDelRoom = MakeButton("Delete Room (click)", 200);
-        btnDelRoom.Click += (_, _) =>
-        {
-            MessageBox.Show("Right-click a room on the grid to delete it.", "Delete Room");
-        };
-        toolFlow.Controls.Add(btnDelRoom);
-
         toolFlow.Controls.Add(MakeLabel("ENTITIES"));
 
         // Enemy placement
@@ -214,6 +243,22 @@ public class MainForm : Form
         };
         toolFlow.Controls.Add(rankCombo);
 
+        // Officer combat type
+        toolFlow.Controls.Add(MakeLabel("Combat Type:"));
+        var combatTypeCombo = new ComboBox
+        {
+            Width = 200, DropDownStyle = ComboBoxStyle.DropDownList,
+            BackColor = Color.FromArgb(40, 40, 50), ForeColor = Color.White,
+        };
+        foreach (EnemyType et in Enum.GetValues<EnemyType>())
+            if (et != EnemyType.None) combatTypeCombo.Items.Add(et);
+        combatTypeCombo.SelectedIndex = 1; // Brute default
+        combatTypeCombo.SelectedIndexChanged += (_, _) =>
+        {
+            if (combatTypeCombo.SelectedItem is EnemyType et) _grid.PlaceOfficerCombatType = et;
+        };
+        toolFlow.Controls.Add(combatTypeCombo);
+
         // NPC placement
         var btnNpc = MakeButton("Place NPC", 200);
         btnNpc.Click += (_, _) => { _grid.Tool = EditTool.Npc; UpdateStatus(); };
@@ -244,6 +289,53 @@ public class MainForm : Form
         dirCombo.SelectedIndex = 1;
         dirCombo.SelectedIndexChanged += (_, _) => _grid.PlaceStairsDir = dirCombo.SelectedIndex;
         toolFlow.Controls.Add(dirCombo);
+
+        // ── Missions ────────────────────────────────────
+        toolFlow.Controls.Add(MakeLabel("MISSIONS"));
+
+        _missionList = new ListBox
+        {
+            Width = 200, Height = 60,
+            BackColor = Color.FromArgb(25, 25, 30), ForeColor = Color.White,
+            BorderStyle = BorderStyle.FixedSingle,
+        };
+        _missionList.SelectedIndexChanged += (_, _) => RefreshMissionEditor();
+        toolFlow.Controls.Add(_missionList);
+
+        var missionBtnFlow = new FlowLayoutPanel { Width = 200, Height = 28, FlowDirection = FlowDirection.LeftToRight };
+        var btnAddMission = MakeButton("Add", 95);
+        btnAddMission.Click += (_, _) => AddMission();
+        var btnRemMission = MakeButton("Remove", 95);
+        btnRemMission.Click += (_, _) => RemoveMission();
+        missionBtnFlow.Controls.AddRange(new Control[] { btnAddMission, btnRemMission });
+        toolFlow.Controls.Add(missionBtnFlow);
+
+        toolFlow.Controls.Add(MakeLabel("Type:"));
+        _missionTypeCombo = new ComboBox
+        {
+            Width = 200, DropDownStyle = ComboBoxStyle.DropDownList,
+            BackColor = Color.FromArgb(40, 40, 50), ForeColor = Color.White,
+        };
+        foreach (MissionType mt in Enum.GetValues<MissionType>())
+            _missionTypeCombo.Items.Add(mt);
+        _missionTypeCombo.SelectedIndex = 0;
+        _missionTypeCombo.SelectedIndexChanged += (_, _) => UpdateSelectedMission();
+        toolFlow.Controls.Add(_missionTypeCombo);
+
+        toolFlow.Controls.Add(MakeLabel("Target Officer:"));
+        _missionTargetNum = new NumericUpDown { Minimum = -1, Maximum = 16, Value = -1, Width = 80,
+            BackColor = Color.FromArgb(40, 40, 50), ForeColor = Color.White };
+        _missionTargetNum.ValueChanged += (_, _) => UpdateSelectedMission();
+        toolFlow.Controls.Add(_missionTargetNum);
+
+        toolFlow.Controls.Add(MakeLabel("Description:"));
+        _missionDescBox = new TextBox
+        {
+            Width = 200,
+            BackColor = Color.FromArgb(40, 40, 50), ForeColor = Color.White,
+        };
+        _missionDescBox.TextChanged += (_, _) => UpdateSelectedMission();
+        toolFlow.Controls.Add(_missionDescBox);
 
         toolPanel.Controls.Add(toolFlow);
 
@@ -348,10 +440,73 @@ public class MainForm : Form
     public void Enter3DPreview() => _tabs.SelectedIndex = 1;
     public void Exit3DPreview() => _tabs.SelectedIndex = 0;
 
+    // ── Mission editor ──────────────────────────────────
+
+    private void RefreshMissionList()
+    {
+        _missionList.Items.Clear();
+        foreach (var m in _level.Missions)
+            _missionList.Items.Add($"{m.Type}: {(m.Description.Length > 20 ? m.Description[..20] + "..." : m.Description)}");
+    }
+
+    private void RefreshMissionEditor()
+    {
+        if (_missionList.SelectedIndex < 0 || _missionList.SelectedIndex >= _level.Missions.Count)
+            return;
+        _updatingMission = true;
+        var m = _level.Missions[_missionList.SelectedIndex];
+        _missionTypeCombo.SelectedItem = m.Type;
+        _missionTargetNum.Value = m.TargetOfficer;
+        _missionDescBox.Text = m.Description;
+        _updatingMission = false;
+    }
+
+    private void UpdateSelectedMission()
+    {
+        if (_updatingMission) return;
+        if (_missionList.SelectedIndex < 0 || _missionList.SelectedIndex >= _level.Missions.Count)
+            return;
+        var m = _level.Missions[_missionList.SelectedIndex];
+        if (_missionTypeCombo.SelectedItem is MissionType mt) m.Type = mt;
+        m.TargetOfficer = (int)_missionTargetNum.Value;
+        m.Description = _missionDescBox.Text;
+        RefreshMissionList();
+    }
+
+    private void AddMission()
+    {
+        _level.Missions.Add(new MissionData { Description = "New mission" });
+        RefreshMissionList();
+        _missionList.SelectedIndex = _level.Missions.Count - 1;
+    }
+
+    private void RemoveMission()
+    {
+        int idx = _missionList.SelectedIndex;
+        if (idx < 0 || idx >= _level.Missions.Count) return;
+        _level.Missions.RemoveAt(idx);
+        RefreshMissionList();
+    }
+
+    // ── Level helpers ───────────────────────────────────
+
+    private void SyncControlsFromLevel()
+    {
+        _shipNameBox.Text = _level.ShipName;
+        _shipTypeCombo.SelectedItem = _level.ShipType;
+        _hubCheck.Checked = _level.IsHub;
+        _hullHpNum.Value = Math.Clamp(_level.HullHp, 0, 999);
+        _hullHpMaxNum.Value = Math.Clamp(_level.HullHpMax, 0, 999);
+        _preview3D.ShipType = _level.ShipType;
+        _grid.ShipType = _level.ShipType;
+        RefreshMissionList();
+    }
+
     private void NewLevel()
     {
         _level = new LevelData();
         _currentFloor = 0;
+        SyncControlsFromLevel();
         RefreshFloorList();
     }
 
@@ -374,7 +529,6 @@ public class MainForm : Form
         _currentFloor = idx;
         _grid.Floor = _level.Floors[idx];
         _grid.Invalidate();
-        // Keep 3D preview in sync
         _preview3D.Floor = _level.Floors[idx];
         if (_tabs.SelectedIndex == 1)
             _preview3D.StartPreview();
@@ -427,6 +581,7 @@ public class MainForm : Form
             _level.Floors.Add(LevelGenerator.Generate(i, hasDown, hasUp, 42 + i * 777, gridSize, gridSize));
         }
         _currentFloor = 0;
+        SyncControlsFromLevel();
         RefreshFloorList();
     }
 
@@ -443,6 +598,7 @@ public class MainForm : Form
             {
                 _level = LevelSerializer.Load(dlg.FileName);
                 _currentFloor = 0;
+                SyncControlsFromLevel();
                 RefreshFloorList();
             }
             catch (Exception ex)

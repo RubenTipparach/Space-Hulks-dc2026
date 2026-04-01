@@ -193,8 +193,12 @@ public class Preview3DPanel : Panel
                         roomTint = RoomColors[room.Type];
                     }
 
-                    Bitmap? topTex = TextureCache.WallA;
-                    Bitmap? sideTex = isWindow ? TextureCache.WallAWindow : TextureCache.WallA;
+                    bool alien = ShipType == ShipType.Alien;
+                    Bitmap? wallTex = alien ? TextureCache.Bricks : TextureCache.WallA;
+                    Bitmap? topTex = wallTex;
+                    Bitmap? sideTex = isWindow
+                        ? (alien ? TextureCache.Bricks : TextureCache.WallAWindow)
+                        : wallTex;
 
                     // Top face
                     var topPts = ProjectQuad(x0, WallH, z0, x1, WallH, z0, x1, WallH, z1, x0, WallH, z1,
@@ -247,10 +251,11 @@ public class Preview3DPanel : Panel
                         roomTint = RoomColors[room.Type];
                     }
 
+                    Bitmap? floorTex = ShipType == ShipType.Alien ? TextureCache.Stone : TextureCache.Floor;
                     var floorPts = ProjectQuad(x0, 0, z0, x1, 0, z0, x1, 0, z1, x0, 0, z1,
                         camX, camY, camZ, W, H, out float fd);
                     if (floorPts != null)
-                        quads.Add(new RenderQuad(floorPts, fc, fd, TextureCache.Floor, false, 1f, roomTint));
+                        quads.Add(new RenderQuad(floorPts, fc, fd, floorTex, false, 1f, roomTint));
                 }
             }
         }
