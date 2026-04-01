@@ -9,6 +9,7 @@ public class MainForm : Form
     private readonly Preview3DPanel _preview3D;
     private bool _in3D;
     private readonly Label _modeLabel;
+    private Button _btn2D = null!, _btn3D = null!;
     private readonly ListBox _floorList;
     private readonly Label _statusLabel;
     private Panel? _toolPanel;
@@ -385,16 +386,31 @@ public class MainForm : Form
         };
         Controls.Add(_statusLabel);
 
-        // ── Mode label (shows current view) ─────────────
+        // ── 2D / 3D toggle buttons ─────────────────────
+        var modeBar = new Panel { Dock = DockStyle.Top, Height = 32, BackColor = Color.FromArgb(25, 25, 35) };
+        var btn2D = new Button
+        {
+            Text = "2D EDITOR", Width = 120, Height = 28, Location = new Point(4, 2),
+            FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(60, 130, 180), ForeColor = Color.White,
+            Font = new Font("Consolas", 10, FontStyle.Bold),
+        };
+        var btn3D = new Button
+        {
+            Text = "3D PREVIEW", Width = 120, Height = 28, Location = new Point(128, 2),
+            FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(50, 50, 60), ForeColor = Color.White,
+            Font = new Font("Consolas", 10, FontStyle.Bold),
+        };
+        btn2D.Click += (_, _) => Toggle3D(false);
+        btn3D.Click += (_, _) => Toggle3D(true);
         _modeLabel = new Label
         {
-            Dock = DockStyle.Top, Height = 28,
-            Text = "  2D EDITOR  (F5 = toggle 3D)",
-            ForeColor = Color.Cyan,
-            BackColor = Color.FromArgb(25, 25, 35),
-            Font = new Font("Consolas", 10, FontStyle.Bold),
-            TextAlign = ContentAlignment.MiddleLeft,
+            Text = "F5", AutoSize = true, Location = new Point(256, 7),
+            ForeColor = Color.Gray, Font = new Font("Consolas", 8),
         };
+        modeBar.Controls.AddRange(new Control[] { btn2D, btn3D, _modeLabel });
+
+        // Store button refs for highlight updates
+        _btn2D = btn2D; _btn3D = btn3D;
 
         // ── Center panels (grid + preview, only one visible) ──
         _grid.Dock = DockStyle.Fill;
@@ -404,7 +420,7 @@ public class MainForm : Form
         // ── Layout ──────────────────────────────────────
         Controls.Add(_grid);
         Controls.Add(_preview3D);
-        Controls.Add(_modeLabel);
+        Controls.Add(modeBar);
         Controls.Add(toolPanel);
         Controls.Add(floorPanel);
 
@@ -435,8 +451,6 @@ public class MainForm : Form
             _preview3D.StartPreview();
             _grid.Visible = false;
             _preview3D.Visible = true;
-            _modeLabel.Text = "  3D PREVIEW  (F5 = back to 2D | ESC = exit)";
-            _modeLabel.ForeColor = Color.Yellow;
         }
         else
         {
@@ -444,10 +458,10 @@ public class MainForm : Form
             _preview3D.Visible = false;
             _grid.Visible = true;
             _grid.Invalidate();
-            _modeLabel.Text = "  2D EDITOR  (F5 = toggle 3D)";
-            _modeLabel.ForeColor = Color.Cyan;
             UpdateStatus();
         }
+        _btn2D.BackColor = _in3D ? Color.FromArgb(50, 50, 60) : Color.FromArgb(60, 130, 180);
+        _btn3D.BackColor = _in3D ? Color.FromArgb(60, 130, 180) : Color.FromArgb(50, 50, 60);
     }
 
     // ── Mission editor ──────────────────────────────────
