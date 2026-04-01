@@ -413,10 +413,10 @@ void main(){
 
         if (ShowAllFloors && Level != null && Level.Floors.Count > 1)
         {
-            // All floors at same Y, stacked on top of each other
+            // All floors stacked vertically
             for (int fi = 0; fi < Level.Floors.Count; fi++)
             {
-                _yOff = 0;
+                _yOff = fi * FloorSpacing;
                 BuildFloorGeometry(Level.Floors[fi], alien);
             }
         }
