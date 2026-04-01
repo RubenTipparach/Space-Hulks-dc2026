@@ -589,6 +589,7 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
                 return; /* don't consume card */
             }
             break;
+        }
 
         case CARD_OVERCHARGE:
             cs->energy += 2;
