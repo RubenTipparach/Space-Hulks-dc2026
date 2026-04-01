@@ -578,6 +578,12 @@ public class Preview3DPanel : Panel
         using var hudFont = new Font("Consolas", 9);
         e.Graphics.DrawString("LMB:Orbit  RMB:Pan  Scroll:Zoom  ESC:Exit",
             hudFont, Brushes.LightGray, 4, Height - 18);
+
+        // Debug: show exterior state
+        if (ShowExterior)
+        {
+            e.Graphics.DrawString("EXTERIOR: ON", hudFont, Brushes.Yellow, 4, Height - 36);
+        }
     }
 
     // ── Helpers ──────────────────────────────────────────────────
