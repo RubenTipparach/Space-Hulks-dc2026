@@ -9,7 +9,7 @@ namespace SpaceHulksLevelEditor;
 public class Preview3DPanel : Panel
 {
     public FloorData? Floor { get; set; }
-    public bool ShowExterior { get; set; }
+    public bool ShowExterior { get; set; } = true;
     public ShipType ShipType { get; set; } = ShipType.Human;
 
     private GLControl? _gl;
@@ -185,6 +185,8 @@ void main(){
         TextureCache.EnsureLoaded();
         if (TextureCache.WallA == null) return; // not ready yet
         _glTexLoaded = true;
+        System.Diagnostics.Debug.WriteLine($"[TEX] WallA={TextureCache.WallA?.Width}x{TextureCache.WallA?.Height} " +
+            $"ExtWall={TextureCache.ExteriorWall?.Width}x{TextureCache.ExteriorWall?.Height}");
         _glTex["wall_a"] = UploadTex(TextureCache.WallA);
         _glTex["wall_a_win"] = UploadTex(TextureCache.WallAWindow);
         _glTex["floor"] = UploadTex(TextureCache.Floor);
@@ -366,6 +368,9 @@ void main(){
         if (Floor == null) return;
         int extW = alien ? Tex("alien_ext") : Tex("ext_wall");
         int extWin = alien ? Tex("alien_ext_win") : Tex("ext_win");
+        // Fallback if exterior textures didn't load
+        if (extW == 0) extW = Tex("wall_a");
+        if (extWin == 0) extWin = Tex("wall_a_win");
         Color ec = alien ? Color.FromArgb(120, 60, 80) : Color.FromArgb(255, 255, 255);
         Color es = Darken(ec, 0.85f);
         const float ExtH = WallH;
