@@ -268,13 +268,16 @@ public class GridPanel : Panel
             }
         }
 
-        // Expand to adjacent walls
+        // Expand: walls adjacent to reachable open cells (collect first to avoid cascade)
+        var toExpand = new List<(int y, int x)>();
         for (int gy = 1; gy <= h; gy++)
             for (int gx = 1; gx <= w; gx++)
                 if (IsWallLike(Floor.Map[gy, gx]) && !inside[gy, gx])
                     if ((gy > 1 && inside[gy - 1, gx]) || (gy < h && inside[gy + 1, gx]) ||
                         (gx > 1 && inside[gy, gx - 1]) || (gx < w && inside[gy, gx + 1]))
-                        inside[gy, gx] = true;
+                        toExpand.Add((gy, gx));
+        foreach (var (ey, ex) in toExpand)
+            inside[ey, ex] = true;
 
         // Draw perimeter lines where inside meets non-inside
         using var pen = new Pen(Color.FromArgb(200, 40, 120, 255), 2);

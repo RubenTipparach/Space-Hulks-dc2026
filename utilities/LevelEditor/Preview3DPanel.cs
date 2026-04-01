@@ -416,13 +416,17 @@ void main(){
             }
         }
 
-        // Expand: walls adjacent to reachable cells are also inside
+        // Expand: walls adjacent to reachable open cells are also inside
+        // Collect first to avoid cascade (reading modified array)
+        var toExpand = new List<(int y, int x)>();
         for (int gy = 1; gy <= h; gy++)
             for (int gx = 1; gx <= w; gx++)
                 if (IsWallLike(Floor.Map[gy, gx]) && !inside[gy, gx])
                     if ((gy > 1 && inside[gy - 1, gx]) || (gy < h && inside[gy + 1, gx]) ||
                         (gx > 1 && inside[gy, gx - 1]) || (gx < w && inside[gy, gx + 1]))
-                        inside[gy, gx] = true;
+                        toExpand.Add((gy, gx));
+        foreach (var (ey, ex) in toExpand)
+            inside[ey, ex] = true;
 
         // Draw exterior walls at boundaries (inside cell next to non-inside)
         // Reversed winding from interior so backface culling shows outside only
