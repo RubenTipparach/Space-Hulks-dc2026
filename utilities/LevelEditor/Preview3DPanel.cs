@@ -405,9 +405,7 @@ void main(){
                 if (outside[gy, gx + 1])
                     WallQuad(ft, x1, 0, z1, x1, 0, z0, x1, ExtH, z0, x1, ExtH, z1, ec);
 
-                // Roof only over wall cells (not corridors/rooms — those stay visible)
-                if (IsWallLike(Floor.Map[gy, gx]))
-                    FlatQuad(roofTex, x0, ExtH, z0, x1, z1, Darken(ec, 0.85f));
+                // No roof — just exterior walls
             }
         }
     }
