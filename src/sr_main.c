@@ -96,6 +96,8 @@ static bool ui_row_hover(int bx, int by, int bw, int bh, bool *out_hovered) {
     return clicked;
 }
 
+#include "sr_json.h"
+#include "sr_level_loader.h"
 #include "sr_ship.h"
 #include "sr_scene_ship_hub.h"
 #include "sr_menu.h"
