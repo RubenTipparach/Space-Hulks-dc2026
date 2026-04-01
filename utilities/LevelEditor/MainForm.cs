@@ -423,12 +423,46 @@ public class MainForm : Form
         };
         btn2D.Click += (_, _) => Toggle3D(false);
         btn3D.Click += (_, _) => Toggle3D(true);
+        var btnAllFloors = new Button
+        {
+            Text = "ALL FLOORS", Width = 120, Height = 28, Location = new Point(256, 2),
+            FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(50, 50, 60), ForeColor = Color.White,
+            Font = new Font("Consolas", 10, FontStyle.Bold),
+        };
+        btnAllFloors.Click += (_, _) =>
+        {
+            _preview3D.ShowAllFloors = !_preview3D.ShowAllFloors;
+            btnAllFloors.BackColor = _preview3D.ShowAllFloors ? Color.FromArgb(60, 130, 180) : Color.FromArgb(50, 50, 60);
+            if (!_in3D) Toggle3D(true);
+        };
+        var btnWireframe = new Button
+        {
+            Text = "WIREFRAME", Width = 110, Height = 28, Location = new Point(384, 2),
+            FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(60, 130, 180), ForeColor = Color.White,
+            Font = new Font("Consolas", 9, FontStyle.Bold),
+        };
+        btnWireframe.Click += (_, _) =>
+        {
+            _preview3D.ShowWireframe = !_preview3D.ShowWireframe;
+            btnWireframe.BackColor = _preview3D.ShowWireframe ? Color.FromArgb(60, 130, 180) : Color.FromArgb(50, 50, 60);
+        };
+        var btnGhostFloors = new Button
+        {
+            Text = "GHOST", Width = 80, Height = 28, Location = new Point(498, 2),
+            FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(50, 50, 60), ForeColor = Color.White,
+            Font = new Font("Consolas", 9, FontStyle.Bold),
+        };
+        btnGhostFloors.Click += (_, _) =>
+        {
+            _preview3D.ShowGhostFloors = !_preview3D.ShowGhostFloors;
+            btnGhostFloors.BackColor = _preview3D.ShowGhostFloors ? Color.FromArgb(60, 130, 180) : Color.FromArgb(50, 50, 60);
+        };
         _modeLabel = new Label
         {
-            Text = "F5", AutoSize = true, Location = new Point(256, 7),
+            Text = "F5", AutoSize = true, Location = new Point(586, 7),
             ForeColor = Color.Gray, Font = new Font("Consolas", 8),
         };
-        modeBar.Controls.AddRange(new Control[] { btn2D, btn3D, _modeLabel });
+        modeBar.Controls.AddRange(new Control[] { btn2D, btn3D, btnAllFloors, btnWireframe, btnGhostFloors, _modeLabel });
 
         // Store button refs for highlight updates
         _btn2D = btn2D; _btn3D = btn3D;
@@ -589,6 +623,7 @@ public class MainForm : Form
         _grid.Invalidate();
         _preview3D.Floor = _level.Floors[idx];
         _preview3D.Level = _level;
+        _preview3D.CurrentFloorIndex = idx;
         if (_in3D)
             _preview3D.StartPreview();
         UpdateStatus();

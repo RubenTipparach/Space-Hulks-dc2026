@@ -12,8 +12,14 @@ public class Preview3DPanel : Panel
     public LevelData? Level { get; set; }
     public bool ShowExterior { get; set; } = true;
     public bool ShowAllFloors { get; set; }
-    public int HullPadding { get; set; } = 0; // wall layers from interior
-    private const float FloorSpacing = WallH + 1.5f; // vertical gap between floors
+    public bool ShowWireframe { get; set; } = true;
+    public bool ShowGhostFloors { get; set; }
+    public int HullPadding { get; set; } = 0;
+    public int CurrentFloorIndex { get; set; }
+    private const float FloorSpacing = WallH + 1.5f;
+
+    // Ghost floors (transparent adjacent)
+    private readonly Dictionary<int, List<float>> _ghostBatches = new();
     public ShipType ShipType { get; set; } = ShipType.Human;
 
     private GLControl? _gl;
@@ -398,6 +404,7 @@ void main(){
     {
         foreach (var b in _batches.Values) b.Clear();
         foreach (var b in _extBatches.Values) b.Clear();
+        foreach (var b in _ghostBatches.Values) b.Clear();
         _emitToExt = false;
         if (Floor == null) return;
 
@@ -415,6 +422,69 @@ void main(){
         {
             _yOff = 0;
             BuildFloorGeometry(Floor, alien);
+
+            // Ghost transparent adjacent floors
+            if (ShowGhostFloors && Level != null && Level.Floors.Count > 1)
+            {
+                int ci = CurrentFloorIndex;
+                // Floor below
+                if (ci > 0)
+                {
+                    _yOff = -FloorSpacing;
+                    BuildGhostFloor(Level.Floors[ci - 1], alien, 0.2f);
+                }
+                // Floor above
+                if (ci < Level.Floors.Count - 1)
+                {
+                    _yOff = FloorSpacing;
+                    BuildGhostFloor(Level.Floors[ci + 1], alien, 0.2f);
+                }
+                _yOff = 0;
+            }
+        }
+    }
+
+    private void BuildGhostFloor(FloorData floor, bool alien, float alpha)
+    {
+        int w = floor.Width, h = floor.Height;
+        int floorTex = alien ? Tex("stone") : Tex("floor");
+        int wallTex = alien ? Tex("bricks") : Tex("wall_a");
+
+        for (int gy = 1; gy <= h; gy++)
+        {
+            for (int gx = 1; gx <= w; gx++)
+            {
+                float x0 = (gx - 1) * Cell, x1 = gx * Cell;
+                float z0 = (gy - 1) * Cell, z1 = gy * Cell;
+                float yb = _yOff, yt = _yOff + WallH;
+                int ct = floor.Map[gy, gx];
+
+                if (IsWallLike(ct))
+                {
+                    Color wc = Color.FromArgb((int)(alpha * 255), 100, 100, 110);
+                    if (gy > 1 && !IsWallLike(floor.Map[gy - 1, gx]))
+                        WallQuad(wallTex, x0, yb, z0, x1, yb, z0, x1, yt, z0, x0, yt, z0, wc);
+                    if (gy < h && !IsWallLike(floor.Map[gy + 1, gx]))
+                        WallQuad(wallTex, x1, yb, z1, x0, yb, z1, x0, yt, z1, x1, yt, z1, wc);
+                    if (gx > 1 && !IsWallLike(floor.Map[gy, gx - 1]))
+                        WallQuad(wallTex, x0, yb, z1, x0, yb, z0, x0, yt, z0, x0, yt, z1, wc);
+                    if (gx < w && !IsWallLike(floor.Map[gy, gx + 1]))
+                        WallQuad(wallTex, x1, yb, z0, x1, yb, z1, x1, yt, z1, x1, yt, z0, wc);
+                }
+                else
+                {
+                    Color fc = Color.FromArgb((int)(alpha * 255), 80, 80, 80);
+                    // Add ghost to main batches (will be blended)
+                    if (!_ghostBatches.TryGetValue(floorTex, out var b))
+                    {
+                        b = new List<float>(4096);
+                        _ghostBatches[floorTex] = b;
+                    }
+                    // Emit directly to ghost batch
+                    Vert(b, x0, yb, z0, 0, 0, fc); Vert(b, x1, yb, z1, 1, 1, fc); Vert(b, x1, yb, z0, 1, 0, fc);
+                    Vert(b, x0, yb, z0, 0, 0, fc); Vert(b, x0, yb, z1, 0, 1, fc); Vert(b, x1, yb, z1, 1, 1, fc);
+                }
+            }
         }
     }
 
@@ -579,16 +649,14 @@ void main(){
         // Pass 2: exterior geometry (filled)
         DrawBatches(_extBatches);
         // Pass 3: exterior wireframe overlay
-        if (ShowExterior)
+        if (ShowExterior && ShowWireframe)
         {
             GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Line);
-            GL.Uniform1(_useTexLoc, 0); // no texture for wireframe
+            GL.Uniform1(_useTexLoc, 0);
             GL.LineWidth(1.5f);
-            // Re-draw exterior batches as lines with bright color
             foreach (var (texId, data) in _extBatches)
             {
                 if (data.Count == 0) continue;
-                // Rewrite vertex colors to white for wireframe
                 float[] arr = data.ToArray();
                 for (int i = 0; i < arr.Length; i += 9)
                 {
@@ -599,6 +667,14 @@ void main(){
                 GL.DrawArrays(PrimitiveType.Triangles, 0, arr.Length / 9);
             }
             GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Fill);
+        }
+        // Pass 4: ghost floors (transparent, alpha blended)
+        if (_ghostBatches.Values.Any(b => b.Count > 0))
+        {
+            GL.Enable(EnableCap.Blend);
+            GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
+            DrawBatches(_ghostBatches);
+            GL.Disable(EnableCap.Blend);
         }
 
         GL.BindVertexArray(0);
