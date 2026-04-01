@@ -341,7 +341,11 @@ public class Preview3DPanel : Panel
         Color extCol = alien ? Color.FromArgb(120, 60, 80) : Color.FromArgb(60, 80, 130);
         Color extSide = Darken(extCol, 0.7f);
 
-        // Side panels on grid boundaries
+        // Exterior hull offset outward from grid boundary
+        const float Off = 0.3f;
+        const float ExtWallH = WallH + 0.6f; // taller than interior walls
+
+        // Side panels on grid boundaries (offset outward)
         for (int gy = 1; gy <= h; gy++)
         {
             for (int gx = 1; gx <= w; gx++)
@@ -356,66 +360,55 @@ public class Preview3DPanel : Panel
                 float z0 = (gy - 1) * CellSize;
                 float z1 = gy * CellSize;
 
-                // North boundary
+                // North boundary — face shifted north
                 if (gy == 1)
                 {
-                    var pts = ProjectQuad(x1, 0, z0, x0, 0, z0, x0, WallH, z0, x1, WallH, z0,
+                    float zz = z0 - Off;
+                    var pts = ProjectQuad(x1, 0, zz, x0, 0, zz, x0, ExtWallH, zz, x1, ExtWallH, zz,
                         camX, camY, camZ, W, H, out float d);
                     if (pts != null) quads.Add(new RenderQuad(pts, extSide, d, faceTex, true, 0.65f));
                 }
-                // South boundary
+                // South boundary — face shifted south
                 if (gy == h)
                 {
-                    var pts = ProjectQuad(x0, 0, z1, x1, 0, z1, x1, WallH, z1, x0, WallH, z1,
+                    float zz = z1 + Off;
+                    var pts = ProjectQuad(x0, 0, zz, x1, 0, zz, x1, ExtWallH, zz, x0, ExtWallH, zz,
                         camX, camY, camZ, W, H, out float d);
                     if (pts != null) quads.Add(new RenderQuad(pts, extSide, d, faceTex, true, 0.65f));
                 }
-                // West boundary
+                // West boundary — face shifted west
                 if (gx == 1)
                 {
-                    var pts = ProjectQuad(x0, 0, z0, x0, 0, z1, x0, WallH, z1, x0, WallH, z0,
+                    float xx = x0 - Off;
+                    var pts = ProjectQuad(xx, 0, z0, xx, 0, z1, xx, ExtWallH, z1, xx, ExtWallH, z0,
                         camX, camY, camZ, W, H, out float d);
                     if (pts != null) quads.Add(new RenderQuad(pts, extCol, d, faceTex, true, 0.75f));
                 }
-                // East boundary
+                // East boundary — face shifted east
                 if (gx == w)
                 {
-                    var pts = ProjectQuad(x1, 0, z1, x1, 0, z0, x1, WallH, z0, x1, WallH, z1,
+                    float xx = x1 + Off;
+                    var pts = ProjectQuad(xx, 0, z1, xx, 0, z0, xx, ExtWallH, z0, xx, ExtWallH, z1,
                         camX, camY, camZ, W, H, out float d);
                     if (pts != null) quads.Add(new RenderQuad(pts, extCol, d, faceTex, true, 0.75f));
                 }
             }
         }
 
-        // Roof cap (top of hull)
-        float roofY = WallH + 0.05f;
-        for (int gy = 1; gy <= h; gy++)
-        {
-            for (int gx = 1; gx <= w; gx++)
-            {
-                if (!IsWallLike(Floor.Map[gy, gx])) continue;
-                float x0 = (gx - 1) * CellSize, x1 = gx * CellSize;
-                float z0 = (gy - 1) * CellSize, z1 = gy * CellSize;
-                var pts = ProjectQuad(x0, roofY, z1, x1, roofY, z1, x1, roofY, z0, x0, roofY, z0,
-                    camX, camY, camZ, W, H, out float d);
-                if (pts != null) quads.Add(new RenderQuad(pts, extCol, d, extWall, false, 0.85f));
-            }
-        }
+        // Roof cap (covers ALL cells — solid hull top)
+        float roofY = ExtWallH + 0.05f;
+        float rx0 = -Off, rz0 = -Off;
+        float rx1 = w * CellSize + Off, rz1 = h * CellSize + Off;
+        // Draw roof as one large quad
+        var roofPts = ProjectQuad(rx0, roofY, rz1, rx1, roofY, rz1, rx1, roofY, rz0, rx0, roofY, rz0,
+            camX, camY, camZ, W, H, out float roofD);
+        if (roofPts != null) quads.Add(new RenderQuad(roofPts, extCol, roofD, extWall, false, 0.85f));
 
-        // Floor cap (underside of hull)
-        float floorY = -0.05f;
-        for (int gy = 1; gy <= h; gy++)
-        {
-            for (int gx = 1; gx <= w; gx++)
-            {
-                if (!IsWallLike(Floor.Map[gy, gx])) continue;
-                float x0 = (gx - 1) * CellSize, x1 = gx * CellSize;
-                float z0 = (gy - 1) * CellSize, z1 = gy * CellSize;
-                var pts = ProjectQuad(x0, floorY, z0, x1, floorY, z0, x1, floorY, z1, x0, floorY, z1,
-                    camX, camY, camZ, W, H, out float d);
-                if (pts != null) quads.Add(new RenderQuad(pts, Darken(extCol, 0.5f), d, extWall, false, 0.45f));
-            }
-        }
+        // Floor cap (underside)
+        float floorY = -0.1f;
+        var floorPts = ProjectQuad(rx0, floorY, rz0, rx1, floorY, rz0, rx1, floorY, rz1, rx0, floorY, rz1,
+            camX, camY, camZ, W, H, out float floorD);
+        if (floorPts != null) quads.Add(new RenderQuad(floorPts, Darken(extCol, 0.5f), floorD, extWall, false, 0.45f));
     }
 
     private void AddEntityQuads(List<RenderQuad> quads,
