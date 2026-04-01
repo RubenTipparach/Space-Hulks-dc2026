@@ -57,6 +57,12 @@ public class Preview3DPanel : Panel
         [EnemyType.Hiveguard] = Color.FromArgb(70, 110, 210),
     };
 
+    // Render quad with optional texture
+    private record struct RenderQuad(
+        PointF[] Pts, Color Color, float Depth,
+        Bitmap? Tex = null, bool IsVertical = false,
+        float Brightness = 1f, Color Tint = default);
+
     public Preview3DPanel()
     {
         DoubleBuffered = true;
@@ -71,6 +77,7 @@ public class Preview3DPanel : Panel
     public void StartPreview()
     {
         if (Floor == null) return;
+        TextureCache.EnsureLoaded();
         _targetX = Floor.Width * CellSize / 2f;
         _targetZ = Floor.Height * CellSize / 2f;
         _orbitDist = Math.Max(Floor.Width, Floor.Height) * CellSize * 0.8f;
@@ -79,6 +86,9 @@ public class Preview3DPanel : Panel
     }
 
     public void StopPreview() => _tickTimer.Stop();
+
+    private static bool IsWallLike(int cellType) =>
+        cellType == (int)CellType.Wall || cellType == (int)CellType.Window;
 
     // ── Camera math ─────────────────────────────────────────────
     private (float x, float y, float z) GetCameraPos()
@@ -146,10 +156,12 @@ public class Preview3DPanel : Panel
 
         using var g = Graphics.FromImage(_buffer);
         g.SmoothingMode = SmoothingMode.None;
+        g.InterpolationMode = InterpolationMode.NearestNeighbor;
+        g.PixelOffsetMode = PixelOffsetMode.Half;
         g.Clear(BgColor);
 
         // Collect quads, sort by depth (painter's algorithm)
-        var quads = new List<(PointF[] pts, Color color, float depth)>();
+        var quads = new List<RenderQuad>();
 
         int w = Floor.Width, h = Floor.Height;
 
@@ -162,44 +174,62 @@ public class Preview3DPanel : Panel
                 float z0 = (gy - 1) * CellSize;
                 float z1 = gy * CellSize;
 
-                float cx = (x0 + x1) / 2f;
-                float cz = (z0 + z1) / 2f;
+                int cellType = Floor.Map[gy, gx];
 
-                if (Floor.Map[gy, gx] == (int)CellType.Wall)
+                if (IsWallLike(cellType))
                 {
-                    // Wall block — draw top face + visible side faces
+                    bool isWindow = cellType == (int)CellType.Window;
+
+                    // Wall/Window block — draw top face + visible side faces
                     var room = Floor.RoomAt(gx, gy);
                     Color wallCol = WallTop;
+                    Color roomTint = default;
                     if (room != null && RoomColors.ContainsKey(room.Type))
+                    {
                         wallCol = Lerp(WallTop, RoomColors[room.Type], 0.3f);
+                        roomTint = RoomColors[room.Type];
+                    }
+
+                    Bitmap? topTex = TextureCache.WallA;
+                    Bitmap? sideTex = isWindow ? TextureCache.WallAWindow : TextureCache.WallA;
 
                     // Top face
-                    var topPts = ProjectQuad(x0, WallH, z0, x1, WallH, z0, x1, WallH, z1, x0, WallH, z1, camX, camY, camZ, W, H, out float topD);
-                    if (topPts != null) quads.Add((topPts, wallCol, topD));
+                    var topPts = ProjectQuad(x0, WallH, z0, x1, WallH, z0, x1, WallH, z1, x0, WallH, z1,
+                        camX, camY, camZ, W, H, out float topD);
+                    if (topPts != null)
+                        quads.Add(new RenderQuad(topPts, wallCol, topD, topTex, false, 1f, roomTint));
 
-                    // Side faces (only draw if adjacent cell is open)
+                    // Side faces (only draw if adjacent cell is not wall-like)
                     Color sideCol = Darken(wallCol, 0.6f);
                     Color sideCol2 = Darken(wallCol, 0.75f);
 
-                    if (gy > 1 && Floor.Map[gy - 1, gx] != (int)CellType.Wall)
+                    // North
+                    if (gy > 1 && !IsWallLike(Floor.Map[gy - 1, gx]))
                     {
-                        var pts = ProjectQuad(x0, 0, z0, x1, 0, z0, x1, WallH, z0, x0, WallH, z0, camX, camY, camZ, W, H, out float d);
-                        if (pts != null) quads.Add((pts, sideCol, d));
+                        var pts = ProjectQuad(x0, 0, z0, x1, 0, z0, x1, WallH, z0, x0, WallH, z0,
+                            camX, camY, camZ, W, H, out float d);
+                        if (pts != null) quads.Add(new RenderQuad(pts, sideCol, d, sideTex, true, 0.6f, roomTint));
                     }
-                    if (gy < h && Floor.Map[gy + 1, gx] != (int)CellType.Wall)
+                    // South
+                    if (gy < h && !IsWallLike(Floor.Map[gy + 1, gx]))
                     {
-                        var pts = ProjectQuad(x1, 0, z1, x0, 0, z1, x0, WallH, z1, x1, WallH, z1, camX, camY, camZ, W, H, out float d);
-                        if (pts != null) quads.Add((pts, sideCol, d));
+                        var pts = ProjectQuad(x1, 0, z1, x0, 0, z1, x0, WallH, z1, x1, WallH, z1,
+                            camX, camY, camZ, W, H, out float d);
+                        if (pts != null) quads.Add(new RenderQuad(pts, sideCol, d, sideTex, true, 0.6f, roomTint));
                     }
-                    if (gx > 1 && Floor.Map[gy, gx - 1] != (int)CellType.Wall)
+                    // West
+                    if (gx > 1 && !IsWallLike(Floor.Map[gy, gx - 1]))
                     {
-                        var pts = ProjectQuad(x0, 0, z1, x0, 0, z0, x0, WallH, z0, x0, WallH, z1, camX, camY, camZ, W, H, out float d);
-                        if (pts != null) quads.Add((pts, sideCol2, d));
+                        var pts = ProjectQuad(x0, 0, z1, x0, 0, z0, x0, WallH, z0, x0, WallH, z1,
+                            camX, camY, camZ, W, H, out float d);
+                        if (pts != null) quads.Add(new RenderQuad(pts, sideCol2, d, sideTex, true, 0.75f, roomTint));
                     }
-                    if (gx < w && Floor.Map[gy, gx + 1] != (int)CellType.Wall)
+                    // East
+                    if (gx < w && !IsWallLike(Floor.Map[gy, gx + 1]))
                     {
-                        var pts = ProjectQuad(x1, 0, z0, x1, 0, z1, x1, WallH, z1, x1, WallH, z0, camX, camY, camZ, W, H, out float d);
-                        if (pts != null) quads.Add((pts, sideCol2, d));
+                        var pts = ProjectQuad(x1, 0, z0, x1, 0, z1, x1, WallH, z1, x1, WallH, z0,
+                            camX, camY, camZ, W, H, out float d);
+                        if (pts != null) quads.Add(new RenderQuad(pts, sideCol2, d, sideTex, true, 0.75f, roomTint));
                     }
                 }
                 else
@@ -207,11 +237,17 @@ public class Preview3DPanel : Panel
                     // Open cell — floor
                     var room = Floor.RoomAt(gx, gy);
                     Color fc = FloorCol;
+                    Color roomTint = default;
                     if (room != null && RoomColors.ContainsKey(room.Type))
+                    {
                         fc = Lerp(FloorCol, RoomColors[room.Type], 0.25f);
+                        roomTint = RoomColors[room.Type];
+                    }
 
-                    var floorPts = ProjectQuad(x0, 0, z0, x1, 0, z0, x1, 0, z1, x0, 0, z1, camX, camY, camZ, W, H, out float fd);
-                    if (floorPts != null) quads.Add((floorPts, fc, fd));
+                    var floorPts = ProjectQuad(x0, 0, z0, x1, 0, z0, x1, 0, z1, x0, 0, z1,
+                        camX, camY, camZ, W, H, out float fd);
+                    if (floorPts != null)
+                        quads.Add(new RenderQuad(floorPts, fc, fd, TextureCache.Floor, false, 1f, roomTint));
                 }
             }
         }
@@ -220,19 +256,68 @@ public class Preview3DPanel : Panel
         AddEntityQuads(quads, camX, camY, camZ, W, H);
 
         // Sort far to near (painter's)
-        quads.Sort((a, b) => b.depth.CompareTo(a.depth));
+        quads.Sort((a, b) => b.Depth.CompareTo(a.Depth));
 
         // Draw
-        foreach (var (pts, color, _) in quads)
+        foreach (var q in quads)
         {
-            using var brush = new SolidBrush(color);
-            g.FillPolygon(brush, pts);
-            using var pen = new Pen(Darken(color, 0.7f), 1);
-            g.DrawPolygon(pen, pts);
+            if (q.Tex != null)
+            {
+                DrawTexturedQuad(g, q);
+            }
+            else
+            {
+                using var brush = new SolidBrush(q.Color);
+                g.FillPolygon(brush, q.Pts);
+            }
+
+            using var pen = new Pen(Darken(q.Color, 0.7f), 1);
+            g.DrawPolygon(pen, q.Pts);
         }
     }
 
-    private void AddEntityQuads(List<(PointF[] pts, Color color, float depth)> quads,
+    private void DrawTexturedQuad(Graphics g, RenderQuad q)
+    {
+        // Map texture to quad screen coordinates via affine transform
+        // Vertical faces (wall sides): pts[3]=topLeft, pts[2]=topRight, pts[0]=bottomLeft
+        // Horizontal faces (floor/ceiling/top): pts[0]=corner0, pts[1]=corner1, pts[3]=corner3
+        PointF[] mapPts = q.IsVertical
+            ? new[] { q.Pts[3], q.Pts[2], q.Pts[0] }
+            : new[] { q.Pts[0], q.Pts[1], q.Pts[3] };
+
+        try
+        {
+            using var mat = new Matrix(
+                new RectangleF(0, 0, q.Tex!.Width, q.Tex.Height), mapPts);
+            using var texBrush = new TextureBrush(q.Tex, WrapMode.Clamp);
+            texBrush.Transform = mat;
+            g.FillPolygon(texBrush, q.Pts);
+        }
+        catch
+        {
+            // Degenerate affine transform (tiny quad), fall back to solid
+            using var fb = new SolidBrush(q.Color);
+            g.FillPolygon(fb, q.Pts);
+            return;
+        }
+
+        // Darken overlay for side faces
+        if (q.Brightness < 0.99f)
+        {
+            int alpha = (int)((1f - q.Brightness) * 180);
+            using var dark = new SolidBrush(Color.FromArgb(alpha, 0, 0, 0));
+            g.FillPolygon(dark, q.Pts);
+        }
+
+        // Room tint overlay
+        if (q.Tint.A > 0)
+        {
+            using var tint = new SolidBrush(Color.FromArgb(50, q.Tint));
+            g.FillPolygon(tint, q.Pts);
+        }
+    }
+
+    private void AddEntityQuads(List<RenderQuad> quads,
         float camX, float camY, float camZ, int W, int H)
     {
         if (Floor == null) return;
@@ -261,7 +346,7 @@ public class Preview3DPanel : Panel
             AddMarker(quads, l.GX, l.GY, Color.Gold, markerH * 2, pad * 0.7f, camX, camY, camZ, W, H);
     }
 
-    private void AddMarker(List<(PointF[] pts, Color color, float depth)> quads,
+    private void AddMarker(List<RenderQuad> quads,
         int gx, int gy, Color color, float h, float pad,
         float camX, float camY, float camZ, int W, int H)
     {
@@ -272,15 +357,15 @@ public class Preview3DPanel : Panel
 
         // Top
         var top = ProjectQuad(x0, h, z0, x1, h, z0, x1, h, z1, x0, h, z1, camX, camY, camZ, W, H, out float td);
-        if (top != null) quads.Add((top, color, td));
+        if (top != null) quads.Add(new RenderQuad(top, color, td));
 
         // Front face
         var front = ProjectQuad(x0, 0, z1, x1, 0, z1, x1, h, z1, x0, h, z1, camX, camY, camZ, W, H, out float fd);
-        if (front != null) quads.Add((front, Darken(color, 0.7f), fd));
+        if (front != null) quads.Add(new RenderQuad(front, Darken(color, 0.7f), fd));
 
         // Right face
         var right = ProjectQuad(x1, 0, z0, x1, 0, z1, x1, h, z1, x1, h, z0, camX, camY, camZ, W, H, out float rd);
-        if (right != null) quads.Add((right, Darken(color, 0.8f), rd));
+        if (right != null) quads.Add(new RenderQuad(right, Darken(color, 0.8f), rd));
     }
 
     private PointF[]? ProjectQuad(

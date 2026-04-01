@@ -54,7 +54,11 @@ public class GridPanel : Panel
         if (Floor == null) return;
         var g = e.Graphics;
         g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.None;
+        g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.NearestNeighbor;
+        g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.Half;
         g.Clear(Color.FromArgb(20, 20, 25));
+
+        TextureCache.EnsureLoaded();
 
         int w = Floor.Width, h = Floor.Height;
 
@@ -87,8 +91,26 @@ public class GridPanel : Panel
                         Math.Min(255, bg.B / 2 + rc.B / 3));
                 }
 
-                using var brush = new SolidBrush(bg);
-                g.FillRectangle(brush, rect);
+                // Draw texture background then color overlay
+                Bitmap? cellTex = cell switch
+                {
+                    (int)CellType.Wall => TextureCache.WallA,
+                    (int)CellType.Window => TextureCache.WallAWindow,
+                    _ => TextureCache.Floor,
+                };
+
+                if (cellTex != null)
+                {
+                    g.DrawImage(cellTex, rect);
+                    // Blend computed color on top to preserve room tints and theme
+                    using var overlay = new SolidBrush(Color.FromArgb(140, bg));
+                    g.FillRectangle(overlay, rect);
+                }
+                else
+                {
+                    using var brush = new SolidBrush(bg);
+                    g.FillRectangle(brush, rect);
+                }
 
                 // Hover highlight
                 if (gx == _hoverGX && gy == _hoverGY)
