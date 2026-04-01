@@ -15,13 +15,12 @@ public class Preview3DPanel : Panel
     public bool ShowWireframe { get; set; } = true;
     public bool ShowGhostFloors { get; set; }
     public bool ShowRoof { get; set; }
-    public int HullPadding { get; set; } = 0;
+    public EditorState State { get; set; } = new();
     public int CurrentFloorIndex { get; set; }
     private const float FloorSpacing = WallH;
 
     // Ghost floors (transparent adjacent)
     private readonly Dictionary<int, List<float>> _ghostBatches = new();
-    public ShipType ShipType { get; set; } = ShipType.Human;
 
     private GLControl? _gl;
     private bool _glReady;
@@ -290,6 +289,24 @@ void main(){
         Vert(b, x2, y2, z2, u2, v2, col);
     }
 
+    // Emit a triangle (3 verts) for diagonal chamfer walls
+    private void Tri(int tex,
+        float x0, float y0, float z0, float u0, float v0,
+        float x1, float y1, float z1, float u1, float v1,
+        float x2, float y2, float z2, float u2, float v2,
+        Color col)
+    {
+        var dict = _emitToExt ? _extBatches : _batches;
+        if (!dict.TryGetValue(tex, out var b))
+        {
+            b = new List<float>(4096);
+            dict[tex] = b;
+        }
+        Vert(b, x0, y0, z0, u0, v0, col);
+        Vert(b, x1, y1, z1, u1, v1, col);
+        Vert(b, x2, y2, z2, u2, v2, col);
+    }
+
     // Emit a wall-side quad (vertical face) with proper UVs
     private void WallQuad(int tex,
         float x0, float y0, float z0, float x1, float y1, float z1,
@@ -348,7 +365,7 @@ void main(){
         }
 
         // Expand N layers of walls (one pass per layer, collect-then-mark)
-        for (int layer = 0; layer < HullPadding; layer++)
+        for (int layer = 0; layer < (int)Math.Ceiling(State.HullPadding); layer++)
         {
             var toExpand = new List<(int y, int x)>();
             for (int gy = 1; gy <= h; gy++)
@@ -409,7 +426,7 @@ void main(){
         _emitToExt = false;
         if (Floor == null) return;
 
-        bool alien = ShipType == ShipType.Alien;
+        bool alien = State.ShipType == ShipType.Alien;
 
         if (ShowAllFloors && Level != null && Level.Floors.Count > 1)
         {
@@ -569,6 +586,9 @@ void main(){
         Color sN = Darken(ec, 0.6f);
         Color sE = Darken(ec, 0.75f);
 
+        float c = State.HullCorner * Cell; // chamfer offset
+        Color sD = Darken(ec, 0.67f); // diagonal face color
+
         for (int gy = 1; gy <= h; gy++)
         {
             for (int gx = 1; gx <= w; gx++)
@@ -579,29 +599,122 @@ void main(){
                 int ft = isWin ? extWin : extW;
                 float x0 = (gx - 1) * Cell, x1 = gx * Cell;
                 float z0 = (gy - 1) * Cell, z1 = gy * Cell;
-
                 float yb = _yOff, yt = _yOff + ExtH;
-                if (!_hullInside[gy - 1, gx])
-                    WallQuad(ft, x0, yb, z0, x1, yb, z0, x1, yt, z0, x0, yt, z0, sN);
-                if (!_hullInside[gy + 1, gx])
-                    WallQuad(ft, x1, yb, z1, x0, yb, z1, x0, yt, z1, x1, yt, z1, sN);
-                if (!_hullInside[gy, gx - 1])
-                    WallQuad(ft, x0, yb, z1, x0, yb, z0, x0, yt, z0, x0, yt, z1, sE);
-                if (!_hullInside[gy, gx + 1])
-                    WallQuad(ft, x1, yb, z0, x1, yb, z1, x1, yt, z1, x1, yt, z0, sE);
+
+                bool oN = !_hullInside[gy - 1, gx];
+                bool oS = !_hullInside[gy + 1, gx];
+                bool oW = !_hullInside[gy, gx - 1];
+                bool oE = !_hullInside[gy, gx + 1];
+
+                // Detect convex corners
+                bool cNW = oN && oW && c > 0;
+                bool cNE = oN && oE && c > 0;
+                bool cSW = oS && oW && c > 0;
+                bool cSE = oS && oE && c > 0;
+
+                // North wall (x0,z0) to (x1,z0) — trimmed at corners
+                if (oN)
+                {
+                    float nx0 = cNW ? x0 + c : x0;
+                    float nx1 = cNE ? x1 - c : x1;
+                    if (nx0 < nx1)
+                        WallQuad(ft, nx0, yb, z0, nx1, yb, z0, nx1, yt, z0, nx0, yt, z0, sN);
+                }
+                // South wall (x1,z1) to (x0,z1)
+                if (oS)
+                {
+                    float sx0 = cSW ? x0 + c : x0;
+                    float sx1 = cSE ? x1 - c : x1;
+                    if (sx0 < sx1)
+                        WallQuad(ft, sx1, yb, z1, sx0, yb, z1, sx0, yt, z1, sx1, yt, z1, sN);
+                }
+                // West wall (x0,z1) to (x0,z0)
+                if (oW)
+                {
+                    float wz0 = cNW ? z0 + c : z0;
+                    float wz1 = cSW ? z1 - c : z1;
+                    if (wz0 < wz1)
+                        WallQuad(ft, x0, yb, wz1, x0, yb, wz0, x0, yt, wz0, x0, yt, wz1, sE);
+                }
+                // East wall (x1,z0) to (x1,z1)
+                if (oE)
+                {
+                    float ez0 = cNE ? z0 + c : z0;
+                    float ez1 = cSE ? z1 - c : z1;
+                    if (ez0 < ez1)
+                        WallQuad(ft, x1, yb, ez0, x1, yb, ez1, x1, yt, ez1, x1, yt, ez0, sE);
+                }
+
+                // Diagonal chamfer walls at corners
+                if (cNW)
+                    WallQuad(ft, x0, yb, z0 + c, x0 + c, yb, z0, x0 + c, yt, z0, x0, yt, z0 + c, sD);
+                if (cNE)
+                    WallQuad(ft, x1 - c, yb, z0, x1, yb, z0 + c, x1, yt, z0 + c, x1 - c, yt, z0, sD);
+                if (cSW)
+                    WallQuad(ft, x0 + c, yb, z1, x0, yb, z1 - c, x0, yt, z1 - c, x0 + c, yt, z1, sD);
+                if (cSE)
+                    WallQuad(ft, x1, yb, z1 - c, x1 - c, yb, z1, x1 - c, yt, z1, x1, yt, z1 - c, sD);
             }
         }
 
-        // Roof: cover inside cells where no floor exists above
+        // Roof: cover inside cells where no floor exists above, with chamfered corners
         if (ShowRoof)
         {
             int roofTex = Tex("roof");
             Color rc = Darken(ec, 0.85f);
             float roofY = _yOff + ExtH;
             for (int gy = 1; gy <= h; gy++)
+            {
                 for (int gx = 1; gx <= w; gx++)
-                    if (_hullInside[gy, gx] && !HasFloorAbove(floor, gx, gy))
-                        FlatQuad(roofTex, (gx - 1) * Cell, roofY, (gy - 1) * Cell, gx * Cell, gy * Cell, rc);
+                {
+                    if (!_hullInside[gy, gx] || HasFloorAbove(floor, gx, gy)) continue;
+
+                    float x0 = (gx - 1) * Cell, x1 = gx * Cell;
+                    float z0 = (gy - 1) * Cell, z1 = gy * Cell;
+
+                    if (c <= 0)
+                    {
+                        FlatQuad(roofTex, x0, roofY, z0, x1, z1, rc);
+                        continue;
+                    }
+
+                    bool oN = !_hullInside[gy - 1, gx];
+                    bool oS = !_hullInside[gy + 1, gx];
+                    bool oW = !_hullInside[gy, gx - 1];
+                    bool oE = !_hullInside[gy, gx + 1];
+
+                    bool cNW = oN && oW;
+                    bool cNE = oN && oE;
+                    bool cSW = oS && oW;
+                    bool cSE = oS && oE;
+
+                    // Build polygon vertices CW from top-left
+                    var pts = new List<(float x, float z)>(8);
+                    if (cNW) { pts.Add((x0, z0 + c)); pts.Add((x0 + c, z0)); }
+                    else pts.Add((x0, z0));
+                    if (cNE) { pts.Add((x1 - c, z0)); pts.Add((x1, z0 + c)); }
+                    else pts.Add((x1, z0));
+                    if (cSE) { pts.Add((x1, z1 - c)); pts.Add((x1 - c, z1)); }
+                    else pts.Add((x1, z1));
+                    if (cSW) { pts.Add((x0 + c, z1)); pts.Add((x0, z1 - c)); }
+                    else pts.Add((x0, z1));
+
+                    // Triangle fan from center
+                    float cx = (x0 + x1) * 0.5f, cz = (z0 + z1) * 0.5f;
+                    float cu = 0.5f, cv = 0.5f;
+                    float invW = 1f / (x1 - x0), invH = 1f / (z1 - z0);
+                    for (int i = 0; i < pts.Count; i++)
+                    {
+                        var a = pts[i];
+                        var b = pts[(i + 1) % pts.Count];
+                        Tri(roofTex,
+                            cx, roofY, cz, cu, cv,
+                            a.x, roofY, a.z, (a.x - x0) * invW, (a.z - z0) * invH,
+                            b.x, roofY, b.z, (b.x - x0) * invW, (b.z - z0) * invH,
+                            rc);
+                    }
+                }
+            }
         }
     }
 
@@ -670,6 +783,7 @@ void main(){
         // Pass 3: exterior wireframe overlay
         if (ShowExterior && ShowWireframe)
         {
+            GL.Disable(EnableCap.CullFace);
             GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Line);
             GL.Uniform1(_useTexLoc, 0);
             GL.LineWidth(1.5f);
@@ -686,6 +800,7 @@ void main(){
                 GL.DrawArrays(PrimitiveType.Triangles, 0, arr.Length / 9);
             }
             GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Fill);
+            GL.Enable(EnableCap.CullFace);
         }
         // Pass 4: ghost floors (transparent, alpha blended)
         if (_ghostBatches.Values.Any(b => b.Count > 0))

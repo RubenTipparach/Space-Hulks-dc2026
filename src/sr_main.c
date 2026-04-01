@@ -154,6 +154,10 @@ typedef struct {
     bool         saved_console_combat;
 } save_header;
 
+/* Variables used by save/load — declared here so they're visible to game_save/game_load */
+static int current_combat_room = -1;
+static bool console_combat = false;
+
 /* ── WASM persistence helpers ────────────────────────────────────── */
 
 #if defined(__EMSCRIPTEN__)
@@ -365,8 +369,7 @@ static void draw_title_screen(sr_framebuffer *fb_ptr) {
 /* ── Ship-mode game initialization ──────────────────────────────── */
 
 static int last_player_gx = -1, last_player_gy = -1;
-static int current_combat_room = -1; /* ship room index of current combat */
-static bool console_combat = false;  /* true if combat was triggered by console sabotage */
+/* current_combat_room and console_combat declared above save/load section */
 static char dng_hud_msg[64];         /* temporary HUD message for dungeon scene */
 static int  dng_hud_msg_timer = 0;   /* frames remaining to show message */
 

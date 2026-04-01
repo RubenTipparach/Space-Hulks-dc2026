@@ -9,8 +9,7 @@ public class GridPanel : Panel
     public RoomType PlaceConsoleType { get; set; } = RoomType.Bridge;
     public OfficerRank PlaceOfficerRank { get; set; } = OfficerRank.Ensign;
     public EnemyType PlaceOfficerCombatType { get; set; } = EnemyType.Brute;
-    public ShipType ShipType { get; set; } = ShipType.Human;
-    public int HullPadding { get; set; } = 0;
+    public EditorState State { get; set; } = new();
     public int PlaceStairsDir { get; set; }
     public int RoomBrushW { get; set; } = 3;
     public int RoomBrushH { get; set; } = 3;
@@ -74,7 +73,7 @@ public class GridPanel : Panel
         g.Clear(Color.FromArgb(20, 20, 25));
 
         TextureCache.EnsureLoaded();
-        bool alien = ShipType == ShipType.Alien;
+        bool alien = State.ShipType == ShipType.Alien;
 
         int w = Floor.Width, h = Floor.Height;
 
@@ -295,7 +294,7 @@ public class GridPanel : Panel
         }
 
         // Expand N layers of walls
-        for (int layer = 0; layer < HullPadding; layer++)
+        for (int layer = 0; layer < (int)Math.Ceiling(State.HullPadding); layer++)
         {
             var toExpand = new List<(int y, int x)>();
             for (int gy = 1; gy <= h; gy++)
@@ -320,6 +319,7 @@ public class GridPanel : Panel
 
         // Draw perimeter lines where inside meets non-inside
         using var pen = new Pen(Color.FromArgb(200, 40, 120, 255), 2);
+        float cp = State.HullCorner * CellSize; // chamfer offset in pixels
         for (int gy = 1; gy <= h; gy++)
         {
             for (int gx = 1; gx <= w; gx++)
@@ -328,14 +328,46 @@ public class GridPanel : Panel
                 int px = Margin + (gx - 1) * CellSize;
                 int py = MarginY + (gy - 1) * CellSize;
 
-                if (!inside[gy - 1, gx]) // north edge
-                    g.DrawLine(pen, px, py, px + CellSize, py);
-                if (!inside[gy + 1, gx]) // south edge
-                    g.DrawLine(pen, px, py + CellSize, px + CellSize, py + CellSize);
-                if (!inside[gy, gx - 1]) // west edge
-                    g.DrawLine(pen, px, py, px, py + CellSize);
-                if (!inside[gy, gx + 1]) // east edge
-                    g.DrawLine(pen, px + CellSize, py, px + CellSize, py + CellSize);
+                bool oN = !inside[gy - 1, gx];
+                bool oS = !inside[gy + 1, gx];
+                bool oW = !inside[gy, gx - 1];
+                bool oE = !inside[gy, gx + 1];
+
+                bool cNW = oN && oW && cp > 0;
+                bool cNE = oN && oE && cp > 0;
+                bool cSW = oS && oW && cp > 0;
+                bool cSE = oS && oE && cp > 0;
+
+                if (oN) // north edge
+                {
+                    float nx0 = cNW ? px + cp : px;
+                    float nx1 = cNE ? px + CellSize - cp : px + CellSize;
+                    if (nx0 < nx1) g.DrawLine(pen, nx0, py, nx1, py);
+                }
+                if (oS) // south edge
+                {
+                    float sx0 = cSW ? px + cp : px;
+                    float sx1 = cSE ? px + CellSize - cp : px + CellSize;
+                    if (sx0 < sx1) g.DrawLine(pen, sx0, py + CellSize, sx1, py + CellSize);
+                }
+                if (oW) // west edge
+                {
+                    float wy0 = cNW ? py + cp : py;
+                    float wy1 = cSW ? py + CellSize - cp : py + CellSize;
+                    if (wy0 < wy1) g.DrawLine(pen, px, wy0, px, wy1);
+                }
+                if (oE) // east edge
+                {
+                    float ey0 = cNE ? py + cp : py;
+                    float ey1 = cSE ? py + CellSize - cp : py + CellSize;
+                    if (ey0 < ey1) g.DrawLine(pen, px + CellSize, ey0, px + CellSize, ey1);
+                }
+
+                // Diagonal chamfer lines at corners
+                if (cNW) g.DrawLine(pen, px, py + cp, px + cp, py);
+                if (cNE) g.DrawLine(pen, px + CellSize - cp, py, px + CellSize, py + cp);
+                if (cSW) g.DrawLine(pen, px + cp, py + CellSize, px, py + CellSize - cp);
+                if (cSE) g.DrawLine(pen, px + CellSize, py + CellSize - cp, px + CellSize - cp, py + CellSize);
             }
         }
     }

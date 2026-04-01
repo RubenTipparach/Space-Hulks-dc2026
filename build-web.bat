@@ -15,7 +15,7 @@ if %errorlevel% neq 0 (
 
 if not exist "build\web" mkdir "build\web"
 
-emcc -O2 -std=c99 ^
+emcc -O2 -std=gnu99 ^
     -msimd128 ^
     -s USE_WEBGL2=1 ^
     -s WASM=1 ^

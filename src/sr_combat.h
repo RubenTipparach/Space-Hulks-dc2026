@@ -1121,34 +1121,81 @@ static void combat_action_move_back(combat_state *cs) {
 
 /* ── Card layout helpers ─────────────────────────────────────────── */
 
-#define CARD_W  54
-#define CARD_H  68
-#define CARD_GAP -10  /* negative = overlap */
-#define CARD_W_SEL 80  /* expanded width when selected */
-#define CARD_H_SEL 80  /* expanded height when selected */
-#define CARD_GAP_SEL 4 /* gap around selected card */
+/* ── Fan layout for hand of cards ──────────────────────────────── */
 
-static void combat_card_rect(const combat_state *cs, int i, int *ox, int *oy) {
+#define CARD_FAN_W  70    /* card width */
+#define CARD_FAN_H  96    /* card height */
+
+static uint32_t card_fan_buf[CARD_FAN_W * CARD_FAN_H];
+
+/* Compute fan position for card i. Returns bottom-center (cx, cy) and angle. */
+static void combat_card_fan_pos(const combat_state *cs, int i,
+                                float *out_cx, float *out_cy, float *out_angle) {
     bool is_sel = (i == cs->cursor && cs->phase == CPHASE_PLAYER_TURN);
-    int sel_idx = (cs->phase == CPHASE_PLAYER_TURN) ? cs->cursor : -1;
-    /* Compute total width: selected card gets wider + positive gap, others overlap */
-    int total_w = 0;
-    for (int j = 0; j < cs->hand_count; j++) {
-        int w = (j == sel_idx) ? CARD_W_SEL : CARD_W;
-        int gap = (j == sel_idx || j + 1 == sel_idx) ? CARD_GAP_SEL : CARD_GAP;
-        total_w += w + (j < cs->hand_count - 1 ? gap : 0);
-    }
-    int base_x = (FB_WIDTH - total_w) / 2;
-    int base_y = FB_HEIGHT - CARD_H - 4;
+    int n = cs->hand_count;
+    float mid = (n > 1) ? (n - 1) * 0.5f : 0;
+    float t = (n > 1) ? (i - mid) / mid : 0;  /* -1 to 1 */
 
-    int x = base_x;
-    for (int j = 0; j < i; j++) {
-        int w = (j == sel_idx) ? CARD_W_SEL : CARD_W;
-        int gap = (j == sel_idx || j + 1 == sel_idx) ? CARD_GAP_SEL : CARD_GAP;
-        x += w + gap;
+    /* Horizontal spacing: cards overlap ~40% */
+    float spacing = CARD_FAN_W * 0.6f;
+    float total = (n - 1) * spacing;
+    float cx = (FB_WIDTH - total) * 0.5f + i * spacing;
+
+    /* Vertical: bottom of card near screen bottom, edges dip lower */
+    float cy = (float)FB_HEIGHT + 4.0f + t * t * 10.0f;
+    if (is_sel) cy -= 16;
+
+    /* Fan angle: edge cards tilt outward */
+    float angle = -t * 0.10f;
+
+    *out_cx = cx;
+    *out_cy = cy;
+    *out_angle = angle;
+}
+
+/* Blit source buffer rotated around its bottom-center to dst at (bot_cx, bot_cy) */
+static void combat_blit_card(uint32_t *dst, int dw, int dh,
+                             const uint32_t *src, int sw, int sh,
+                             float bot_cx, float bot_cy, float angle) {
+    float ca = cosf(angle), sa = sinf(angle);
+    float ica = cosf(-angle), isa = sinf(-angle);
+    float hw = sw * 0.5f;
+
+    /* Bounding box from rotated corners */
+    float corners[4][2] = {
+        {-hw, -(float)sh}, {hw, -(float)sh}, {-hw, 0}, {hw, 0}
+    };
+    int x0 = dw, x1 = 0, y0 = dh, y1 = 0;
+    for (int c = 0; c < 4; c++) {
+        int rx = (int)(corners[c][0] * ca - corners[c][1] * sa + bot_cx);
+        int ry = (int)(corners[c][0] * sa + corners[c][1] * ca + bot_cy);
+        if (rx < x0) x0 = rx; if (rx > x1) x1 = rx;
+        if (ry < y0) y0 = ry; if (ry > y1) y1 = ry;
     }
-    *ox = x;
-    *oy = is_sel ? (FB_HEIGHT - CARD_H_SEL - 4) : base_y;
+    if (--x0 < 0) x0 = 0; if (--y0 < 0) y0 = 0;
+    if (++x1 >= dw) x1 = dw - 1; if (++y1 >= dh) y1 = dh - 1;
+
+    for (int dy = y0; dy <= y1; dy++) {
+        for (int dx = x0; dx <= x1; dx++) {
+            float lx = (dx - bot_cx) * ica - (dy - bot_cy) * isa + hw;
+            float ly = (dx - bot_cx) * isa + (dy - bot_cy) * ica + (float)sh;
+            int sx = (int)lx, sy = (int)ly;
+            if (sx >= 0 && sx < sw && sy >= 0 && sy < sh) {
+                uint32_t col = src[sy * sw + sx];
+                if (col & 0xFF000000)
+                    dst[dy * dw + dx] = col;
+            }
+        }
+    }
+}
+
+/* Point-in-rotated-card test (bottom-center anchor) */
+static bool combat_point_in_fan_card(float px, float py,
+                                     float bot_cx, float bot_cy, float angle) {
+    float ica = cosf(-angle), isa = sinf(-angle);
+    float lx = (px - bot_cx) * ica - (py - bot_cy) * isa + CARD_FAN_W * 0.5f;
+    float ly = (px - bot_cx) * isa + (py - bot_cy) * ica + (float)CARD_FAN_H;
+    return lx >= 0 && lx < CARD_FAN_W && ly >= 0 && ly < CARD_FAN_H;
 }
 
 /* ── Touch drag input (Slay the Spire style) ─────────────────────── */
@@ -1201,17 +1248,33 @@ static void combat_touch_began(combat_state *cs, float fx, float fy) {
 
     if (cs->phase != CPHASE_PLAYER_TURN) return;
 
-    /* Check if tapping a card */
-    for (int i = 0; i < cs->hand_count; i++) {
-        int cx, cy;
-        combat_card_rect(cs, i, &cx, &cy);
-        bool is_sel = (i == cs->cursor);
-        int cw = is_sel ? CARD_W_SEL : CARD_W;
-        int ch = is_sel ? CARD_H_SEL : CARD_H;
-        if (fx >= cx && fx < cx + cw && fy >= cy && fy < cy + ch) {
+    /* Check if tapping a card (front-to-back for proper overlap) */
+    {
+        int hit = -1;
+        /* Selected card is on top */
+        int sel = (cs->phase == CPHASE_PLAYER_TURN) ? cs->cursor : -1;
+        if (sel >= 0 && sel < cs->hand_count) {
+            float fcx, fcy, fa;
+            combat_card_fan_pos(cs, sel, &fcx, &fcy, &fa);
+            if (combat_point_in_fan_card(fx, fy, fcx, fcy, fa))
+                hit = sel;
+        }
+        /* Then right-to-left (rightmost drawn last = on top) */
+        if (hit < 0) {
+            for (int i = cs->hand_count - 1; i >= 0; i--) {
+                if (i == sel) continue;
+                float fcx, fcy, fa;
+                combat_card_fan_pos(cs, i, &fcx, &fcy, &fa);
+                if (combat_point_in_fan_card(fx, fy, fcx, fcy, fa)) {
+                    hit = i;
+                    break;
+                }
+            }
+        }
+        if (hit >= 0) {
             cs->dragging = true;
-            cs->drag_card = i;
-            cs->cursor = i;
+            cs->drag_card = hit;
+            cs->cursor = hit;
             cs->drag_x = fx;
             cs->drag_y = fy;
             cs->drag_start_x = fx;
@@ -1663,8 +1726,44 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
         }
     }
 
-    /* ── Distance indicators (per-enemy, shown inline below enemies) ── */
-    /* Removed old single distance display — distance now shown per-enemy */
+    /* ── Distance dots (player-to-enemy range visualization) ──── */
+    if (combat.phase == CPHASE_PLAYER_TURN || combat.phase == CPHASE_DRAW) {
+        int spacing = W / (combat.enemy_count + 1);
+        /* Player icon X for dot line start */
+        int player_x = 24;  /* near player sprite in bottom-left */
+        int dot_y = 130;    /* horizontal band in mid-screen */
+        for (int i = 0; i < combat.enemy_count; i++) {
+            combat_enemy *e = &combat.enemies[i];
+            if (!e->alive) continue;
+            int ecx = spacing * (i + 1);
+
+            /* Draw dots from player to enemy position */
+            int dist = e->distance;
+            int dot_total = dist + 1;  /* +1 for the player's position */
+            int dot_spacing = 12;
+            int dots_w = (dot_total - 1) * dot_spacing;
+            int dx0 = ecx - dots_w / 2;
+
+            for (int d = 0; d < dot_total; d++) {
+                int dx = dx0 + d * dot_spacing;
+                uint32_t dc;
+                if (d == 0)
+                    dc = 0xFF44FF44;  /* player dot: green */
+                else if (d <= e->attack_range)
+                    dc = 0xFF4444FF;  /* in attack range: red */
+                else
+                    dc = 0xFF555555;  /* out of range: gray */
+                combat_draw_rect(px, W, H, dx, dot_y, 4, 4, dc);
+            }
+            /* P and E labels */
+            sr_draw_text_shadow(px, W, H, dx0 - 2, dot_y - 8, "P", 0xFF44FF44, shadow);
+            if (dist > 0) {
+                int ex = dx0 + dist * dot_spacing;
+                uint32_t ecol = (i == combat.target) ? yellow : 0xFFCC4444;
+                sr_draw_text_shadow(px, W, H, ex - 2, dot_y - 8, "E", ecol, shadow);
+            }
+        }
+    }
 
     /* ── Player info (bottom left) ────────────────────────────── */
     {
@@ -1781,24 +1880,27 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
         sr_draw_text_shadow(px, W, H, 50, mb_y + 3, "BCK", 0xFFCC6644, shadow);
     }
 
-    /* ── Hand of cards (bottom) ───────────────────────────────── */
+    /* ── Hand of cards (bottom, fanned) ──────────────────────── */
     {
         int sel_idx = (combat.phase == CPHASE_PLAYER_TURN) ? combat.cursor : -1;
 
-        /* Draw non-selected cards first (back to front), then selected on top */
-        /* Compute positions using combat_card_rect */
+        /* Draw non-selected cards left-to-right, then selected on top */
         for (int pass = 0; pass < 2; pass++) {
             for (int i = 0; i < combat.hand_count; i++) {
                 bool selected = (i == sel_idx);
-                if (pass == 0 && selected) continue;  /* draw selected last */
+                if (pass == 0 && selected) continue;
                 if (pass == 1 && !selected) continue;
                 int card = combat.hand[i];
-                int cx, cy;
-                combat_card_rect(&combat, i, &cx, &cy);
-                int cw = selected ? CARD_W_SEL : CARD_W;
-                int ch = selected ? CARD_H_SEL : CARD_H;
-                combat_draw_card_content(px, W, H, cx, cy, cw, ch,
+                float fcx, fcy, fangle;
+                combat_card_fan_pos(&combat, i, &fcx, &fcy, &fangle);
+                /* Render card to temp buffer */
+                memset(card_fan_buf, 0, sizeof(card_fan_buf));
+                combat_draw_card_content(card_fan_buf, CARD_FAN_W, CARD_FAN_H,
+                                         0, 0, CARD_FAN_W, CARD_FAN_H,
                                          card, selected, shadow, combat.energy);
+                /* Blit rotated to framebuffer */
+                combat_blit_card(px, W, H, card_fan_buf, CARD_FAN_W, CARD_FAN_H,
+                                fcx, fcy, fangle);
             }
         }
     }
@@ -1809,11 +1911,10 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
         int target_type = card_targets[card];
 
         /* Draw line from card to drag position */
-        int cx, cy;
-        combat_card_rect(&combat, combat.drag_card, &cx, &cy);
-        bool drag_sel = (combat.drag_card == combat.cursor);
-        int line_x0 = cx + (drag_sel ? CARD_W_SEL : CARD_W) / 2;
-        int line_y0 = cy;
+        float fcx, fcy, fangle;
+        combat_card_fan_pos(&combat, combat.drag_card, &fcx, &fcy, &fangle);
+        int line_x0 = (int)fcx;
+        int line_y0 = (int)(fcy - CARD_FAN_H);
         int line_x1 = (int)combat.drag_x;
         int line_y1 = (int)combat.drag_y;
 

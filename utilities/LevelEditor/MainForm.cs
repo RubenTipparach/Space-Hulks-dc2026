@@ -7,6 +7,7 @@ public class MainForm : Form
 
     private readonly GridPanel _grid;
     private readonly Preview3DPanel _preview3D;
+    private readonly EditorState _state = new();
     private bool _in3D;
     private readonly Label _modeLabel;
     private Button _btn2D = null!, _btn3D = null!;
@@ -68,6 +69,7 @@ public class MainForm : Form
         {
             Dock = DockStyle.Fill,
             AutoScroll = true,
+            State = _state,
         };
         _grid.DataChanged += () => UpdateStatus();
 
@@ -108,8 +110,7 @@ public class MainForm : Form
             if (_shipTypeCombo.SelectedItem is ShipType st)
             {
                 _level.ShipType = st;
-                _preview3D.ShipType = st;
-                _grid.ShipType = st;
+                _state.ShipType = st;
             }
         };
         toolFlow.Controls.Add(_shipTypeCombo);
@@ -146,10 +147,19 @@ public class MainForm : Form
 
         // Hull padding
         toolFlow.Controls.Add(MakeLabel("Hull Padding:"));
-        var hullPad = new NumericUpDown { Minimum = 0, Maximum = 10, Value = 0, Width = 60,
+        var hullPad = new NumericUpDown { Minimum = 0, Maximum = 10, Value = (decimal)_state.HullPadding, Width = 60,
+            DecimalPlaces = 1, Increment = 0.5m,
             BackColor = Color.FromArgb(40, 40, 50), ForeColor = Color.White };
-        hullPad.ValueChanged += (_, _) => { _preview3D.HullPadding = (int)hullPad.Value; _grid.HullPadding = (int)hullPad.Value; _grid.Invalidate(); };
+        hullPad.ValueChanged += (_, _) => { _state.HullPadding = (float)hullPad.Value; _grid.Invalidate(); };
         toolFlow.Controls.Add(hullPad);
+
+        // Hull corner chamfer
+        toolFlow.Controls.Add(MakeLabel("Hull Corner:"));
+        var hullCorner = new NumericUpDown { Minimum = 0, Maximum = 1, Value = (decimal)_state.HullCorner, Width = 60,
+            DecimalPlaces = 2, Increment = 0.1m,
+            BackColor = Color.FromArgb(40, 40, 50), ForeColor = Color.White };
+        hullCorner.ValueChanged += (_, _) => { _state.HullCorner = (float)hullCorner.Value; _grid.Invalidate(); };
+        toolFlow.Controls.Add(hullCorner);
 
         // Show all floors
         var allFloorsCheck = new CheckBox
@@ -394,7 +404,7 @@ public class MainForm : Form
         Controls.Add(menu);
 
         // ── 3D Preview panel ─────────────────────────────
-        _preview3D = new Preview3DPanel { Dock = DockStyle.Fill };
+        _preview3D = new Preview3DPanel { Dock = DockStyle.Fill, State = _state };
 
         // ── Status bar ──────────────────────────────────
         _statusLabel = new Label
@@ -598,8 +608,7 @@ public class MainForm : Form
         _hubCheck.Checked = _level.IsHub;
         _hullHpNum.Value = Math.Clamp(_level.HullHp, 0, 999);
         _hullHpMaxNum.Value = Math.Clamp(_level.HullHpMax, 0, 999);
-        _preview3D.ShipType = _level.ShipType;
-        _grid.ShipType = _level.ShipType;
+        _state.ShipType = _level.ShipType;
         RefreshMissionList();
     }
 
