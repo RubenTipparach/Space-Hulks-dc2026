@@ -276,24 +276,6 @@ public class GridPanel : Panel
                         (gx > 1 && inside[gy, gx - 1]) || (gx < w && inside[gy, gx + 1]))
                         inside[gy, gx] = true;
 
-        // Convex hull per row + column
-        for (int gy = 1; gy <= h; gy++)
-        {
-            int left = w + 1, right = 0;
-            for (int gx = 1; gx <= w; gx++)
-                if (inside[gy, gx]) { left = Math.Min(left, gx); right = Math.Max(right, gx); }
-            if (left <= right)
-                for (int gx = left; gx <= right; gx++) inside[gy, gx] = true;
-        }
-        for (int gx = 1; gx <= w; gx++)
-        {
-            int top = h + 1, bottom = 0;
-            for (int gy = 1; gy <= h; gy++)
-                if (inside[gy, gx]) { top = Math.Min(top, gy); bottom = Math.Max(bottom, gy); }
-            if (top <= bottom)
-                for (int gy = top; gy <= bottom; gy++) inside[gy, gx] = true;
-        }
-
         // Draw perimeter lines where inside meets non-inside
         using var pen = new Pen(Color.FromArgb(200, 40, 120, 255), 2);
         for (int gy = 1; gy <= h; gy++)

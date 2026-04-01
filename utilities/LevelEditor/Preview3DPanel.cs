@@ -424,28 +424,6 @@ void main(){
                         (gx > 1 && inside[gy, gx - 1]) || (gx < w && inside[gy, gx + 1]))
                         inside[gy, gx] = true;
 
-        // Convex hull per row: for each row, find leftmost and rightmost
-        // inside cell, then mark everything between as inside (fills concavities)
-        for (int gy = 1; gy <= h; gy++)
-        {
-            int left = w + 1, right = 0;
-            for (int gx = 1; gx <= w; gx++)
-                if (inside[gy, gx]) { left = Math.Min(left, gx); right = Math.Max(right, gx); }
-            if (left <= right)
-                for (int gx = left; gx <= right; gx++)
-                    inside[gy, gx] = true;
-        }
-        // Also per column to fill vertical concavities
-        for (int gx = 1; gx <= w; gx++)
-        {
-            int top = h + 1, bottom = 0;
-            for (int gy = 1; gy <= h; gy++)
-                if (inside[gy, gx]) { top = Math.Min(top, gy); bottom = Math.Max(bottom, gy); }
-            if (top <= bottom)
-                for (int gy = top; gy <= bottom; gy++)
-                    inside[gy, gx] = true;
-        }
-
         // Draw exterior walls at boundaries (inside cell next to non-inside)
         // Reversed winding from interior so backface culling shows outside only
         Color sN = Darken(ec, 0.6f);  // north/south shading
