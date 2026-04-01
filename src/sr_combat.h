@@ -34,6 +34,7 @@ enum {
     CARD_LASER,      /* laser: 4 dmg precision single, cost 1 */
     CARD_DEFLECTOR,  /* deflector: +4 shield, reflect 1 dmg, cost 1 */
     CARD_STUN_GUN,   /* stun gun: stun 1 enemy 1 turn, 1 dmg, cost 1 */
+    CARD_MICROWAVE,  /* microwave: 5 dmg, if kill -> 3 dmg all, cost 2 */
     CARD_TYPE_COUNT
 };
 
@@ -41,7 +42,7 @@ static const char *card_names[] = {
     "SHIELD", "SHOOT", "BURST", "MOVE", "MELEE",
     "OVERCHRG", "REPAIR", "STUN", "FORTIFY", "DBL SHOT", "DASH",
     "ICE", "ACID", "FIRE", "LIGHTNING",
-    "SNIPER", "SHOTGUN", "WELDER", "CHAINSAW", "LASER", "DEFLECTR", "STUN GUN"
+    "SNIPER", "SHOTGUN", "WELDER", "CHAINSAW", "LASER", "DEFLECTR", "STUN GUN", "MCROWAVE"
 };
 
 static const uint32_t card_colors[] = {
@@ -67,13 +68,14 @@ static const uint32_t card_colors[] = {
     0xFFFFFF44,  /* laser - bright cyan */
     0xFFDDAA44,  /* deflector - steel blue */
     0xFFCC88FF,  /* stun gun - light purple */
+    0xFF2266EE,  /* microwave - hot orange-red */
 };
 
 static const int card_energy_cost[] = {
     1, 1, 2, 1, 1,  /* base cards */
     0, 2, 1, 2, 2, 2, /* droppable cards */
     1, 1, 1, 2, /* elemental cards */
-    1, 1, 1, 2, 1, 1, 1 /* class-specific: sniper, shotgun, welder, chainsaw, laser, deflector, stun gun */
+    1, 1, 1, 2, 1, 1, 1, 2 /* class-specific: sniper, shotgun, welder, chainsaw, laser, deflector, stun gun, microwave */
 };
 
 /* Card target types */
@@ -102,6 +104,7 @@ static const int card_targets[] = {
     TARGET_ENEMY,         /* LASER */
     TARGET_SELF,          /* DEFLECTOR */
     TARGET_ENEMY,         /* STUN GUN */
+    TARGET_ENEMY,         /* MICROWAVE */
 };
 
 /* ── Character classes ───────────────────────────────────────────── */
@@ -138,8 +141,8 @@ static const char_class char_classes[] = {
     },
     [CLASS_SCIENTIST] = {
         .hp_max = 22,
-        /* 1 shield, 1 shoot, 1 burst, 1 move, 0 melee, ..., laser 2, deflector 2, stun_gun 2 */
-        .deck_composition = { 1, 1, 1, 1, 0, 0,0,0,0,0,0, 0,0,0,0, 0,0,0,0, 2, 2, 2 },
+        /* 1 shield, 1 shoot, 1 burst, 1 move, 0 melee, ..., laser 2, deflector 2, stun_gun 1, microwave 2 */
+        .deck_composition = { 1, 1, 1, 1, 0, 0,0,0,0,0,0, 0,0,0,0, 0,0,0,0, 2, 2, 1, 2 },
         .name = "SCIENTIST",
         .sprite = spr_scientist,
     },
@@ -178,6 +181,7 @@ typedef struct {
     int hp;
     int hp_max;
     int attack_range;  /* distance at which this enemy can attack */
+    int distance;      /* this enemy's distance from player (0=melee, max 5) */
     int damage;
     int ranged;
     int intent;        /* INTENT_ATTACK or INTENT_MOVE */
@@ -196,7 +200,6 @@ typedef struct {
     int player_hp;
     int player_hp_max;
     int player_shield;
-    int player_distance;  /* steps to enemies (0 = melee range) */
     int player_move_pts;  /* move points available to spend this turn */
     int energy;
     int energy_max;
@@ -361,7 +364,6 @@ static void combat_init(combat_state *cs, int player_class, int floor, int cell_
     cs->player_hp_max = g_player.hp_max;
     cs->player_hp = g_player.hp;  /* carry over HP */
     cs->player_shield = 0;
-    cs->player_distance = 3;
     cs->energy = 3;
     cs->energy_max = 3;
 
@@ -392,6 +394,8 @@ static void combat_init(combat_state *cs, int player_class, int floor, int cell_
         cs->enemies[i].attack_range = tmpl->attack_range;
         cs->enemies[i].damage = tmpl->damage;
         cs->enemies[i].ranged = tmpl->ranged;
+        cs->enemies[i].distance = 3 + i; /* stagger: first at 3, rest further */
+        if (cs->enemies[i].distance > 5) cs->enemies[i].distance = 5;
         cs->enemies[i].intent = INTENT_MOVE;
         cs->enemies[i].flash_timer = 0;
         cs->enemies[i].alive = true;
@@ -436,6 +440,29 @@ static void combat_log(combat_state *cs, const char *fmt, ...) {
     cs->log_count++;
 }
 
+/* ── Distance helpers ───────────────────────────────────────────── */
+
+#define COMBAT_MAX_DISTANCE 5
+
+/* Get distance to the targeted enemy (or first alive) */
+static int combat_target_distance(combat_state *cs) {
+    int t = cs->target;
+    if (t >= 0 && t < cs->enemy_count && cs->enemies[t].alive)
+        return cs->enemies[t].distance;
+    for (int i = 0; i < cs->enemy_count; i++)
+        if (cs->enemies[i].alive) return cs->enemies[i].distance;
+    return 0;
+}
+
+/* Get minimum distance across all alive enemies */
+static int combat_min_distance(combat_state *cs) {
+    int mind = COMBAT_MAX_DISTANCE;
+    for (int i = 0; i < cs->enemy_count; i++)
+        if (cs->enemies[i].alive && cs->enemies[i].distance < mind)
+            mind = cs->enemies[i].distance;
+    return mind;
+}
+
 /* ── Enemy intent ───────────────────────────────────────────────── */
 
 static void combat_roll_intents(combat_state *cs) {
@@ -447,7 +474,7 @@ static void combat_roll_intents(combat_state *cs) {
             e->intent = INTENT_MOVE;
             continue;
         }
-        bool in_range = (cs->player_distance <= e->attack_range);
+        bool in_range = (e->distance <= e->attack_range);
         e->intent = in_range ? INTENT_ATTACK : INTENT_MOVE;
     }
 }
@@ -545,19 +572,18 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
             combat_set_message(cs, buf);
             break;
 
-        case CARD_MELEE:
-            if (cs->player_distance <= 0) {
-                int t = cs->target;
-                while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
-                if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
-                if (t >= 0) {
-                    int dmg = 6 + cs->fire_atk_bonus;
-                    combat_deal_damage_enemy(cs, t, dmg);
-                    snprintf(buf, sizeof(buf), "MELEE %s -%dHP!", enemy_templates[cs->enemies[t].type].name, dmg);
-                    combat_set_message(cs, buf);
-                }
+        case CARD_MELEE: {
+            int t = cs->target;
+            while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
+            if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
+            if (t >= 0 && cs->enemies[t].distance <= 0) {
+                int dmg = 6 + cs->fire_atk_bonus;
+                combat_deal_damage_enemy(cs, t, dmg);
+                snprintf(buf, sizeof(buf), "MELEE %s -%dHP!", enemy_templates[cs->enemies[t].type].name, dmg);
+                combat_set_message(cs, buf);
             } else {
-                snprintf(buf, sizeof(buf), "TOO FAR! DIST: %d", cs->player_distance);
+                int d = (t >= 0) ? cs->enemies[t].distance : 0;
+                snprintf(buf, sizeof(buf), "TOO FAR! DIST: %d", d);
                 combat_set_message(cs, buf);
                 cs->energy += cost; /* refund */
                 return; /* don't consume card */
@@ -673,81 +699,81 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
         }
 
         /* ── Class-specific cards ───────────────────────────── */
-        case CARD_SNIPER:
-            if (cs->player_distance >= 2) {
-                int t = cs->target;
-                while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
-                if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
-                if (t >= 0) {
-                    int dmg = 5 + cs->fire_atk_bonus;
-                    combat_deal_damage_enemy(cs, t, dmg);
-                    snprintf(buf, sizeof(buf), "SNIPE %s -%dHP!", enemy_templates[cs->enemies[t].type].name, dmg);
-                    combat_set_message(cs, buf);
-                }
+        case CARD_SNIPER: {
+            int t = cs->target;
+            while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
+            if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
+            if (t >= 0 && cs->enemies[t].distance >= 2) {
+                int dmg = 5 + cs->fire_atk_bonus;
+                combat_deal_damage_enemy(cs, t, dmg);
+                snprintf(buf, sizeof(buf), "SNIPE %s -%dHP!", enemy_templates[cs->enemies[t].type].name, dmg);
+                combat_set_message(cs, buf);
             } else {
-                snprintf(buf, sizeof(buf), "TOO CLOSE! DIST: %d (NEED 2+)", cs->player_distance);
+                int d = (t >= 0) ? cs->enemies[t].distance : 0;
+                snprintf(buf, sizeof(buf), "TOO CLOSE! DIST: %d (NEED 2+)", d);
                 combat_set_message(cs, buf);
                 cs->energy += cost;
                 return;
             }
             break;
+        }
 
-        case CARD_SHOTGUN:
-            if (cs->player_distance <= 1) {
-                int t = cs->target;
-                while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
-                if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
-                if (t >= 0) {
-                    int dmg = 4 + cs->fire_atk_bonus;
-                    combat_deal_damage_enemy(cs, t, dmg);
-                    snprintf(buf, sizeof(buf), "SHOTGUN %s -%dHP!", enemy_templates[cs->enemies[t].type].name, dmg);
-                    combat_set_message(cs, buf);
-                }
+        case CARD_SHOTGUN: {
+            int t = cs->target;
+            while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
+            if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
+            if (t >= 0 && cs->enemies[t].distance <= 1) {
+                int dmg = 4 + cs->fire_atk_bonus;
+                combat_deal_damage_enemy(cs, t, dmg);
+                snprintf(buf, sizeof(buf), "SHOTGUN %s -%dHP!", enemy_templates[cs->enemies[t].type].name, dmg);
+                combat_set_message(cs, buf);
             } else {
-                snprintf(buf, sizeof(buf), "TOO FAR! DIST: %d (NEED 1-)", cs->player_distance);
+                int d = (t >= 0) ? cs->enemies[t].distance : 0;
+                snprintf(buf, sizeof(buf), "TOO FAR! DIST: %d (NEED 1-)", d);
                 combat_set_message(cs, buf);
                 cs->energy += cost;
                 return;
             }
             break;
+        }
 
-        case CARD_WELDER:
-            if (cs->player_distance <= 0) {
-                int t = cs->target;
-                while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
-                if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
-                if (t >= 0) {
-                    int dmg = 4 + cs->fire_atk_bonus;
-                    combat_deal_damage_enemy(cs, t, dmg);
-                    snprintf(buf, sizeof(buf), "WELD %s -%dHP!", enemy_templates[cs->enemies[t].type].name, dmg);
-                    combat_set_message(cs, buf);
-                }
+        case CARD_WELDER: {
+            int t = cs->target;
+            while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
+            if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
+            if (t >= 0 && cs->enemies[t].distance <= 0) {
+                int dmg = 4 + cs->fire_atk_bonus;
+                combat_deal_damage_enemy(cs, t, dmg);
+                snprintf(buf, sizeof(buf), "WELD %s -%dHP!", enemy_templates[cs->enemies[t].type].name, dmg);
+                combat_set_message(cs, buf);
             } else {
-                snprintf(buf, sizeof(buf), "TOO FAR! DIST: %d", cs->player_distance);
+                int d = (t >= 0) ? cs->enemies[t].distance : 0;
+                snprintf(buf, sizeof(buf), "TOO FAR! DIST: %d", d);
                 combat_set_message(cs, buf);
                 cs->energy += cost;
                 return;
             }
             break;
+        }
 
-        case CARD_CHAINSAW:
-            if (cs->player_distance <= 0) {
-                int t = cs->target;
-                while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
-                if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
-                if (t >= 0) {
-                    int dmg = 8 + cs->fire_atk_bonus;
-                    combat_deal_damage_enemy(cs, t, dmg);
-                    snprintf(buf, sizeof(buf), "CHAINSAW %s -%dHP!!", enemy_templates[cs->enemies[t].type].name, dmg);
-                    combat_set_message(cs, buf);
-                }
+        case CARD_CHAINSAW: {
+            int t = cs->target;
+            while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
+            if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
+            if (t >= 0 && cs->enemies[t].distance <= 0) {
+                int dmg = 8 + cs->fire_atk_bonus;
+                combat_deal_damage_enemy(cs, t, dmg);
+                snprintf(buf, sizeof(buf), "CHAINSAW %s -%dHP!!", enemy_templates[cs->enemies[t].type].name, dmg);
+                combat_set_message(cs, buf);
             } else {
-                snprintf(buf, sizeof(buf), "TOO FAR! DIST: %d", cs->player_distance);
+                int d = (t >= 0) ? cs->enemies[t].distance : 0;
+                snprintf(buf, sizeof(buf), "TOO FAR! DIST: %d", d);
                 combat_set_message(cs, buf);
                 cs->energy += cost;
                 return;
             }
             break;
+        }
 
         case CARD_LASER: {
             int t = cs->target;
@@ -780,6 +806,33 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
                 cs->enemies[t].lightning_stun = 1;
                 combat_deal_damage_enemy(cs, t, 1);
                 snprintf(buf, sizeof(buf), "STUN GUN %s! STUN 1T", enemy_templates[cs->enemies[t].type].name);
+                combat_set_message(cs, buf);
+            }
+            break;
+        }
+
+        case CARD_MICROWAVE: {
+            int t = cs->target;
+            while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
+            if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
+            if (t >= 0) {
+                int dmg = 5 + cs->fire_atk_bonus;
+                combat_deal_damage_enemy(cs, t, dmg);
+                if (!cs->enemies[t].alive) {
+                    /* Kill chain: 3 dmg to all surviving enemies */
+                    int chain_kills = 0;
+                    for (int i = 0; i < cs->enemy_count; i++) {
+                        if (i != t && cs->enemies[i].alive) {
+                            combat_deal_damage_enemy(cs, i, 3);
+                            chain_kills++;
+                        }
+                    }
+                    snprintf(buf, sizeof(buf), "MCRWAVE %s KILL! 3DMG ALL",
+                             enemy_templates[cs->enemies[t].type].name);
+                } else {
+                    snprintf(buf, sizeof(buf), "MCRWAVE %s -%dHP",
+                             enemy_templates[cs->enemies[t].type].name, dmg);
+                }
                 combat_set_message(cs, buf);
             }
             break;
@@ -854,9 +907,9 @@ static void combat_tick_status_effects(combat_state *cs) {
 #define ENEMY_ATK_HIT_FRAME      10  /* frame at which damage lands */
 #define ENEMY_ATK_TOTAL_FRAMES   30  /* total anim per enemy */
 
-/* Check if an enemy can attack at current distance */
+/* Check if an enemy can attack at its current distance */
 static bool combat_enemy_in_range(combat_state *cs, int idx) {
-    return cs->player_distance <= cs->enemies[idx].attack_range;
+    return cs->enemies[idx].distance <= cs->enemies[idx].attack_range;
 }
 
 /* Find next enemy that will attack (alive, not stunned, in range) */
@@ -886,7 +939,7 @@ static void combat_begin_enemy_turn(combat_state *cs) {
         return;
     }
 
-    /* All alive non-stunned enemies try to close distance */
+    /* Each alive non-stunned enemy tries to close its own distance */
     for (int i = 0; i < cs->enemy_count; i++) {
         combat_enemy *e = &cs->enemies[i];
         if (!e->alive) continue;
@@ -894,15 +947,10 @@ static void combat_begin_enemy_turn(combat_state *cs) {
         if (e->lightning_stun > 0) continue; /* lightning stun */
         if (e->ice_turns > 0 && (cs->turn % 2) == 0) continue; /* ice: skip move every other turn */
         /* Advance if not yet in attack range */
-        if (cs->player_distance > e->attack_range) {
-            cs->player_distance--;
+        if (e->distance > e->attack_range) {
+            e->distance--;
             combat_log(cs, "%s advances -> dist %d",
-                       enemy_templates[e->type].name, cs->player_distance);
-            char buf[64];
-            snprintf(buf, sizeof(buf), "%s ADVANCES! DIST:%d",
-                     enemy_templates[e->type].name, cs->player_distance);
-            combat_set_message(cs, buf);
-            break; /* one enemy advances per turn */
+                       enemy_templates[e->type].name, e->distance);
         }
     }
 
@@ -1016,23 +1064,26 @@ static void combat_action_end_turn(combat_state *cs) {
     combat_begin_enemy_turn(cs);
 }
 
-/* Spend 1 move point to change distance */
+/* Spend 1 move point to change distance (affects all enemies) */
 static void combat_action_move_forward(combat_state *cs) {
     if (cs->phase != CPHASE_PLAYER_TURN) return;
     if (cs->player_move_pts <= 0) {
         combat_set_message(cs, "NO MOVE POINTS");
         return;
     }
-    if (cs->player_distance <= 0) {
+    int mind = combat_min_distance(cs);
+    if (mind <= 0) {
         combat_set_message(cs, "ALREADY AT MELEE RANGE");
         return;
     }
     cs->player_move_pts--;
-    cs->player_distance--;
-    combat_log(cs, "advance -> dist %d", cs->player_distance);
-    combat_roll_intents(cs); /* enemies react to new distance */
+    for (int i = 0; i < cs->enemy_count; i++)
+        if (cs->enemies[i].alive && cs->enemies[i].distance > 0)
+            cs->enemies[i].distance--;
+    combat_log(cs, "advance -> min dist %d", combat_min_distance(cs));
+    combat_roll_intents(cs);
     char buf[64];
-    snprintf(buf, sizeof(buf), "ADVANCE! DIST:%d MP:%d", cs->player_distance, cs->player_move_pts);
+    snprintf(buf, sizeof(buf), "ADVANCE! MP:%d", cs->player_move_pts);
     combat_set_message(cs, buf);
 }
 
@@ -1043,11 +1094,13 @@ static void combat_action_move_back(combat_state *cs) {
         return;
     }
     cs->player_move_pts--;
-    cs->player_distance++;
-    combat_log(cs, "retreat -> dist %d", cs->player_distance);
-    combat_roll_intents(cs); /* enemies react to new distance */
+    for (int i = 0; i < cs->enemy_count; i++)
+        if (cs->enemies[i].alive && cs->enemies[i].distance < COMBAT_MAX_DISTANCE)
+            cs->enemies[i].distance++;
+    combat_log(cs, "retreat -> min dist %d", combat_min_distance(cs));
+    combat_roll_intents(cs);
     char buf[64];
-    snprintf(buf, sizeof(buf), "RETREAT! DIST:%d MP:%d", cs->player_distance, cs->player_move_pts);
+    snprintf(buf, sizeof(buf), "RETREAT! MP:%d", cs->player_move_pts);
     combat_set_message(cs, buf);
 }
 
@@ -1060,17 +1113,34 @@ static void combat_action_move_back(combat_state *cs) {
 
 /* ── Card layout helpers ─────────────────────────────────────────── */
 
-#define CARD_W  45
-#define CARD_H  54
-#define CARD_GAP 4
+#define CARD_W  54
+#define CARD_H  68
+#define CARD_GAP -10  /* negative = overlap */
+#define CARD_W_SEL 80  /* expanded width when selected */
+#define CARD_H_SEL 80  /* expanded height when selected */
+#define CARD_GAP_SEL 4 /* gap around selected card */
 
 static void combat_card_rect(const combat_state *cs, int i, int *ox, int *oy) {
-    int total_w = cs->hand_count * (CARD_W + CARD_GAP) - CARD_GAP;
+    bool is_sel = (i == cs->cursor && cs->phase == CPHASE_PLAYER_TURN);
+    int sel_idx = (cs->phase == CPHASE_PLAYER_TURN) ? cs->cursor : -1;
+    /* Compute total width: selected card gets wider + positive gap, others overlap */
+    int total_w = 0;
+    for (int j = 0; j < cs->hand_count; j++) {
+        int w = (j == sel_idx) ? CARD_W_SEL : CARD_W;
+        int gap = (j == sel_idx || j + 1 == sel_idx) ? CARD_GAP_SEL : CARD_GAP;
+        total_w += w + (j < cs->hand_count - 1 ? gap : 0);
+    }
     int base_x = (FB_WIDTH - total_w) / 2;
-    int base_y = FB_HEIGHT - CARD_H - 8;
-    *ox = base_x + i * (CARD_W + CARD_GAP);
-    *oy = base_y;
-    if (i == cs->cursor && cs->phase == CPHASE_PLAYER_TURN) *oy -= 6;
+    int base_y = FB_HEIGHT - CARD_H - 4;
+
+    int x = base_x;
+    for (int j = 0; j < i; j++) {
+        int w = (j == sel_idx) ? CARD_W_SEL : CARD_W;
+        int gap = (j == sel_idx || j + 1 == sel_idx) ? CARD_GAP_SEL : CARD_GAP;
+        x += w + gap;
+    }
+    *ox = x;
+    *oy = is_sel ? (FB_HEIGHT - CARD_H_SEL - 4) : base_y;
 }
 
 /* ── Touch drag input (Slay the Spire style) ─────────────────────── */
@@ -1127,7 +1197,10 @@ static void combat_touch_began(combat_state *cs, float fx, float fy) {
     for (int i = 0; i < cs->hand_count; i++) {
         int cx, cy;
         combat_card_rect(cs, i, &cx, &cy);
-        if (fx >= cx && fx < cx + CARD_W && fy >= cy && fy < cy + CARD_H) {
+        bool is_sel = (i == cs->cursor);
+        int cw = is_sel ? CARD_W_SEL : CARD_W;
+        int ch = is_sel ? CARD_H_SEL : CARD_H;
+        if (fx >= cx && fx < cx + cw && fy >= cy && fy < cy + ch) {
             cs->dragging = true;
             cs->drag_card = i;
             cs->cursor = i;
@@ -1207,7 +1280,12 @@ static void combat_touch_ended(combat_state *cs, float fx, float fy) {
         for (int i = 0; i < cs->enemy_count; i++) {
             if (!cs->enemies[i].alive) continue;
             int ecx = spacing * (i + 1);
-            if (fx >= ecx - 30 && fx <= ecx + 30 && fy < 130.0f) {
+            int escale = 3;
+            if (cs->enemies[i].distance >= 4) escale = 1;
+            else if (cs->enemies[i].distance >= 2) escale = 2;
+            int esz = 16 * escale;
+            int esy = 10 + cs->enemies[i].distance * 6;
+            if (fx >= ecx - esz && fx <= ecx + esz && fy < esy + esz + 40) {
                 hit_enemy = i;
                 break;
             }
@@ -1334,6 +1412,37 @@ static void combat_draw_bar(uint32_t *px, int W, int H,
     }
 }
 
+/* ── Card effect text (used by combat and deck viewer) ──────────── */
+
+static const char *card_effect_text(int card_type) {
+    switch (card_type) {
+        case CARD_SHIELD:      return "+3 SHIELD";
+        case CARD_SHOOT:       return "3 DMG";
+        case CARD_BURST:       return "2 DMG ALL";
+        case CARD_MOVE:        return "+2 MOVE";
+        case CARD_MELEE:       return "6 DMG MELEE";
+        case CARD_OVERCHARGE:  return "+2 ENERGY";
+        case CARD_REPAIR:      return "+4 HP";
+        case CARD_STUN:        return "SKIP ENEMY\nATTACKS";
+        case CARD_FORTIFY:     return "+6 SHIELD";
+        case CARD_DOUBLE_SHOT: return "5 DMG";
+        case CARD_DASH:        return "+3 MOVE\n4 DMG";
+        case CARD_ICE:         return "FREEZE 3T\nSLOW+DMG";
+        case CARD_ACID:        return "STACK DOT\n1/STACK";
+        case CARD_FIRE:        return "BURN 3T\nSPREADS";
+        case CARD_LIGHTNING:   return "STUN 1-2T\n2 DMG";
+        case CARD_SNIPER:      return "5 DMG\nDIST 2+";
+        case CARD_SHOTGUN:     return "4 DMG\nDIST 0-1";
+        case CARD_WELDER:      return "4 DMG\nMELEE";
+        case CARD_CHAINSAW:    return "8 DMG\nMELEE";
+        case CARD_LASER:       return "4 DMG\nPRECISION";
+        case CARD_DEFLECTOR:   return "+4 SHIELD\n1 REFLECT";
+        case CARD_STUN_GUN:    return "STUN 1T\n1 DMG";
+        case CARD_MICROWAVE:   return "5 DMG\n*3 DMG ALL";
+        default:               return "";
+    }
+}
+
 /* ── Shared card rendering ───────────────────────────────────────── */
 
 static void combat_draw_card_content(uint32_t *px, int W, int H,
@@ -1349,6 +1458,27 @@ static void combat_draw_card_content(uint32_t *px, int W, int H,
     /* Background */
     uint32_t bg = selected ? 0xFF222233 : 0xFF111122;
     combat_draw_rect(px, W, H, cx, cy, cw, ch, bg);
+
+    /* Card art sprite as background (centered, drawn dim behind text) */
+    if (card_type < (int)(sizeof(spr_card_table)/sizeof(spr_card_table[0]))) {
+        int scale = selected ? 3 : 2;
+        int art_w = 16 * scale, art_h = 16 * scale;
+        int art_x = cx + (cw - art_w) / 2;
+        int art_y = cy + (ch - art_h) / 2;
+        /* Draw sprite scaled, then dim it to serve as background */
+        spr_draw(px, W, H, spr_card_table[card_type], art_x, art_y, scale);
+        /* Darken the art so text is readable */
+        uint32_t dim = affordable ? 0x44 : 0x22;
+        for (int ry = cy + 1; ry < cy + ch - 1 && ry < H; ry++)
+            for (int rx = cx + 1; rx < cx + cw - 1 && rx < W; rx++)
+                if (rx >= 0 && ry >= 0) {
+                    uint32_t p = px[ry * W + rx];
+                    int pr = ((p >> 0) & 0xFF) * dim / 255;
+                    int pg = ((p >> 8) & 0xFF) * dim / 255;
+                    int pb = ((p >> 16) & 0xFF) * dim / 255;
+                    px[ry * W + rx] = 0xFF000000 | (pb << 16) | (pg << 8) | pr;
+                }
+    }
 
     /* Border */
     uint32_t card_col = affordable ? card_colors[card_type] : 0xFF333333;
@@ -1374,41 +1504,9 @@ static void combat_draw_card_content(uint32_t *px, int W, int H,
                                cw - 16, 8, white, shadow);
 
     /* Card effect text */
-    const char *effect = "";
-    switch (card_type) {
-        case CARD_SHIELD:     effect = "+3 SHIELD"; break;
-        case CARD_SHOOT:      effect = "3 DMG"; break;
-        case CARD_BURST:      effect = "2 DMG ALL"; break;
-        case CARD_MOVE:       effect = "+2 MOVE"; break;
-        case CARD_MELEE:      effect = "6 DMG MELEE"; break;
-        case CARD_OVERCHARGE: effect = "+2 ENERGY"; break;
-        case CARD_REPAIR:     effect = "+4 HP"; break;
-        case CARD_STUN:       effect = "SKIP ENEMY\nATTACKS"; break;
-        case CARD_FORTIFY:    effect = "+6 SHIELD"; break;
-        case CARD_DOUBLE_SHOT:effect = "5 DMG"; break;
-        case CARD_DASH:       effect = "+3 MOVE\n4 DMG"; break;
-        case CARD_ICE:        effect = "FREEZE 3T\nSLOW+DMG"; break;
-        case CARD_ACID:       effect = "STACK DOT\n1/STACK"; break;
-        case CARD_FIRE:       effect = "BURN 3T\nSPREADS"; break;
-        case CARD_LIGHTNING:  effect = "STUN 1-2T\n2 DMG"; break;
-        case CARD_SNIPER:    effect = "5 DMG\nDIST 2+"; break;
-        case CARD_SHOTGUN:   effect = "4 DMG\nDIST 0-1"; break;
-        case CARD_WELDER:    effect = "4 DMG\nMELEE"; break;
-        case CARD_CHAINSAW:  effect = "8 DMG\nMELEE"; break;
-        case CARD_LASER:     effect = "4 DMG\nPRECISION"; break;
-        case CARD_DEFLECTOR: effect = "+4 SHIELD\n1 REFLECT"; break;
-        case CARD_STUN_GUN:  effect = "STUN 1T\n1 DMG"; break;
-    }
+    const char *effect = card_effect_text(card_type);
     ty = sr_draw_text_wrap(px, W, H, cx + 3, ty + 2, effect,
                            cw - 6, 8, gray, shadow);
-
-    /* Card art sprite (draw at bottom-center of card if space allows) */
-    if (card_type < (int)(sizeof(spr_card_table)/sizeof(spr_card_table[0]))) {
-        int art_x = cx + (cw - 16) / 2;
-        int art_y = ty + 2;
-        if (art_y + 16 < cy + ch - 10)
-            spr_draw(px, W, H, spr_card_table[card_type], art_x, art_y, 1);
-    }
 
     /* Target type at bottom */
     const char *tgt = "";
@@ -1441,11 +1539,29 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
     /* ── Draw enemies (top half) ──────────────────────────────── */
     if (combat.enemy_count > 0) {
         int spacing = W / (combat.enemy_count + 1);
-        for (int i = 0; i < combat.enemy_count; i++) {
+        /* Draw enemies back-to-front (farthest first) so closer ones overlap */
+        int draw_order[COMBAT_MAX_ENEMIES];
+        for (int i = 0; i < combat.enemy_count; i++) draw_order[i] = i;
+        /* Simple sort by distance descending */
+        for (int i = 0; i < combat.enemy_count - 1; i++)
+            for (int j = i + 1; j < combat.enemy_count; j++)
+                if (combat.enemies[draw_order[i]].distance < combat.enemies[draw_order[j]].distance) {
+                    int tmp = draw_order[i]; draw_order[i] = draw_order[j]; draw_order[j] = tmp;
+                }
+
+        for (int di = 0; di < combat.enemy_count; di++) {
+            int i = draw_order[di];
             combat_enemy *e = &combat.enemies[i];
             int cx = spacing * (i + 1);
-            int sprite_x = cx - 16;
-            int sprite_y = 20;
+
+            /* Scale sprite by distance: dist 0 = scale 3, dist 5 = scale 1 */
+            int scale = 3;
+            if (e->distance >= 4) scale = 1;
+            else if (e->distance >= 2) scale = 2;
+            int spr_sz = 16 * scale;
+            /* Position: farther enemies drawn higher (more distant) */
+            int sprite_x = cx - spr_sz / 2;
+            int sprite_y = 10 + e->distance * 6;
 
             if (e->alive) {
                 const uint32_t *sprite = spr_enemy_table[e->type];
@@ -1455,19 +1571,18 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
                 if (combat.phase == CPHASE_ENEMY_TURN &&
                     combat.enemy_atk_idx == i &&
                     combat.enemy_atk_timer > ENEMY_ATK_HIT_FRAME) {
-                    /* Wiggle side-to-side before the hit */
                     wiggle_x = ((combat.enemy_atk_timer % 4) < 2) ? 3 : -3;
                 }
 
                 if (e->flash_timer > 0 && (e->flash_timer & 2))
-                    spr_draw_flash(px, W, H, sprite, sprite_x + wiggle_x, sprite_y, 2);
+                    spr_draw_flash(px, W, H, sprite, sprite_x + wiggle_x, sprite_y, scale);
                 else
-                    spr_draw(px, W, H, sprite, sprite_x + wiggle_x, sprite_y, 2);
+                    spr_draw(px, W, H, sprite, sprite_x + wiggle_x, sprite_y, scale);
 
                 /* Target highlight (yellow border around selected enemy) */
                 if (i == combat.target && combat.phase == CPHASE_PLAYER_TURN) {
                     combat_draw_rect_outline(px, W, H,
-                        sprite_x - 2, sprite_y - 2, 36, 36, yellow);
+                        sprite_x - 2, sprite_y - 2, spr_sz + 4, spr_sz + 4, yellow);
                 }
 
                 /* Intent indicator (above sprite) */
@@ -1477,11 +1592,9 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
                         sr_draw_text_shadow(px, W, H, cx - 10, sprite_y - 10,
                                             "STUN", 0xFFCCCC22, shadow);
                     } else if (e->intent == INTENT_MOVE) {
-                        /* Movement only */
                         sr_draw_text_shadow(px, W, H, cx - 6, sprite_y - 10,
                                             ">>", 0xFFCC8844, shadow);
                     } else if (e->intent == INTENT_ATTACK) {
-                        /* Attack only: red damage number */
                         int dmg = e->damage / 2; if (dmg < 1) dmg = 1;
                         if (e->ice_turns > 0) { dmg = dmg / 2; if (dmg < 1) dmg = 1; }
                         char intent_buf[16];
@@ -1491,32 +1604,34 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
                     }
                 }
             } else {
-                sr_draw_text_shadow(px, W, H, cx - 12, sprite_y + 12, "DEAD", 0xFF444444, shadow);
+                int sprite_y_dead = 10 + e->distance * 6;
+                sr_draw_text_shadow(px, W, H, cx - 12, sprite_y_dead + 12, "DEAD", 0xFF444444, shadow);
             }
 
+            /* Info below sprite */
+            int info_y = sprite_y + spr_sz + 2;
+
             /* Enemy name */
-            sr_draw_text_shadow(px, W, H, cx - 18, sprite_y + 36,
+            sr_draw_text_shadow(px, W, H, cx - 18, info_y,
                                 enemy_templates[e->type].name,
                                 e->alive ? white : 0xFF444444, shadow);
 
-            /* HP bar */
+            /* HP bar + distance */
             if (e->alive) {
-                combat_draw_bar(px, W, H, cx - 18, sprite_y + 46, 36, 4,
+                combat_draw_bar(px, W, H, cx - 18, info_y + 10, 36, 4,
                                 e->hp, e->hp_max, 0xFF2222CC, 0xFF333333);
                 char hpbuf[16];
                 snprintf(hpbuf, sizeof(hpbuf), "%d/%d", e->hp, e->hp_max);
-                sr_draw_text_shadow(px, W, H, cx - 10, sprite_y + 52, hpbuf, gray, shadow);
-            }
+                sr_draw_text_shadow(px, W, H, cx - 10, info_y + 16, hpbuf, gray, shadow);
 
-            /* Attack range indicator */
-            if (e->alive) {
-                char rngbuf[16];
-                snprintf(rngbuf, sizeof(rngbuf), "RNG:%d", e->attack_range);
-                sr_draw_text_shadow(px, W, H, cx - 12, sprite_y + 62, rngbuf, dim, shadow);
+                /* Distance + range indicator */
+                char distbuf[16];
+                snprintf(distbuf, sizeof(distbuf), "D:%d R:%d", e->distance, e->attack_range);
+                sr_draw_text_shadow(px, W, H, cx - 16, info_y + 26, distbuf, dim, shadow);
 
                 /* Status effect indicators */
                 int sx = cx - 18;
-                int sy = sprite_y + 72;
+                int sy = info_y + 36;
                 if (e->ice_turns > 0) {
                     char ibuf[8]; snprintf(ibuf, sizeof(ibuf), "I%d", e->ice_turns);
                     sr_draw_text_shadow(px, W, H, sx, sy, ibuf, 0xFFFFCC44, shadow);
@@ -1540,25 +1655,8 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
         }
     }
 
-    /* ── Distance indicator ───────────────────────────────────── */
-    {
-        char distbuf[32];
-        snprintf(distbuf, sizeof(distbuf), "DISTANCE: %d", combat.player_distance);
-        uint32_t dist_col = combat.player_distance == 0 ? 0xFF00CCCC : 0xFF888888;
-        sr_draw_text_shadow(px, W, H, W/2 - 30, 108, distbuf, dist_col, shadow);
-
-        /* Visual distance: draw dots */
-        int dot_x = W/2 - combat.player_distance * 8;
-        for (int d = 0; d <= combat.player_distance; d++) {
-            uint32_t dc = d == 0 ? 0xFF00CC00 : 0xFF555555;
-            combat_draw_rect(px, W, H, dot_x + d * 16, 120, 4, 4, dc);
-        }
-        /* Player marker */
-        sr_draw_text_shadow(px, W, H, dot_x - 6, 116, "P", 0xFF44FF44, shadow);
-        /* Enemy marker */
-        sr_draw_text_shadow(px, W, H, dot_x + combat.player_distance * 16 + 6, 116,
-                            "E", 0xFFCC4444, shadow);
-    }
+    /* ── Distance indicators (per-enemy, shown inline below enemies) ── */
+    /* Removed old single distance display — distance now shown per-enemy */
 
     /* ── Player info (bottom left) ────────────────────────────── */
     {
@@ -1677,21 +1775,23 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
 
     /* ── Hand of cards (bottom) ───────────────────────────────── */
     {
-        int card_w = CARD_W;
-        int card_h = CARD_H;
-        int card_gap = CARD_GAP;
-        int total_w = combat.hand_count * (card_w + card_gap) - card_gap;
-        int base_x = (W - total_w) / 2;
-        int base_y = H - card_h - 4;
+        int sel_idx = (combat.phase == CPHASE_PLAYER_TURN) ? combat.cursor : -1;
 
-        for (int i = 0; i < combat.hand_count; i++) {
-            int card = combat.hand[i];
-            int cx = base_x + i * (card_w + card_gap);
-            int cy = base_y;
-            bool selected = (i == combat.cursor && combat.phase == CPHASE_PLAYER_TURN);
-            if (selected) cy -= 6;
-            combat_draw_card_content(px, W, H, cx, cy, card_w, card_h,
-                                     card, selected, shadow, combat.energy);
+        /* Draw non-selected cards first (back to front), then selected on top */
+        /* Compute positions using combat_card_rect */
+        for (int pass = 0; pass < 2; pass++) {
+            for (int i = 0; i < combat.hand_count; i++) {
+                bool selected = (i == sel_idx);
+                if (pass == 0 && selected) continue;  /* draw selected last */
+                if (pass == 1 && !selected) continue;
+                int card = combat.hand[i];
+                int cx, cy;
+                combat_card_rect(&combat, i, &cx, &cy);
+                int cw = selected ? CARD_W_SEL : CARD_W;
+                int ch = selected ? CARD_H_SEL : CARD_H;
+                combat_draw_card_content(px, W, H, cx, cy, cw, ch,
+                                         card, selected, shadow, combat.energy);
+            }
         }
     }
 
@@ -1703,7 +1803,8 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
         /* Draw line from card to drag position */
         int cx, cy;
         combat_card_rect(&combat, combat.drag_card, &cx, &cy);
-        int line_x0 = cx + CARD_W / 2;
+        bool drag_sel = (combat.drag_card == combat.cursor);
+        int line_x0 = cx + (drag_sel ? CARD_W_SEL : CARD_W) / 2;
         int line_y0 = cy;
         int line_x1 = (int)combat.drag_x;
         int line_y1 = (int)combat.drag_y;
@@ -1744,12 +1845,17 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
             sr_draw_text_shadow(px, W, H, W/2 - 35, 95, "HIT ALL", 0xFF5588FF, shadow);
         } else {
             /* Highlight targeted enemy */
-            int spacing = W / (combat.enemy_count + 1);
+            int espacing = W / (combat.enemy_count + 1);
             for (int i = 0; i < combat.enemy_count; i++) {
                 if (!combat.enemies[i].alive) continue;
-                int ecx = spacing * (i + 1);
-                if (combat.drag_x >= ecx - 30 && combat.drag_x <= ecx + 30 && combat.drag_y < 130.0f) {
-                    combat_draw_rect_outline(px, W, H, ecx - 26, 14, 52, 84, yellow);
+                int ecx = espacing * (i + 1);
+                int escale = 3;
+                if (combat.enemies[i].distance >= 4) escale = 1;
+                else if (combat.enemies[i].distance >= 2) escale = 2;
+                int esz = 16 * escale;
+                int esy = 10 + combat.enemies[i].distance * 6;
+                if (combat.drag_x >= ecx - esz && combat.drag_x <= ecx + esz && combat.drag_y < esy + esz + 40) {
+                    combat_draw_rect_outline(px, W, H, ecx - esz/2 - 4, esy - 4, esz + 8, esz + 50, yellow);
                 }
             }
         }
