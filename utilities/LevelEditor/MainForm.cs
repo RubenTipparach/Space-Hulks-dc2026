@@ -7,7 +7,8 @@ public class MainForm : Form
 
     private readonly GridPanel _grid;
     private readonly Preview3DPanel _preview3D;
-    private readonly TabControl _tabs;
+    private bool _in3D;
+    private readonly Label _modeLabel;
     private readonly ListBox _floorList;
     private readonly Label _statusLabel;
     private Panel? _toolPanel;
@@ -384,61 +385,70 @@ public class MainForm : Form
         };
         Controls.Add(_statusLabel);
 
-        // ── Tabbed center area ──────────────────────────
-        _tabs = new TabControl
+        // ── Mode label (shows current view) ─────────────
+        _modeLabel = new Label
         {
-            Dock = DockStyle.Fill,
-            Alignment = TabAlignment.Top,
-            SizeMode = TabSizeMode.Fixed,
-            ItemSize = new Size(160, 32),
-            Font = new Font("Consolas", 11, FontStyle.Bold),
+            Dock = DockStyle.Top, Height = 28,
+            Text = "  2D EDITOR  (F5 = toggle 3D)",
+            ForeColor = Color.Cyan,
+            BackColor = Color.FromArgb(25, 25, 35),
+            Font = new Font("Consolas", 10, FontStyle.Bold),
+            TextAlign = ContentAlignment.MiddleLeft,
         };
-        var tab2D = new TabPage("2D EDITOR") { BackColor = Color.FromArgb(30, 30, 35) };
+
+        // ── Center panels (grid + preview, only one visible) ──
         _grid.Dock = DockStyle.Fill;
-        tab2D.Controls.Add(_grid);
-
-        var tab3D = new TabPage("3D PREVIEW") { BackColor = Color.FromArgb(18, 18, 28) };
-        tab3D.Controls.Add(_preview3D);
-
-        _tabs.TabPages.Add(tab2D);
-        _tabs.TabPages.Add(tab3D);
-        _tabs.SelectedIndexChanged += (_, _) =>
-        {
-            if (_tabs.SelectedIndex == 1)
-            {
-                _preview3D.Floor = _grid.Floor;
-                _preview3D.StartPreview();
-            }
-            else
-            {
-                _preview3D.StopPreview();
-                _grid.Invalidate();
-                UpdateStatus();
-            }
-        };
+        _preview3D.Dock = DockStyle.Fill;
+        _preview3D.Visible = false;
 
         // ── Layout ──────────────────────────────────────
-        Controls.Add(_tabs);
+        Controls.Add(_grid);
+        Controls.Add(_preview3D);
+        Controls.Add(_modeLabel);
         Controls.Add(toolPanel);
         Controls.Add(floorPanel);
 
         // Initialize
         NewLevel();
 
-        // F5 hotkey toggles tabs
+        // F5 hotkey toggles 2D/3D
         KeyPreview = true;
         KeyDown += (_, e) =>
         {
             if (e.KeyCode == Keys.F5)
             {
-                _tabs.SelectedIndex = _tabs.SelectedIndex == 0 ? 1 : 0;
+                Toggle3D();
                 e.Handled = true;
             }
         };
     }
 
-    public void Enter3DPreview() => _tabs.SelectedIndex = 1;
-    public void Exit3DPreview() => _tabs.SelectedIndex = 0;
+    public void Enter3DPreview() => Toggle3D(true);
+    public void Exit3DPreview() => Toggle3D(false);
+
+    private void Toggle3D(bool? force = null)
+    {
+        _in3D = force ?? !_in3D;
+        if (_in3D)
+        {
+            _preview3D.Floor = _grid.Floor;
+            _preview3D.StartPreview();
+            _grid.Visible = false;
+            _preview3D.Visible = true;
+            _modeLabel.Text = "  3D PREVIEW  (F5 = back to 2D | ESC = exit)";
+            _modeLabel.ForeColor = Color.Yellow;
+        }
+        else
+        {
+            _preview3D.StopPreview();
+            _preview3D.Visible = false;
+            _grid.Visible = true;
+            _grid.Invalidate();
+            _modeLabel.Text = "  2D EDITOR  (F5 = toggle 3D)";
+            _modeLabel.ForeColor = Color.Cyan;
+            UpdateStatus();
+        }
+    }
 
     // ── Mission editor ──────────────────────────────────
 
@@ -530,7 +540,7 @@ public class MainForm : Form
         _grid.Floor = _level.Floors[idx];
         _grid.Invalidate();
         _preview3D.Floor = _level.Floors[idx];
-        if (_tabs.SelectedIndex == 1)
+        if (_in3D)
             _preview3D.StartPreview();
         UpdateStatus();
     }

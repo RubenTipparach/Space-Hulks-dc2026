@@ -17,9 +17,19 @@ public class GridPanel : Panel
     public event Action? DataChanged;
 
     private const int CellSize = 28;
-    private new const int Margin = 30;
+    private const int BaseMargin = 30;
     private bool _painting;
     private int _hoverGX = -1, _hoverGY = -1;
+
+    // Pan offset (middle mouse drag)
+    private int _panX, _panY;
+    private bool _middlePanning;
+    private Point _panStart;
+
+    private int Margin => BaseMargin + _panX;
+    private int MarginY => BaseMargin + _panY;
+
+    public void ResetPan() { _panX = 0; _panY = 0; Invalidate(); }
 
     private static readonly Dictionary<RoomType, Color> RoomColors = new()
     {
@@ -44,7 +54,7 @@ public class GridPanel : Panel
     private (int gx, int gy) ScreenToGrid(int sx, int sy)
     {
         int gx = (sx - Margin) / CellSize + 1;
-        int gy = (sy - Margin) / CellSize + 1;
+        int gy = (sy - MarginY) / CellSize + 1;
         return (gx, gy);
     }
 
@@ -72,7 +82,7 @@ public class GridPanel : Panel
             for (int gx = 1; gx <= w; gx++)
             {
                 int px = Margin + (gx - 1) * CellSize;
-                int py = Margin + (gy - 1) * CellSize;
+                int py = MarginY + (gy - 1) * CellSize;
                 var rect = new Rectangle(px, py, CellSize - 1, CellSize - 1);
 
                 int cell = Floor.Map[gy, gx];
@@ -128,7 +138,7 @@ public class GridPanel : Panel
         foreach (var room in Floor.Rooms)
         {
             int px = Margin + (room.X - 1) * CellSize - 1;
-            int py = Margin + (room.Y - 1) * CellSize - 1;
+            int py = MarginY + (room.Y - 1) * CellSize - 1;
             int rw = room.Width * CellSize + 1;
             int rh = room.Height * CellSize + 1;
             var rc = RoomColors.GetValueOrDefault(room.Type, Color.Gray);
@@ -147,7 +157,7 @@ public class GridPanel : Panel
             {
                 g.FillEllipse(Brushes.Yellow,
                     Margin + (room.CenterX - 1) * CellSize + CellSize / 2 - 3,
-                    Margin + (room.CenterY - 1) * CellSize + 1, 6, 6);
+                    MarginY + (room.CenterY - 1) * CellSize + 1, 6, 6);
             }
         }
 
@@ -159,13 +169,13 @@ public class GridPanel : Panel
         for (int x = 1; x <= w; x++)
             g.DrawString(x.ToString(), coordFont, Brushes.DimGray, Margin + (x - 1) * CellSize + 2, 2);
         for (int y = 1; y <= h; y++)
-            g.DrawString(y.ToString(), coordFont, Brushes.DimGray, 2, Margin + (y - 1) * CellSize + 2);
+            g.DrawString(y.ToString(), coordFont, Brushes.DimGray, 2, MarginY + (y - 1) * CellSize + 2);
 
         // Tool preview for room placement
         if (Tool == EditTool.Room && _hoverGX > 0 && _hoverGY > 0)
         {
             int px = Margin + (_hoverGX - 1) * CellSize;
-            int py = Margin + (_hoverGY - 1) * CellSize;
+            int py = MarginY + (_hoverGY - 1) * CellSize;
             using var hb = new SolidBrush(Color.FromArgb(60, 100, 200, 255));
             g.FillRectangle(hb, px, py, RoomBrushW * CellSize, RoomBrushH * CellSize);
         }
@@ -215,7 +225,7 @@ public class GridPanel : Panel
     {
         if (!InBounds(gx, gy)) return;
         int px = Margin + (gx - 1) * CellSize + 2;
-        int py = Margin + (gy - 1) * CellSize + 2;
+        int py = MarginY + (gy - 1) * CellSize + 2;
         int sz = CellSize - 5;
         using var brush = new SolidBrush(Color.FromArgb(180, color));
         g.FillRectangle(brush, px, py, sz, sz);
@@ -229,6 +239,14 @@ public class GridPanel : Panel
     {
         base.OnMouseDown(e);
         if (Floor == null) return;
+
+        if (e.Button == MouseButtons.Middle)
+        {
+            _middlePanning = true;
+            _panStart = e.Location;
+            return;
+        }
+
         var (gx, gy) = ScreenToGrid(e.X, e.Y);
 
         if (e.Button == MouseButtons.Right)
@@ -441,6 +459,16 @@ public class GridPanel : Panel
     protected override void OnMouseMove(MouseEventArgs e)
     {
         base.OnMouseMove(e);
+
+        if (_middlePanning)
+        {
+            _panX += e.X - _panStart.X;
+            _panY += e.Y - _panStart.Y;
+            _panStart = e.Location;
+            Invalidate();
+            return;
+        }
+
         var (gx, gy) = ScreenToGrid(e.X, e.Y);
         _hoverGX = gx; _hoverGY = gy;
 
@@ -465,6 +493,7 @@ public class GridPanel : Panel
     {
         base.OnMouseUp(e);
         _painting = false;
+        _middlePanning = false;
     }
 
     // ── Tool application ─────────────────────────────────

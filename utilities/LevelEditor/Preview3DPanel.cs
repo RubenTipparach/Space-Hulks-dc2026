@@ -507,7 +507,7 @@ void main(){
     {
         _gl?.Focus();
         if (e.Button == MouseButtons.Left) _orbiting = true;
-        if (e.Button == MouseButtons.Right) _panning = true;
+        if (e.Button == MouseButtons.Right || e.Button == MouseButtons.Middle) _panning = true;
         _lastMouse = e.Location;
     }
 
