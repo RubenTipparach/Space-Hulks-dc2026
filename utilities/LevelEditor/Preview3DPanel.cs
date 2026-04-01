@@ -429,18 +429,19 @@ void main(){
                 float x0 = (gx - 1) * Cell, x1 = gx * Cell;
                 float z0 = (gy - 1) * Cell, z1 = gy * Cell;
 
-                // North face (CW from north = outside)
+                // Exterior faces: reversed winding (CW from outside)
+                // North face (visible from north)
                 if (!inside[gy - 1, gx])
-                    WallQuad(ft, x0, 0, z0, x1, 0, z0, x1, ExtH, z0, x0, ExtH, z0, es);
-                // South face (CW from south)
+                    WallQuad(ft, x1, 0, z0, x0, 0, z0, x0, ExtH, z0, x1, ExtH, z0, es);
+                // South face (visible from south)
                 if (!inside[gy + 1, gx])
-                    WallQuad(ft, x1, 0, z1, x0, 0, z1, x0, ExtH, z1, x1, ExtH, z1, es);
-                // West face (CW from west)
+                    WallQuad(ft, x0, 0, z1, x1, 0, z1, x1, ExtH, z1, x0, ExtH, z1, es);
+                // West face (visible from west)
                 if (!inside[gy, gx - 1])
-                    WallQuad(ft, x0, 0, z1, x0, 0, z0, x0, ExtH, z0, x0, ExtH, z1, ec);
-                // East face (CW from east)
+                    WallQuad(ft, x0, 0, z0, x0, 0, z1, x0, ExtH, z1, x0, ExtH, z0, ec);
+                // East face (visible from east)
                 if (!inside[gy, gx + 1])
-                    WallQuad(ft, x1, 0, z0, x1, 0, z1, x1, ExtH, z1, x1, ExtH, z0, ec);
+                    WallQuad(ft, x1, 0, z1, x1, 0, z0, x1, ExtH, z0, x1, ExtH, z1, ec);
             }
         }
     }
