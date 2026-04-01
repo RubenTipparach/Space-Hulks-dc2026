@@ -38,8 +38,9 @@ public class Preview3DPanel : Panel
     // Timer
     private System.Windows.Forms.Timer _timer;
 
-    // Per-frame batches: GL texture id -> vertex floats
+    // Per-frame batches: GL texture id -> vertex floats (interior + exterior separate)
     private readonly Dictionary<int, List<float>> _batches = new();
+    private readonly Dictionary<int, List<float>> _extBatches = new();
 
     // Colors
     private static readonly Dictionary<RoomType, Color> RoomColors = new()
@@ -168,9 +169,8 @@ void main(){
 
         GL.ClearColor(0.07f, 0.07f, 0.11f, 1f);
         GL.Enable(EnableCap.DepthTest);
-        GL.Enable(EnableCap.CullFace);
-        GL.CullFace(CullFaceMode.Back);
-        GL.FrontFace(FrontFaceDirection.Cw);
+        GL.DepthFunc(DepthFunction.Lequal);
+        GL.Disable(EnableCap.CullFace);
 
         _glReady = true;
         LoadGLTextures();
@@ -241,6 +241,8 @@ void main(){
 
     private static bool IsWallLike(int c) => c == (int)CellType.Wall || c == (int)CellType.Window;
 
+    private bool _emitToExt; // when true, quads go to _extBatches
+
     private void Vert(List<float> b, float x, float y, float z, float u, float v, Color c)
     {
         b.Add(x); b.Add(y); b.Add(z);
@@ -255,10 +257,11 @@ void main(){
         float x3, float y3, float z3, float u3, float v3,
         Color col)
     {
-        if (!_batches.TryGetValue(tex, out var b))
+        var dict = _emitToExt ? _extBatches : _batches;
+        if (!dict.TryGetValue(tex, out var b))
         {
             b = new List<float>(4096);
-            _batches[tex] = b;
+            dict[tex] = b;
         }
         Vert(b, x0, y0, z0, u0, v0, col);
         Vert(b, x1, y1, z1, u1, v1, col);
@@ -289,6 +292,8 @@ void main(){
     private void BuildGeometry()
     {
         foreach (var b in _batches.Values) b.Clear();
+        foreach (var b in _extBatches.Values) b.Clear();
+        _emitToExt = false;
         if (Floor == null) return;
 
         int w = Floor.Width, h = Floor.Height;
@@ -339,9 +344,13 @@ void main(){
             }
         }
 
-        // Exterior
+        // Exterior (rendered in second pass so it draws on top)
         if (ShowExterior)
+        {
+            _emitToExt = true;
             BuildExterior(w, h, alien);
+            _emitToExt = false;
+        }
 
         // Entity markers
         BuildEntities();
@@ -501,7 +510,20 @@ void main(){
         GL.UniformMatrix4(_mvpLoc, false, ref mvp);
         GL.BindVertexArray(_vao);
 
-        foreach (var (texId, data) in _batches)
+        // Pass 1: interior geometry
+        DrawBatches(_batches);
+        // Pass 2: exterior geometry (draws on top at same depth via LEQUAL)
+        DrawBatches(_extBatches);
+
+        GL.BindVertexArray(0);
+        GL.UseProgram(0);
+
+        _gl.SwapBuffers();
+    }
+
+    private void DrawBatches(Dictionary<int, List<float>> batches)
+    {
+        foreach (var (texId, data) in batches)
         {
             if (data.Count == 0) continue;
             int vertCount = data.Count / 9;
@@ -523,11 +545,6 @@ void main(){
 
             GL.DrawArrays(PrimitiveType.Triangles, 0, vertCount);
         }
-
-        GL.BindVertexArray(0);
-        GL.UseProgram(0);
-
-        _gl.SwapBuffers();
     }
 
     // ── Input ───────────────────────────────────────────────────
