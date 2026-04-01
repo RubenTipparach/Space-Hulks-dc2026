@@ -12,6 +12,6 @@
   <ItemGroup>
     <PackageReference Include="System.Text.Json" Version="8.0.0" />
     <PackageReference Include="OpenTK" Version="4.8.2" />
-    <PackageReference Include="OpenTK.WinForms" Version="4.0.0-pre.13" />
+    <PackageReference Include="OpenTK.WinForms" Version="4.0.0-pre.8" />
   </ItemGroup>
 </Project>
