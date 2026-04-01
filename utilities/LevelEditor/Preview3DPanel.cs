@@ -168,8 +168,9 @@ void main(){
 
         GL.ClearColor(0.07f, 0.07f, 0.11f, 1f);
         GL.Enable(EnableCap.DepthTest);
-        GL.DepthFunc(DepthFunction.Lequal); // allow coplanar exterior faces
-        GL.Disable(EnableCap.CullFace);
+        GL.Enable(EnableCap.CullFace);
+        GL.CullFace(CullFaceMode.Back);
+        GL.FrontFace(FrontFaceDirection.Cw);
 
         _glReady = true;
         LoadGLTextures();
@@ -438,17 +439,13 @@ void main(){
                 float x0 = (gx - 1) * Cell, x1 = gx * Cell;
                 float z0 = (gy - 1) * Cell, z1 = gy * Cell;
 
-                // Exterior faces: reversed winding (CW from outside)
-                // North face (visible from north)
+                // Exterior faces (CW from outside, backface culled from inside)
                 if (!inside[gy - 1, gx])
                     WallQuad(ft, x1, 0, z0, x0, 0, z0, x0, ExtH, z0, x1, ExtH, z0, es);
-                // South face (visible from south)
                 if (!inside[gy + 1, gx])
                     WallQuad(ft, x0, 0, z1, x1, 0, z1, x1, ExtH, z1, x0, ExtH, z1, es);
-                // West face (visible from west)
                 if (!inside[gy, gx - 1])
                     WallQuad(ft, x0, 0, z0, x0, 0, z1, x0, ExtH, z1, x0, ExtH, z0, ec);
-                // East face (visible from east)
                 if (!inside[gy, gx + 1])
                     WallQuad(ft, x1, 0, z1, x1, 0, z0, x1, ExtH, z0, x1, ExtH, z1, ec);
             }

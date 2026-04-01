@@ -14,6 +14,7 @@ public class GridPanel : Panel
     public int RoomBrushW { get; set; } = 3;
     public int RoomBrushH { get; set; } = 3;
 
+    public UndoManager Undo { get; } = new();
     public event Action? DataChanged;
 
     private const int CellSize = 28;
@@ -246,6 +247,9 @@ public class GridPanel : Panel
             _panStart = e.Location;
             return;
         }
+
+        // Save state for undo before any edit
+        Undo.SaveState(Floor);
 
         var (gx, gy) = ScreenToGrid(e.X, e.Y);
 

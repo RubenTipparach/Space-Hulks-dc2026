@@ -351,6 +351,11 @@ public class MainForm : Form
         fileMenu.DropDownItems.Add("Exit", null, (_, _) => Close());
         menu.Items.Add(fileMenu);
 
+        var editMenu = new ToolStripMenuItem("Edit");
+        editMenu.DropDownItems.Add("Undo\tCtrl+Z", null, (_, _) => DoUndo());
+        editMenu.DropDownItems.Add("Redo\tCtrl+Shift+Z", null, (_, _) => DoRedo());
+        menu.Items.Add(editMenu);
+
         var genMenu = new ToolStripMenuItem("Generate");
         genMenu.DropDownItems.Add("Generate Floor", null, (_, _) => GenerateFloor());
         genMenu.DropDownItems.Add(new ToolStripSeparator());
@@ -434,6 +439,16 @@ public class MainForm : Form
             if (e.KeyCode == Keys.F5)
             {
                 Toggle3D();
+                e.Handled = true;
+            }
+            else if (e.Control && e.Shift && e.KeyCode == Keys.Z)
+            {
+                DoRedo();
+                e.Handled = true;
+            }
+            else if (e.Control && e.KeyCode == Keys.Z)
+            {
+                DoUndo();
                 e.Handled = true;
             }
         };
@@ -552,10 +567,36 @@ public class MainForm : Form
         if (idx < 0 || idx >= _level.Floors.Count) return;
         _currentFloor = idx;
         _grid.Floor = _level.Floors[idx];
+        _grid.Undo.Clear();
+        _grid.Undo.SetBaseline(_level.Floors[idx]);
         _grid.Invalidate();
         _preview3D.Floor = _level.Floors[idx];
         if (_in3D)
             _preview3D.StartPreview();
+        UpdateStatus();
+    }
+
+    private void DoUndo()
+    {
+        if (_grid.Floor == null || !_grid.Undo.CanUndo) return;
+        var restored = _grid.Undo.Undo(_grid.Floor);
+        if (restored == null) return;
+        _level.Floors[_currentFloor] = restored;
+        _grid.Floor = restored;
+        _grid.Invalidate();
+        _preview3D.Floor = restored;
+        UpdateStatus();
+    }
+
+    private void DoRedo()
+    {
+        if (_grid.Floor == null || !_grid.Undo.CanRedo) return;
+        var restored = _grid.Undo.Redo(_grid.Floor);
+        if (restored == null) return;
+        _level.Floors[_currentFloor] = restored;
+        _grid.Floor = restored;
+        _grid.Invalidate();
+        _preview3D.Floor = restored;
         UpdateStatus();
     }
 
