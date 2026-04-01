@@ -165,6 +165,9 @@ public class GridPanel : Panel
         // Draw entities
         DrawEntities(g);
 
+        // Draw exterior hull perimeter
+        DrawExteriorPerimeter(g, w, h);
+
         // Grid coords
         using var coordFont = new Font("Consolas", 7);
         for (int x = 1; x <= w; x++)
@@ -220,6 +223,97 @@ public class GridPanel : Panel
 
         foreach (var n in Floor.Npcs)
             DrawMarker(g, n.GX, n.GY, Color.Cyan, "N");
+    }
+
+    private static bool IsWallLike(int c) => c == (int)CellType.Wall || c == (int)CellType.Window;
+
+    private void DrawExteriorPerimeter(Graphics g, int w, int h)
+    {
+        if (Floor == null) return;
+
+        // Same algorithm as Preview3DPanel.BuildExterior
+        bool[,] inside = new bool[h + 2, w + 2];
+        var queue = new Queue<(int, int)>();
+
+        // Seed from spawn + room centers
+        int sx = Floor.SpawnGX, sy = Floor.SpawnGY;
+        if (sx >= 1 && sx <= w && sy >= 1 && sy <= h && !IsWallLike(Floor.Map[sy, sx]))
+        {
+            inside[sy, sx] = true;
+            queue.Enqueue((sy, sx));
+        }
+        foreach (var room in Floor.Rooms)
+        {
+            int rcx = room.CenterX, rcy = room.CenterY;
+            if (rcx >= 1 && rcx <= w && rcy >= 1 && rcy <= h && !inside[rcy, rcx] && !IsWallLike(Floor.Map[rcy, rcx]))
+            {
+                inside[rcy, rcx] = true;
+                queue.Enqueue((rcy, rcx));
+            }
+        }
+
+        // Flood fill through open cells
+        while (queue.Count > 0)
+        {
+            var (cy, cx) = queue.Dequeue();
+            int[] dy = { -1, 1, 0, 0 }, dx = { 0, 0, -1, 1 };
+            for (int d = 0; d < 4; d++)
+            {
+                int ny = cy + dy[d], nx = cx + dx[d];
+                if (ny < 1 || ny > h || nx < 1 || nx > w) continue;
+                if (inside[ny, nx]) continue;
+                if (IsWallLike(Floor.Map[ny, nx])) continue;
+                inside[ny, nx] = true;
+                queue.Enqueue((ny, nx));
+            }
+        }
+
+        // Expand to adjacent walls
+        for (int gy = 1; gy <= h; gy++)
+            for (int gx = 1; gx <= w; gx++)
+                if (IsWallLike(Floor.Map[gy, gx]) && !inside[gy, gx])
+                    if ((gy > 1 && inside[gy - 1, gx]) || (gy < h && inside[gy + 1, gx]) ||
+                        (gx > 1 && inside[gy, gx - 1]) || (gx < w && inside[gy, gx + 1]))
+                        inside[gy, gx] = true;
+
+        // Convex hull per row + column
+        for (int gy = 1; gy <= h; gy++)
+        {
+            int left = w + 1, right = 0;
+            for (int gx = 1; gx <= w; gx++)
+                if (inside[gy, gx]) { left = Math.Min(left, gx); right = Math.Max(right, gx); }
+            if (left <= right)
+                for (int gx = left; gx <= right; gx++) inside[gy, gx] = true;
+        }
+        for (int gx = 1; gx <= w; gx++)
+        {
+            int top = h + 1, bottom = 0;
+            for (int gy = 1; gy <= h; gy++)
+                if (inside[gy, gx]) { top = Math.Min(top, gy); bottom = Math.Max(bottom, gy); }
+            if (top <= bottom)
+                for (int gy = top; gy <= bottom; gy++) inside[gy, gx] = true;
+        }
+
+        // Draw perimeter lines where inside meets non-inside
+        using var pen = new Pen(Color.FromArgb(200, 40, 120, 255), 2);
+        for (int gy = 1; gy <= h; gy++)
+        {
+            for (int gx = 1; gx <= w; gx++)
+            {
+                if (!inside[gy, gx]) continue;
+                int px = Margin + (gx - 1) * CellSize;
+                int py = MarginY + (gy - 1) * CellSize;
+
+                if (!inside[gy - 1, gx]) // north edge
+                    g.DrawLine(pen, px, py, px + CellSize, py);
+                if (!inside[gy + 1, gx]) // south edge
+                    g.DrawLine(pen, px, py + CellSize, px + CellSize, py + CellSize);
+                if (!inside[gy, gx - 1]) // west edge
+                    g.DrawLine(pen, px, py, px, py + CellSize);
+                if (!inside[gy, gx + 1]) // east edge
+                    g.DrawLine(pen, px + CellSize, py, px + CellSize, py + CellSize);
+            }
+        }
     }
 
     private void DrawMarker(Graphics g, int gx, int gy, Color color, string label)
