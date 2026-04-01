@@ -447,7 +447,9 @@ void main(){
         }
 
         // Draw exterior walls at boundaries (inside cell next to non-inside)
-        // Winding: CW from outside (matches GL.FrontFace(CW))
+        // Reversed winding from interior so backface culling shows outside only
+        Color sN = Darken(ec, 0.6f);  // north/south shading
+        Color sE = Darken(ec, 0.75f); // east/west shading
         for (int gy = 1; gy <= h; gy++)
         {
             for (int gx = 1; gx <= w; gx++)
@@ -459,15 +461,15 @@ void main(){
                 float x0 = (gx - 1) * Cell, x1 = gx * Cell;
                 float z0 = (gy - 1) * Cell, z1 = gy * Cell;
 
-                // Exterior faces (CW from outside, backface culled from inside)
+                // Reversed winding (swap v0↔v1, v2↔v3 from interior)
                 if (!inside[gy - 1, gx])
-                    WallQuad(ft, x1, 0, z0, x0, 0, z0, x0, ExtH, z0, x1, ExtH, z0, es);
+                    WallQuad(ft, x0, 0, z0, x1, 0, z0, x1, ExtH, z0, x0, ExtH, z0, sN);
                 if (!inside[gy + 1, gx])
-                    WallQuad(ft, x0, 0, z1, x1, 0, z1, x1, ExtH, z1, x0, ExtH, z1, es);
+                    WallQuad(ft, x1, 0, z1, x0, 0, z1, x0, ExtH, z1, x1, ExtH, z1, sN);
                 if (!inside[gy, gx - 1])
-                    WallQuad(ft, x0, 0, z0, x0, 0, z1, x0, ExtH, z1, x0, ExtH, z0, ec);
+                    WallQuad(ft, x0, 0, z1, x0, 0, z0, x0, ExtH, z0, x0, ExtH, z1, sE);
                 if (!inside[gy, gx + 1])
-                    WallQuad(ft, x1, 0, z1, x1, 0, z0, x1, ExtH, z0, x1, ExtH, z1, ec);
+                    WallQuad(ft, x1, 0, z0, x1, 0, z1, x1, ExtH, z1, x1, ExtH, z0, sE);
             }
         }
     }
