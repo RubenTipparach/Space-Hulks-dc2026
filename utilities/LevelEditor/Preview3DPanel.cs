@@ -353,21 +353,15 @@ void main(){
         if (Floor == null) return;
         int extW = alien ? Tex("alien_ext") : Tex("ext_wall");
         int extWin = alien ? Tex("alien_ext_win") : Tex("ext_win");
+        int roofTex = Tex("roof");
         Color ec = alien ? Color.FromArgb(120, 60, 80) : Color.FromArgb(60, 80, 130);
         Color es = Darken(ec, 0.7f);
-        const float Off = 0.3f, ExtH = WallH + 0.6f;
+        const float Off = 0.15f, ExtH = WallH + 0.6f;
 
-        // Shrink-wrap: for each wall cell, draw exterior face on any side
-        // that faces outside the ship (adjacent cell is out of bounds or empty row/col
-        // with no wall between it and the grid edge = "outside")
-        // Simple approach: a wall cell gets an exterior face if its neighbor is
-        // out-of-bounds OR if there's a continuous path of non-wall cells to the edge.
-        // For efficiency, use flood-fill from edges to mark "outside" cells.
-
-        bool[,] outside = new bool[h + 2, w + 2]; // 1-indexed, +1 for boundary
-        // Flood fill from all edge cells that are open
+        // Flood-fill from grid edges to find "outside" cells.
+        // Walls block the flood — everything not reached is "inside" the ship.
+        bool[,] outside = new bool[h + 2, w + 2];
         var queue = new Queue<(int, int)>();
-        // Seed: all out-of-bounds border cells
         for (int x = 0; x <= w + 1; x++) { outside[0, x] = true; queue.Enqueue((0, x)); outside[h + 1, x] = true; queue.Enqueue((h + 1, x)); }
         for (int y = 1; y <= h; y++) { outside[y, 0] = true; queue.Enqueue((y, 0)); outside[y, w + 1] = true; queue.Enqueue((y, w + 1)); }
 
@@ -380,45 +374,39 @@ void main(){
                 int ny = cy + dy[d], nx = cx + dx[d];
                 if (ny < 0 || ny > h + 1 || nx < 0 || nx > w + 1) continue;
                 if (outside[ny, nx]) continue;
-                // In-bounds cell that is NOT wall-like → mark as outside
                 if (ny >= 1 && ny <= h && nx >= 1 && nx <= w && IsWallLike(Floor.Map[ny, nx]))
-                    continue; // wall blocks flood
+                    continue;
                 outside[ny, nx] = true;
                 queue.Enqueue((ny, nx));
             }
         }
 
-        // Now draw exterior faces: for each wall cell, if neighbor is "outside"
+        // Continuous hull: draw exterior wall on ANY cell edge where
+        // one side is inside the ship and the other is outside.
+        // Also draw roof over ALL inside cells (wall + open).
         for (int gy = 1; gy <= h; gy++)
         {
             for (int gx = 1; gx <= w; gx++)
             {
-                if (!IsWallLike(Floor.Map[gy, gx])) continue;
+                if (outside[gy, gx]) continue; // skip outside cells
+
                 bool isWin = Floor.Map[gy, gx] == (int)CellType.Window;
                 int ft = isWin ? extWin : extW;
                 float x0 = (gx - 1) * Cell, x1 = gx * Cell;
                 float z0 = (gy - 1) * Cell, z1 = gy * Cell;
 
-                // North: neighbor at gy-1
+                // Exterior wall faces at boundaries with outside
                 if (outside[gy - 1, gx])
                     WallQuad(ft, x1, 0, z0 - Off, x0, 0, z0 - Off, x0, ExtH, z0 - Off, x1, ExtH, z0 - Off, es);
-                // South: neighbor at gy+1
                 if (outside[gy + 1, gx])
                     WallQuad(ft, x0, 0, z1 + Off, x1, 0, z1 + Off, x1, ExtH, z1 + Off, x0, ExtH, z1 + Off, es);
-                // West: neighbor at gx-1
                 if (outside[gy, gx - 1])
                     WallQuad(ft, x0 - Off, 0, z0, x0 - Off, 0, z1, x0 - Off, ExtH, z1, x0 - Off, ExtH, z0, ec);
-                // East: neighbor at gx+1
                 if (outside[gy, gx + 1])
                     WallQuad(ft, x1 + Off, 0, z1, x1 + Off, 0, z0, x1 + Off, ExtH, z0, x1 + Off, ExtH, z1, ec);
 
-                // Roof cap for exterior-facing wall cells (use roof/metal texture)
-                int roofTex = Tex("roof");
-                if (outside[gy - 1, gx] || outside[gy + 1, gx] || outside[gy, gx - 1] || outside[gy, gx + 1])
-                    FlatQuad(roofTex, x0 - (outside[gy, gx - 1] ? Off : 0), ExtH,
-                             z0 - (outside[gy - 1, gx] ? Off : 0),
-                             x1 + (outside[gy, gx + 1] ? Off : 0),
-                             z1 + (outside[gy + 1, gx] ? Off : 0), ec);
+                // Roof cap over every inside cell (solid hull top)
+                FlatQuad(roofTex, x0, ExtH, z0, x1, z1, Darken(ec, 0.85f));
             }
         }
     }
