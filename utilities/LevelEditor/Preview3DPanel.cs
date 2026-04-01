@@ -1,4 +1,8 @@
-using System.Drawing.Drawing2D;
+using OpenTK.Graphics.OpenGL4;
+using OpenTK.Mathematics;
+using OpenTK.WinForms;
+using OpenTK.Windowing.Common;
+using System.Runtime.InteropServices;
 
 namespace SpaceHulksLevelEditor;
 
@@ -8,36 +12,36 @@ public class Preview3DPanel : Panel
     public bool ShowExterior { get; set; }
     public ShipType ShipType { get; set; } = ShipType.Human;
 
-    // Orbit camera
-    private float _orbitYaw = 45f;    // degrees
-    private float _orbitPitch = 55f;  // degrees (angle from horizontal)
-    private float _orbitDist = 30f;   // distance from target
-    private float _targetX, _targetZ; // look-at point (world coords)
-    private float _targetY = 0f;
+    private GLControl? _gl;
+    private bool _glReady;
 
-    private const float CellSize = 2.0f;
-    private const float WallH = 2.0f;
-    private const float MinPitch = 10f;
-    private const float MaxPitch = 89f;
-    private const float MinDist = 5f;
-    private const float MaxDist = 80f;
+    // Shader
+    private int _prog, _mvpLoc, _useTexLoc;
 
-    // Render
-    private Bitmap? _buffer;
-    private float[] _zBuf = Array.Empty<float>();
-    private System.Windows.Forms.Timer _tickTimer;
+    // Geometry
+    private int _vao, _vbo;
+
+    // GL textures (keyed by name)
+    private readonly Dictionary<string, int> _glTex = new();
+
+    // Camera
+    private float _yaw = 45f, _pitch = 55f, _dist = 30f;
+    private float _tgtX, _tgtY, _tgtZ;
+    private const float Cell = 2f, WallH = 2f;
+    private const float MinPitch = 10f, MaxPitch = 89f;
+    private const float MinDist = 5f, MaxDist = 120f;
 
     // Input
     private bool _orbiting, _panning;
     private Point _lastMouse;
 
-    // Colors
-    private static readonly Color BgColor = Color.FromArgb(18, 18, 28);
-    private static readonly Color WallTop = Color.FromArgb(160, 155, 165);
-    private static readonly Color FloorCol = Color.FromArgb(130, 130, 125);
-    private static readonly Color CeilCol = Color.FromArgb(145, 145, 155);
-    private static readonly Color GridLine = Color.FromArgb(40, 40, 50);
+    // Timer
+    private System.Windows.Forms.Timer _timer;
 
+    // Per-frame batches: GL texture id -> vertex floats
+    private readonly Dictionary<int, List<float>> _batches = new();
+
+    // Colors
     private static readonly Dictionary<RoomType, Color> RoomColors = new()
     {
         [RoomType.Corridor] = Color.FromArgb(130, 130, 125),
@@ -60,495 +64,434 @@ public class Preview3DPanel : Panel
         [EnemyType.Hiveguard] = Color.FromArgb(70, 110, 210),
     };
 
-    // Render quad with optional texture
-    private record struct RenderQuad(
-        PointF[] Pts, Color Color, float Depth,
-        Bitmap? Tex = null, bool IsVertical = false,
-        float Brightness = 1f, Color Tint = default);
+    // ── Constructor ─────────────────────────────────────────────
 
     public Preview3DPanel()
     {
         DoubleBuffered = true;
-        SetStyle(ControlStyles.Selectable | ControlStyles.AllPaintingInWmPaint |
-                 ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer, true);
-        TabStop = true;
 
-        _tickTimer = new System.Windows.Forms.Timer { Interval = 33 }; // ~30fps
-        _tickTimer.Tick += (_, _) => { RenderFrame(); Invalidate(); };
+        try
+        {
+            _gl = new GLControl(new GLControlSettings
+            {
+                Profile = ContextProfile.Core,
+                API = ContextAPI.OpenGL,
+            });
+            _gl.Dock = DockStyle.Fill;
+            _gl.Load += (_, _) => InitGL();
+            _gl.Paint += (_, _) => Render();
+            _gl.Resize += (_, _) => { if (_glReady) GL.Viewport(0, 0, _gl.ClientSize.Width, _gl.ClientSize.Height); };
+            _gl.MouseDown += OnGLMouse;
+            _gl.MouseMove += OnGLMouseMove;
+            _gl.MouseUp += (_, _) => { _orbiting = false; _panning = false; };
+            _gl.MouseWheel += OnGLWheel;
+            _gl.KeyDown += OnGLKey;
+            Controls.Add(_gl);
+        }
+        catch { /* GL not available */ }
+
+        _timer = new System.Windows.Forms.Timer { Interval = 16 }; // ~60fps
+        _timer.Tick += (_, _) => _gl?.Invalidate();
     }
 
     public void StartPreview()
     {
         if (Floor == null) return;
         TextureCache.EnsureLoaded();
-        _targetX = Floor.Width * CellSize / 2f;
-        _targetZ = Floor.Height * CellSize / 2f;
-        _orbitDist = Math.Max(Floor.Width, Floor.Height) * CellSize * 0.8f;
-        _tickTimer.Start();
-        Focus();
+        _tgtX = Floor.Width * Cell / 2f;
+        _tgtZ = Floor.Height * Cell / 2f;
+        _dist = Math.Max(Floor.Width, Floor.Height) * Cell * 0.8f;
+        _timer.Start();
+        _gl?.Focus();
     }
 
-    public void StopPreview() => _tickTimer.Stop();
+    public void StopPreview() => _timer.Stop();
 
-    private static bool IsWallLike(int cellType) =>
-        cellType == (int)CellType.Wall || cellType == (int)CellType.Window;
+    // ── GL Init ─────────────────────────────────────────────────
 
-    // ── Camera math ─────────────────────────────────────────────
-    private (float x, float y, float z) GetCameraPos()
+    private const string VertSrc = @"#version 330 core
+layout(location=0) in vec3 aPos;
+layout(location=1) in vec2 aUV;
+layout(location=2) in vec4 aCol;
+uniform mat4 uMVP;
+out vec2 vUV; out vec4 vCol;
+void main(){
+    gl_Position = uMVP * vec4(aPos,1.0);
+    vUV = aUV; vCol = aCol;
+}";
+
+    private const string FragSrc = @"#version 330 core
+in vec2 vUV; in vec4 vCol;
+uniform sampler2D uTex;
+uniform int uUseTex;
+out vec4 oColor;
+void main(){
+    vec4 t = uUseTex!=0 ? texture(uTex, vUV) : vec4(1.0);
+    oColor = t * vCol;
+}";
+
+    private void InitGL()
     {
-        float yr = _orbitYaw * MathF.PI / 180f;
-        float pr = _orbitPitch * MathF.PI / 180f;
+        int vs = GL.CreateShader(ShaderType.VertexShader);
+        GL.ShaderSource(vs, VertSrc);
+        GL.CompileShader(vs);
+
+        int fs = GL.CreateShader(ShaderType.FragmentShader);
+        GL.ShaderSource(fs, FragSrc);
+        GL.CompileShader(fs);
+
+        _prog = GL.CreateProgram();
+        GL.AttachShader(_prog, vs);
+        GL.AttachShader(_prog, fs);
+        GL.LinkProgram(_prog);
+        GL.DeleteShader(vs);
+        GL.DeleteShader(fs);
+
+        _mvpLoc = GL.GetUniformLocation(_prog, "uMVP");
+        _useTexLoc = GL.GetUniformLocation(_prog, "uUseTex");
+
+        _vao = GL.GenVertexArray();
+        _vbo = GL.GenBuffer();
+        GL.BindVertexArray(_vao);
+        GL.BindBuffer(BufferTarget.ArrayBuffer, _vbo);
+        // pos(3) + uv(2) + color(4) = 9 floats = 36 bytes
+        GL.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, 36, 0);
+        GL.EnableVertexAttribArray(0);
+        GL.VertexAttribPointer(1, 2, VertexAttribPointerType.Float, false, 36, 12);
+        GL.EnableVertexAttribArray(1);
+        GL.VertexAttribPointer(2, 4, VertexAttribPointerType.Float, false, 36, 20);
+        GL.EnableVertexAttribArray(2);
+        GL.BindVertexArray(0);
+
+        GL.ClearColor(0.07f, 0.07f, 0.11f, 1f);
+        GL.Enable(EnableCap.DepthTest);
+        GL.Disable(EnableCap.CullFace);
+
+        _glReady = true;
+        LoadGLTextures();
+    }
+
+    // ── GL Textures ─────────────────────────────────────────────
+
+    private void LoadGLTextures()
+    {
+        _glTex["wall_a"] = UploadTex(TextureCache.WallA);
+        _glTex["wall_a_win"] = UploadTex(TextureCache.WallAWindow);
+        _glTex["floor"] = UploadTex(TextureCache.Floor);
+        _glTex["bricks"] = UploadTex(TextureCache.Bricks);
+        _glTex["stone"] = UploadTex(TextureCache.Stone);
+        _glTex["ext_wall"] = UploadTex(TextureCache.ExteriorWall);
+        _glTex["ext_win"] = UploadTex(TextureCache.ExteriorWindow);
+        _glTex["alien_ext"] = UploadTex(TextureCache.AlienExterior);
+        _glTex["alien_ext_win"] = UploadTex(TextureCache.AlienExteriorWindow);
+    }
+
+    private static int UploadTex(Bitmap? bmp)
+    {
+        if (bmp == null) return 0;
+        int id = GL.GenTexture();
+        GL.BindTexture(TextureTarget.Texture2D, id);
+        var bits = bmp.LockBits(new Rectangle(0, 0, bmp.Width, bmp.Height),
+            System.Drawing.Imaging.ImageLockMode.ReadOnly,
+            System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba,
+            bmp.Width, bmp.Height, 0, PixelFormat.Bgra, PixelType.UnsignedByte, bits.Scan0);
+        bmp.UnlockBits(bits);
+        GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Nearest);
+        GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Nearest);
+        GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)TextureWrapMode.Repeat);
+        GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)TextureWrapMode.Repeat);
+        return id;
+    }
+
+    private int Tex(string name) => _glTex.GetValueOrDefault(name, 0);
+
+    // ── Camera ──────────────────────────────────────────────────
+
+    private Vector3 CamPos()
+    {
+        float yr = MathHelper.DegreesToRadians(_yaw);
+        float pr = MathHelper.DegreesToRadians(_pitch);
         float cp = MathF.Cos(pr);
-        return (
-            _targetX + _orbitDist * cp * MathF.Sin(yr),
-            _targetY + _orbitDist * MathF.Sin(pr),
-            _targetZ + _orbitDist * cp * MathF.Cos(yr)
-        );
+        return new Vector3(
+            _tgtX + _dist * cp * MathF.Sin(yr),
+            _tgtY + _dist * MathF.Sin(pr),
+            _tgtZ + _dist * cp * MathF.Cos(yr));
     }
 
-    // Project world point to screen (returns screen x, y, depth)
-    private (float sx, float sy, float depth) Project(float wx, float wy, float wz,
-        float camX, float camY, float camZ, int W, int H)
+    private Matrix4 MVP()
     {
-        float yr = _orbitYaw * MathF.PI / 180f;
-        float pr = _orbitPitch * MathF.PI / 180f;
-
-        // View-space transform (orbit camera)
-        float dx = wx - camX, dy = wy - camY, dz = wz - camZ;
-
-        // Rotate around Y (yaw)
-        float sy2 = MathF.Sin(yr), cy2 = MathF.Cos(yr);
-        float rx = dx * cy2 - dz * sy2;
-        float rz = dx * sy2 + dz * cy2;
-        float ry = dy;
-
-        // Rotate around X (pitch)
-        float sp = MathF.Sin(pr), cp = MathF.Cos(pr);
-        float ry2 = ry * cp - rz * sp;
-        float rz2 = ry * sp + rz * cp;
-
-        // Perspective
-        float near = 0.5f;
-        float depth = -rz2;
-        if (depth < near) depth = near;
-
-        float fov = 50f * MathF.PI / 180f;
-        float scale = (H * 0.5f) / MathF.Tan(fov / 2f);
-        float screenX = W / 2f + rx * scale / depth;
-        float screenY = H / 2f - ry2 * scale / depth;
-
-        return (screenX, screenY, depth);
+        var eye = CamPos();
+        var target = new Vector3(_tgtX, _tgtY, _tgtZ);
+        var view = Matrix4.LookAt(eye, target, Vector3.UnitY);
+        float aspect = _gl != null && _gl.ClientSize.Height > 0
+            ? (float)_gl.ClientSize.Width / _gl.ClientSize.Height : 1f;
+        var proj = Matrix4.CreatePerspectiveFieldOfView(
+            MathHelper.DegreesToRadians(50f), aspect, 0.1f, 300f);
+        return view * proj;
     }
 
-    private void RenderFrame()
-    {
-        if (Floor == null) return;
-        int W = Width, H = Height;
-        if (W < 10 || H < 10) return;
+    // ── Geometry Building ───────────────────────────────────────
 
-        if (_buffer == null || _buffer.Width != W || _buffer.Height != H)
+    private static bool IsWallLike(int c) => c == (int)CellType.Wall || c == (int)CellType.Window;
+
+    private void Vert(List<float> b, float x, float y, float z, float u, float v, Color c)
+    {
+        b.Add(x); b.Add(y); b.Add(z);
+        b.Add(u); b.Add(v);
+        b.Add(c.R / 255f); b.Add(c.G / 255f); b.Add(c.B / 255f); b.Add(c.A / 255f);
+    }
+
+    private void Quad(int tex,
+        float x0, float y0, float z0, float u0, float v0,
+        float x1, float y1, float z1, float u1, float v1,
+        float x2, float y2, float z2, float u2, float v2,
+        float x3, float y3, float z3, float u3, float v3,
+        Color col)
+    {
+        if (!_batches.TryGetValue(tex, out var b))
         {
-            _buffer?.Dispose();
-            _buffer = new Bitmap(W, H, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-            _zBuf = new float[W * H];
+            b = new List<float>(4096);
+            _batches[tex] = b;
         }
+        Vert(b, x0, y0, z0, u0, v0, col);
+        Vert(b, x1, y1, z1, u1, v1, col);
+        Vert(b, x2, y2, z2, u2, v2, col);
+        Vert(b, x0, y0, z0, u0, v0, col);
+        Vert(b, x2, y2, z2, u2, v2, col);
+        Vert(b, x3, y3, z3, u3, v3, col);
+    }
 
-        Array.Fill(_zBuf, float.MaxValue);
+    // Emit a wall-side quad (vertical face) with proper UVs
+    private void WallQuad(int tex,
+        float x0, float y0, float z0, float x1, float y1, float z1,
+        float x2, float y2, float z2, float x3, float y3, float z3, Color col)
+    {
+        // v0,v1 = bottom edge, v2,v3 = top edge
+        Quad(tex, x0, y0, z0, 0, 1, x1, y1, z1, 1, 1,
+                  x2, y2, z2, 1, 0, x3, y3, z3, 0, 0, col);
+    }
 
-        var (camX, camY, camZ) = GetCameraPos();
+    // Emit a horizontal quad (floor/ceiling/top) with proper UVs
+    private void FlatQuad(int tex,
+        float x0, float y, float z0, float x1, float z1, Color col)
+    {
+        Quad(tex, x0, y, z0, 0, 0, x1, y, z0, 1, 0,
+                  x1, y, z1, 1, 1, x0, y, z1, 0, 1, col);
+    }
 
-        using var g = Graphics.FromImage(_buffer);
-        g.SmoothingMode = SmoothingMode.None;
-        g.InterpolationMode = InterpolationMode.NearestNeighbor;
-        g.PixelOffsetMode = PixelOffsetMode.Half;
-        g.Clear(BgColor);
-
-        // Collect quads, sort by depth (painter's algorithm)
-        var quads = new List<RenderQuad>();
+    private void BuildGeometry()
+    {
+        foreach (var b in _batches.Values) b.Clear();
+        if (Floor == null) return;
 
         int w = Floor.Width, h = Floor.Height;
+        bool alien = ShipType == ShipType.Alien;
+        int wallTex = alien ? Tex("bricks") : Tex("wall_a");
+        int winTex = alien ? Tex("bricks") : Tex("wall_a_win");
+        int floorTex = alien ? Tex("stone") : Tex("floor");
 
         for (int gy = 1; gy <= h; gy++)
         {
             for (int gx = 1; gx <= w; gx++)
             {
-                float x0 = (gx - 1) * CellSize;
-                float x1 = gx * CellSize;
-                float z0 = (gy - 1) * CellSize;
-                float z1 = gy * CellSize;
+                float x0 = (gx - 1) * Cell, x1 = gx * Cell;
+                float z0 = (gy - 1) * Cell, z1 = gy * Cell;
+                int ct = Floor.Map[gy, gx];
 
-                int cellType = Floor.Map[gy, gx];
-
-                if (IsWallLike(cellType))
+                if (IsWallLike(ct))
                 {
-                    bool isWindow = cellType == (int)CellType.Window;
-
-                    // Wall/Window block — draw top face + visible side faces
+                    bool isWin = ct == (int)CellType.Window;
                     var room = Floor.RoomAt(gx, gy);
-                    Color wallCol = WallTop;
-                    Color roomTint = default;
+                    Color wc = Color.FromArgb(160, 155, 165);
                     if (room != null && RoomColors.ContainsKey(room.Type))
-                    {
-                        wallCol = Lerp(WallTop, RoomColors[room.Type], 0.3f);
-                        roomTint = RoomColors[room.Type];
-                    }
+                        wc = Lerp(wc, RoomColors[room.Type], 0.3f);
 
-                    bool alien = ShipType == ShipType.Alien;
-                    Bitmap? wallTex = alien ? TextureCache.Bricks : TextureCache.WallA;
-                    Bitmap? topTex = wallTex;
-                    Bitmap? sideTex = isWindow
-                        ? (alien ? TextureCache.Bricks : TextureCache.WallAWindow)
-                        : wallTex;
+                    int sideTex = isWin ? winTex : wallTex;
 
                     // Top face
-                    var topPts = ProjectQuad(x0, WallH, z0, x1, WallH, z0, x1, WallH, z1, x0, WallH, z1,
-                        camX, camY, camZ, W, H, out float topD);
-                    if (topPts != null)
-                        quads.Add(new RenderQuad(topPts, wallCol, topD, topTex, false, 1f, roomTint));
+                    FlatQuad(wallTex, x0, WallH, z0, x1, z1, wc);
 
-                    // Side faces (only draw if adjacent cell is not wall-like)
-                    Color sideCol = Darken(wallCol, 0.6f);
-                    Color sideCol2 = Darken(wallCol, 0.75f);
+                    // Side faces (only if adjacent is open)
+                    Color sc1 = Darken(wc, 0.6f), sc2 = Darken(wc, 0.75f);
 
-                    // North
                     if (gy > 1 && !IsWallLike(Floor.Map[gy - 1, gx]))
-                    {
-                        var pts = ProjectQuad(x0, 0, z0, x1, 0, z0, x1, WallH, z0, x0, WallH, z0,
-                            camX, camY, camZ, W, H, out float d);
-                        if (pts != null) quads.Add(new RenderQuad(pts, sideCol, d, sideTex, true, 0.6f, roomTint));
-                    }
-                    // South
+                        WallQuad(sideTex, x0, 0, z0, x1, 0, z0, x1, WallH, z0, x0, WallH, z0, sc1);
                     if (gy < h && !IsWallLike(Floor.Map[gy + 1, gx]))
-                    {
-                        var pts = ProjectQuad(x1, 0, z1, x0, 0, z1, x0, WallH, z1, x1, WallH, z1,
-                            camX, camY, camZ, W, H, out float d);
-                        if (pts != null) quads.Add(new RenderQuad(pts, sideCol, d, sideTex, true, 0.6f, roomTint));
-                    }
-                    // West
+                        WallQuad(sideTex, x1, 0, z1, x0, 0, z1, x0, WallH, z1, x1, WallH, z1, sc1);
                     if (gx > 1 && !IsWallLike(Floor.Map[gy, gx - 1]))
-                    {
-                        var pts = ProjectQuad(x0, 0, z1, x0, 0, z0, x0, WallH, z0, x0, WallH, z1,
-                            camX, camY, camZ, W, H, out float d);
-                        if (pts != null) quads.Add(new RenderQuad(pts, sideCol2, d, sideTex, true, 0.75f, roomTint));
-                    }
-                    // East
+                        WallQuad(sideTex, x0, 0, z1, x0, 0, z0, x0, WallH, z0, x0, WallH, z1, sc2);
                     if (gx < w && !IsWallLike(Floor.Map[gy, gx + 1]))
-                    {
-                        var pts = ProjectQuad(x1, 0, z0, x1, 0, z1, x1, WallH, z1, x1, WallH, z0,
-                            camX, camY, camZ, W, H, out float d);
-                        if (pts != null) quads.Add(new RenderQuad(pts, sideCol2, d, sideTex, true, 0.75f, roomTint));
-                    }
+                        WallQuad(sideTex, x1, 0, z0, x1, 0, z1, x1, WallH, z1, x1, WallH, z0, sc2);
                 }
                 else
                 {
-                    // Open cell — floor
+                    // Floor
                     var room = Floor.RoomAt(gx, gy);
-                    Color fc = FloorCol;
-                    Color roomTint = default;
+                    Color fc = Color.FromArgb(130, 130, 125);
                     if (room != null && RoomColors.ContainsKey(room.Type))
-                    {
-                        fc = Lerp(FloorCol, RoomColors[room.Type], 0.25f);
-                        roomTint = RoomColors[room.Type];
-                    }
-
-                    Bitmap? floorTex = ShipType == ShipType.Alien ? TextureCache.Stone : TextureCache.Floor;
-                    var floorPts = ProjectQuad(x0, 0, z0, x1, 0, z0, x1, 0, z1, x0, 0, z1,
-                        camX, camY, camZ, W, H, out float fd);
-                    if (floorPts != null)
-                        quads.Add(new RenderQuad(floorPts, fc, fd, floorTex, false, 1f, roomTint));
+                        fc = Lerp(fc, RoomColors[room.Type], 0.25f);
+                    FlatQuad(floorTex, x0, 0, z0, x1, z1, fc);
                 }
             }
         }
 
-        // Exterior hull (outward-facing boundary quads)
+        // Exterior
         if (ShowExterior)
-            AddExteriorQuads(quads, camX, camY, camZ, W, H);
+            BuildExterior(w, h, alien);
 
-        // Entity markers (small raised quads)
-        AddEntityQuads(quads, camX, camY, camZ, W, H);
-
-        // Sort far to near (painter's)
-        quads.Sort((a, b) => b.Depth.CompareTo(a.Depth));
-
-        // Draw
-        foreach (var q in quads)
-        {
-            if (q.Tex != null)
-            {
-                DrawTexturedQuad(g, q);
-            }
-            else
-            {
-                using var brush = new SolidBrush(q.Color);
-                g.FillPolygon(brush, q.Pts);
-            }
-
-            using var pen = new Pen(Darken(q.Color, 0.7f), 1);
-            g.DrawPolygon(pen, q.Pts);
-        }
+        // Entity markers
+        BuildEntities();
     }
 
-    private void DrawTexturedQuad(Graphics g, RenderQuad q)
-    {
-        // Map texture to quad screen coordinates via affine transform
-        // Vertical faces (wall sides): pts[3]=topLeft, pts[2]=topRight, pts[0]=bottomLeft
-        // Horizontal faces (floor/ceiling/top): pts[0]=corner0, pts[1]=corner1, pts[3]=corner3
-        PointF[] mapPts = q.IsVertical
-            ? new[] { q.Pts[3], q.Pts[2], q.Pts[0] }
-            : new[] { q.Pts[0], q.Pts[1], q.Pts[3] };
-
-        try
-        {
-            using var mat = new Matrix(
-                new RectangleF(0, 0, q.Tex!.Width, q.Tex.Height), mapPts);
-            using var texBrush = new TextureBrush(q.Tex, WrapMode.Clamp);
-            texBrush.Transform = mat;
-            g.FillPolygon(texBrush, q.Pts);
-        }
-        catch
-        {
-            // Degenerate affine transform (tiny quad), fall back to solid
-            using var fb = new SolidBrush(q.Color);
-            g.FillPolygon(fb, q.Pts);
-            return;
-        }
-
-        // Darken overlay for side faces
-        if (q.Brightness < 0.99f)
-        {
-            int alpha = (int)((1f - q.Brightness) * 180);
-            using var dark = new SolidBrush(Color.FromArgb(alpha, 0, 0, 0));
-            g.FillPolygon(dark, q.Pts);
-        }
-
-        // Room tint overlay
-        if (q.Tint.A > 0)
-        {
-            using var tint = new SolidBrush(Color.FromArgb(50, q.Tint));
-            g.FillPolygon(tint, q.Pts);
-        }
-    }
-
-    private void AddExteriorQuads(List<RenderQuad> quads,
-        float camX, float camY, float camZ, int W, int H)
+    private void BuildExterior(int w, int h, bool alien)
     {
         if (Floor == null) return;
-        int w = Floor.Width, h = Floor.Height;
+        int extW = alien ? Tex("alien_ext") : Tex("ext_wall");
+        int extWin = alien ? Tex("alien_ext_win") : Tex("ext_win");
+        Color ec = alien ? Color.FromArgb(120, 60, 80) : Color.FromArgb(60, 80, 130);
+        Color es = Darken(ec, 0.7f);
+        const float Off = 0.3f, ExtH = WallH + 0.6f;
 
-        bool alien = ShipType == ShipType.Alien;
-        Bitmap? extWall = alien ? TextureCache.AlienExterior : TextureCache.ExteriorWall;
-        Bitmap? extWindow = alien ? TextureCache.AlienExteriorWindow : TextureCache.ExteriorWindow;
-        Color extCol = alien ? Color.FromArgb(120, 60, 80) : Color.FromArgb(60, 80, 130);
-        Color extSide = Darken(extCol, 0.7f);
-
-        // Exterior hull offset outward from grid boundary
-        const float Off = 0.3f;
-        const float ExtWallH = WallH + 0.6f; // taller than interior walls
-
-        // Side panels on grid boundaries (offset outward)
         for (int gy = 1; gy <= h; gy++)
         {
             for (int gx = 1; gx <= w; gx++)
             {
                 if (!IsWallLike(Floor.Map[gy, gx])) continue;
+                bool isWin = Floor.Map[gy, gx] == (int)CellType.Window;
+                int ft = isWin ? extWin : extW;
+                float x0 = (gx - 1) * Cell, x1 = gx * Cell;
+                float z0 = (gy - 1) * Cell, z1 = gy * Cell;
 
-                bool isWindow = Floor.Map[gy, gx] == (int)CellType.Window;
-                Bitmap? faceTex = isWindow ? extWindow : extWall;
-
-                float x0 = (gx - 1) * CellSize;
-                float x1 = gx * CellSize;
-                float z0 = (gy - 1) * CellSize;
-                float z1 = gy * CellSize;
-
-                // North boundary — face shifted north
-                if (gy == 1)
-                {
-                    float zz = z0 - Off;
-                    var pts = ProjectQuad(x1, 0, zz, x0, 0, zz, x0, ExtWallH, zz, x1, ExtWallH, zz,
-                        camX, camY, camZ, W, H, out float d);
-                    if (pts != null) quads.Add(new RenderQuad(pts, extSide, d, faceTex, true, 0.65f));
-                }
-                // South boundary — face shifted south
-                if (gy == h)
-                {
-                    float zz = z1 + Off;
-                    var pts = ProjectQuad(x0, 0, zz, x1, 0, zz, x1, ExtWallH, zz, x0, ExtWallH, zz,
-                        camX, camY, camZ, W, H, out float d);
-                    if (pts != null) quads.Add(new RenderQuad(pts, extSide, d, faceTex, true, 0.65f));
-                }
-                // West boundary — face shifted west
-                if (gx == 1)
-                {
-                    float xx = x0 - Off;
-                    var pts = ProjectQuad(xx, 0, z0, xx, 0, z1, xx, ExtWallH, z1, xx, ExtWallH, z0,
-                        camX, camY, camZ, W, H, out float d);
-                    if (pts != null) quads.Add(new RenderQuad(pts, extCol, d, faceTex, true, 0.75f));
-                }
-                // East boundary — face shifted east
-                if (gx == w)
-                {
-                    float xx = x1 + Off;
-                    var pts = ProjectQuad(xx, 0, z1, xx, 0, z0, xx, ExtWallH, z0, xx, ExtWallH, z1,
-                        camX, camY, camZ, W, H, out float d);
-                    if (pts != null) quads.Add(new RenderQuad(pts, extCol, d, faceTex, true, 0.75f));
-                }
+                if (gy == 1) WallQuad(ft, x1, 0, z0 - Off, x0, 0, z0 - Off, x0, ExtH, z0 - Off, x1, ExtH, z0 - Off, es);
+                if (gy == h) WallQuad(ft, x0, 0, z1 + Off, x1, 0, z1 + Off, x1, ExtH, z1 + Off, x0, ExtH, z1 + Off, es);
+                if (gx == 1) WallQuad(ft, x0 - Off, 0, z0, x0 - Off, 0, z1, x0 - Off, ExtH, z1, x0 - Off, ExtH, z0, ec);
+                if (gx == w) WallQuad(ft, x1 + Off, 0, z1, x1 + Off, 0, z0, x1 + Off, ExtH, z0, x1 + Off, ExtH, z1, ec);
             }
         }
 
-        // Roof lip (just the edge strips, not a solid cap that hides interior)
-        float roofY = ExtWallH;
-        float rx0 = -Off, rz0 = -Off;
-        float rx1 = w * CellSize + Off, rz1 = h * CellSize + Off;
-        float lip = CellSize; // 1-cell-wide roof edge strip
-
-        // North edge strip
-        var rnPts = ProjectQuad(rx0, roofY, rz0, rx1, roofY, rz0, rx1, roofY, rz0 + lip, rx0, roofY, rz0 + lip,
-            camX, camY, camZ, W, H, out float rnD);
-        if (rnPts != null) quads.Add(new RenderQuad(rnPts, extCol, rnD, extWall, false, 0.85f));
-        // South edge strip
-        var rsPts = ProjectQuad(rx0, roofY, rz1 - lip, rx1, roofY, rz1 - lip, rx1, roofY, rz1, rx0, roofY, rz1,
-            camX, camY, camZ, W, H, out float rsD);
-        if (rsPts != null) quads.Add(new RenderQuad(rsPts, extCol, rsD, extWall, false, 0.85f));
-        // West edge strip
-        var rwPts = ProjectQuad(rx0, roofY, rz0 + lip, rx0 + lip, roofY, rz0 + lip, rx0 + lip, roofY, rz1 - lip, rx0, roofY, rz1 - lip,
-            camX, camY, camZ, W, H, out float rwD);
-        if (rwPts != null) quads.Add(new RenderQuad(rwPts, extCol, rwD, extWall, false, 0.8f));
-        // East edge strip
-        var rePts = ProjectQuad(rx1 - lip, roofY, rz0 + lip, rx1, roofY, rz0 + lip, rx1, roofY, rz1 - lip, rx1 - lip, roofY, rz1 - lip,
-            camX, camY, camZ, W, H, out float reD);
-        if (rePts != null) quads.Add(new RenderQuad(rePts, extCol, reD, extWall, false, 0.8f));
+        // Roof lip (edge strips, not solid)
+        float rx0 = -Off, rz0 = -Off, rx1 = w * Cell + Off, rz1 = h * Cell + Off;
+        float lip = Cell;
+        FlatQuad(extW, rx0, ExtH, rz0, rx1, rz0 + lip, ec);
+        FlatQuad(extW, rx0, ExtH, rz1 - lip, rx1, rz1, ec);
+        FlatQuad(extW, rx0, ExtH, rz0 + lip, rx0 + lip, rz1 - lip, Darken(ec, 0.9f));
+        FlatQuad(extW, rx1 - lip, ExtH, rz0 + lip, rx1, rz1 - lip, Darken(ec, 0.9f));
     }
 
-    private void AddEntityQuads(List<RenderQuad> quads,
-        float camX, float camY, float camZ, int W, int H)
+    private void BuildEntities()
     {
         if (Floor == null) return;
-        float markerH = 0.15f;
         float pad = 0.3f;
-
-        // Spawn
-        AddMarker(quads, Floor.SpawnGX, Floor.SpawnGY, Color.Lime, markerH, pad, camX, camY, camZ, W, H);
-
-        if (Floor.HasUp) AddMarker(quads, Floor.StairsGX, Floor.StairsGY, Color.Green, markerH * 3, pad, camX, camY, camZ, W, H);
-        if (Floor.HasDown) AddMarker(quads, Floor.DownGX, Floor.DownGY, Color.RoyalBlue, markerH * 3, pad, camX, camY, camZ, W, H);
-
+        Marker(Floor.SpawnGX, Floor.SpawnGY, Color.Lime, 0.15f, pad);
+        if (Floor.HasUp) Marker(Floor.StairsGX, Floor.StairsGY, Color.Green, 0.45f, pad);
+        if (Floor.HasDown) Marker(Floor.DownGX, Floor.DownGY, Color.RoyalBlue, 0.45f, pad);
         foreach (var e in Floor.Enemies)
-        {
-            var ec = EnemyColors.GetValueOrDefault(e.EnemyType, Color.Gray);
-            AddMarker(quads, e.GX, e.GY, ec, markerH * 2, pad * 0.8f, camX, camY, camZ, W, H);
-        }
-
+            Marker(e.GX, e.GY, EnemyColors.GetValueOrDefault(e.EnemyType, Color.Gray), 0.3f, pad * 0.8f);
         foreach (var c in Floor.Consoles)
-        {
-            var rc = RoomColors.GetValueOrDefault(c.RoomType, Color.Teal);
-            AddMarker(quads, c.GX, c.GY, rc, markerH, pad * 0.6f, camX, camY, camZ, W, H);
-        }
-
-        foreach (var l in Floor.Loot)
-            AddMarker(quads, l.GX, l.GY, Color.Gold, markerH * 2, pad * 0.7f, camX, camY, camZ, W, H);
-
-        // Officers (white diamond markers)
-        foreach (var o in Floor.Officers)
-            AddMarker(quads, o.GX, o.GY, Color.White, markerH * 2.5f, pad * 0.7f, camX, camY, camZ, W, H);
-
-        // NPCs (cyan markers)
-        foreach (var n in Floor.Npcs)
-            AddMarker(quads, n.GX, n.GY, Color.Cyan, markerH * 2.5f, pad * 0.7f, camX, camY, camZ, W, H);
+            Marker(c.GX, c.GY, RoomColors.GetValueOrDefault(c.RoomType, Color.Teal), 0.15f, pad * 0.6f);
+        foreach (var l in Floor.Loot) Marker(l.GX, l.GY, Color.Gold, 0.3f, pad * 0.7f);
+        foreach (var o in Floor.Officers) Marker(o.GX, o.GY, Color.White, 0.4f, pad * 0.7f);
+        foreach (var n in Floor.Npcs) Marker(n.GX, n.GY, Color.Cyan, 0.4f, pad * 0.7f);
     }
 
-    private void AddMarker(List<RenderQuad> quads,
-        int gx, int gy, Color color, float h, float pad,
-        float camX, float camY, float camZ, int W, int H)
+    private void Marker(int gx, int gy, Color c, float mh, float pad)
     {
-        float x0 = (gx - 1) * CellSize + pad;
-        float x1 = gx * CellSize - pad;
-        float z0 = (gy - 1) * CellSize + pad;
-        float z1 = gy * CellSize - pad;
-
+        float x0 = (gx - 1) * Cell + pad, x1 = gx * Cell - pad;
+        float z0 = (gy - 1) * Cell + pad, z1 = gy * Cell - pad;
         // Top
-        var top = ProjectQuad(x0, h, z0, x1, h, z0, x1, h, z1, x0, h, z1, camX, camY, camZ, W, H, out float td);
-        if (top != null) quads.Add(new RenderQuad(top, color, td));
-
-        // Front face
-        var front = ProjectQuad(x0, 0, z1, x1, 0, z1, x1, h, z1, x0, h, z1, camX, camY, camZ, W, H, out float fd);
-        if (front != null) quads.Add(new RenderQuad(front, Darken(color, 0.7f), fd));
-
-        // Right face
-        var right = ProjectQuad(x1, 0, z0, x1, 0, z1, x1, h, z1, x1, h, z0, camX, camY, camZ, W, H, out float rd);
-        if (right != null) quads.Add(new RenderQuad(right, Darken(color, 0.8f), rd));
+        FlatQuad(0, x0, mh, z0, x1, z1, c);
+        // Front
+        Color d1 = Darken(c, 0.7f);
+        WallQuad(0, x0, 0, z1, x1, 0, z1, x1, mh, z1, x0, mh, z1, d1);
+        // Right
+        Color d2 = Darken(c, 0.8f);
+        WallQuad(0, x1, 0, z0, x1, 0, z1, x1, mh, z1, x1, mh, z0, d2);
     }
 
-    private PointF[]? ProjectQuad(
-        float x0, float y0, float z0,
-        float x1, float y1, float z1,
-        float x2, float y2, float z2,
-        float x3, float y3, float z3,
-        float camX, float camY, float camZ, int W, int H,
-        out float avgDepth)
+    // ── Rendering ───────────────────────────────────────────────
+
+    private void Render()
     {
-        var (sx0, sy0, d0) = Project(x0, y0, z0, camX, camY, camZ, W, H);
-        var (sx1, sy1, d1) = Project(x1, y1, z1, camX, camY, camZ, W, H);
-        var (sx2, sy2, d2) = Project(x2, y2, z2, camX, camY, camZ, W, H);
-        var (sx3, sy3, d3) = Project(x3, y3, z3, camX, camY, camZ, W, H);
+        if (!_glReady || _gl == null) return;
+        _gl.MakeCurrent();
 
-        avgDepth = (d0 + d1 + d2 + d3) / 4f;
+        GL.Viewport(0, 0, _gl.ClientSize.Width, _gl.ClientSize.Height);
+        GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
 
-        // Cull if behind camera
-        if (d0 < 0.5f && d1 < 0.5f && d2 < 0.5f && d3 < 0.5f) return null;
+        if (Floor == null) { _gl.SwapBuffers(); return; }
 
-        return new PointF[] {
-            new(sx0, sy0), new(sx1, sy1), new(sx2, sy2), new(sx3, sy3)
-        };
-    }
+        BuildGeometry();
 
-    // ── Input ────────────────────────────────────────────────────
+        GL.UseProgram(_prog);
+        var mvp = MVP();
+        GL.UniformMatrix4(_mvpLoc, false, ref mvp);
+        GL.BindVertexArray(_vao);
 
-    protected override void OnMouseDown(MouseEventArgs e)
-    {
-        Focus();
-        if (e.Button == MouseButtons.Left || e.Button == MouseButtons.Right)
+        foreach (var (texId, data) in _batches)
         {
-            _orbiting = e.Button == MouseButtons.Left;
-            _panning = e.Button == MouseButtons.Right;
-            _lastMouse = e.Location;
+            if (data.Count == 0) continue;
+            int vertCount = data.Count / 9;
+
+            GL.BindBuffer(BufferTarget.ArrayBuffer, _vbo);
+            float[] arr = data.ToArray();
+            GL.BufferData(BufferTarget.ArrayBuffer, arr.Length * sizeof(float), arr, BufferUsageHint.StreamDraw);
+
+            if (texId > 0)
+            {
+                GL.ActiveTexture(TextureUnit.Texture0);
+                GL.BindTexture(TextureTarget.Texture2D, texId);
+                GL.Uniform1(_useTexLoc, 1);
+            }
+            else
+            {
+                GL.Uniform1(_useTexLoc, 0);
+            }
+
+            GL.DrawArrays(PrimitiveType.Triangles, 0, vertCount);
         }
+
+        GL.BindVertexArray(0);
+        GL.UseProgram(0);
+
+        _gl.SwapBuffers();
     }
 
-    protected override void OnMouseMove(MouseEventArgs e)
+    // ── Input ───────────────────────────────────────────────────
+
+    private void OnGLMouse(object? s, MouseEventArgs e)
     {
+        _gl?.Focus();
+        if (e.Button == MouseButtons.Left) _orbiting = true;
+        if (e.Button == MouseButtons.Right) _panning = true;
+        _lastMouse = e.Location;
+    }
+
+    private void OnGLMouseMove(object? s, MouseEventArgs e)
+    {
+        int dx = e.X - _lastMouse.X, dy = e.Y - _lastMouse.Y;
         if (_orbiting)
         {
-            int dx = e.X - _lastMouse.X;
-            int dy = e.Y - _lastMouse.Y;
-            _orbitYaw += dx * 0.5f;
-            _orbitPitch = Math.Clamp(_orbitPitch + dy * 0.5f, MinPitch, MaxPitch);
-            _lastMouse = e.Location;
+            _yaw += dx * 0.5f;
+            _pitch = Math.Clamp(_pitch + dy * 0.5f, MinPitch, MaxPitch);
         }
         else if (_panning)
         {
-            int dx = e.X - _lastMouse.X;
-            int dy = e.Y - _lastMouse.Y;
-            float yr = _orbitYaw * MathF.PI / 180f;
-            float panSpeed = _orbitDist * 0.003f;
-            _targetX -= (MathF.Cos(yr) * dx + MathF.Sin(yr) * dy) * panSpeed;
-            _targetZ -= (-MathF.Sin(yr) * dx + MathF.Cos(yr) * dy) * panSpeed;
-            _lastMouse = e.Location;
+            float yr = MathHelper.DegreesToRadians(_yaw);
+            float ps = _dist * 0.003f;
+            _tgtX -= (MathF.Cos(yr) * dx + MathF.Sin(yr) * dy) * ps;
+            _tgtZ -= (-MathF.Sin(yr) * dx + MathF.Cos(yr) * dy) * ps;
         }
+        _lastMouse = e.Location;
     }
 
-    protected override void OnMouseUp(MouseEventArgs e)
+    private void OnGLWheel(object? s, MouseEventArgs e)
     {
-        _orbiting = false;
-        _panning = false;
+        _dist *= e.Delta > 0 ? 0.9f : 1.1f;
+        _dist = Math.Clamp(_dist, MinDist, MaxDist);
     }
 
-    protected override void OnMouseWheel(MouseEventArgs e)
-    {
-        _orbitDist *= e.Delta > 0 ? 0.9f : 1.1f;
-        _orbitDist = Math.Clamp(_orbitDist, MinDist, MaxDist);
-    }
-
-    protected override void OnKeyDown(KeyEventArgs e)
+    private void OnGLKey(object? s, KeyEventArgs e)
     {
         if (e.KeyCode == Keys.Escape)
         {
@@ -558,31 +501,15 @@ public class Preview3DPanel : Panel
         e.Handled = true;
     }
 
-    protected override bool IsInputKey(Keys keyData) =>
-        keyData == Keys.Escape || base.IsInputKey(keyData);
+    // ── Paint fallback (for HUD text over GL) ───────────────────
 
     protected override void OnPaint(PaintEventArgs e)
     {
         base.OnPaint(e);
-        if (_buffer != null)
+        if (_gl == null || !_glReady)
         {
-            e.Graphics.InterpolationMode = InterpolationMode.NearestNeighbor;
-            e.Graphics.DrawImage(_buffer, 0, 0, Width, Height);
-        }
-        else
-        {
-            using var font = new Font("Consolas", 11);
-            e.Graphics.DrawString("Press F5 or View > 3D Preview", font, Brushes.White, 10, 10);
-        }
-
-        using var hudFont = new Font("Consolas", 9);
-        e.Graphics.DrawString("LMB:Orbit  RMB:Pan  Scroll:Zoom  ESC:Exit",
-            hudFont, Brushes.LightGray, 4, Height - 18);
-
-        // Debug: show exterior state
-        if (ShowExterior)
-        {
-            e.Graphics.DrawString("EXTERIOR: ON", hudFont, Brushes.Yellow, 4, Height - 36);
+            using var f = new Font("Consolas", 11);
+            e.Graphics.DrawString("OpenGL not available. Press F5.", f, Brushes.White, 10, 10);
         }
     }
 
