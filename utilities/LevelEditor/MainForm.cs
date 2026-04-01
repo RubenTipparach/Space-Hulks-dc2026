@@ -457,12 +457,23 @@ public class MainForm : Form
             _preview3D.ShowGhostFloors = !_preview3D.ShowGhostFloors;
             btnGhostFloors.BackColor = _preview3D.ShowGhostFloors ? Color.FromArgb(60, 130, 180) : Color.FromArgb(50, 50, 60);
         };
+        var btnRoof = new Button
+        {
+            Text = "ROOF", Width = 70, Height = 28, Location = new Point(582, 2),
+            FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(50, 50, 60), ForeColor = Color.White,
+            Font = new Font("Consolas", 9, FontStyle.Bold),
+        };
+        btnRoof.Click += (_, _) =>
+        {
+            _preview3D.ShowRoof = !_preview3D.ShowRoof;
+            btnRoof.BackColor = _preview3D.ShowRoof ? Color.FromArgb(60, 130, 180) : Color.FromArgb(50, 50, 60);
+        };
         _modeLabel = new Label
         {
-            Text = "F5", AutoSize = true, Location = new Point(586, 7),
+            Text = "F5", AutoSize = true, Location = new Point(660, 7),
             ForeColor = Color.Gray, Font = new Font("Consolas", 8),
         };
-        modeBar.Controls.AddRange(new Control[] { btn2D, btn3D, btnAllFloors, btnWireframe, btnGhostFloors, _modeLabel });
+        modeBar.Controls.AddRange(new Control[] { btn2D, btn3D, btnAllFloors, btnWireframe, btnGhostFloors, btnRoof, _modeLabel });
 
         // Store button refs for highlight updates
         _btn2D = btn2D; _btn3D = btn3D;

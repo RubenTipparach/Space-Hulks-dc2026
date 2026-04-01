@@ -14,6 +14,7 @@ public class Preview3DPanel : Panel
     public bool ShowAllFloors { get; set; }
     public bool ShowWireframe { get; set; } = true;
     public bool ShowGhostFloors { get; set; }
+    public bool ShowRoof { get; set; }
     public int HullPadding { get; set; } = 0;
     public int CurrentFloorIndex { get; set; }
     private const float FloorSpacing = WallH + 1.5f;
@@ -412,9 +413,10 @@ void main(){
 
         if (ShowAllFloors && Level != null && Level.Floors.Count > 1)
         {
+            // All floors at same Y, stacked on top of each other
             for (int fi = 0; fi < Level.Floors.Count; fi++)
             {
-                _yOff = fi * FloorSpacing;
+                _yOff = 0;
                 BuildFloorGeometry(Level.Floors[fi], alien);
             }
         }
@@ -423,17 +425,15 @@ void main(){
             _yOff = 0;
             BuildFloorGeometry(Floor, alien);
 
-            // Ghost transparent adjacent floors
+            // Ghost: adjacent floors offset vertically and transparent
             if (ShowGhostFloors && Level != null && Level.Floors.Count > 1)
             {
                 int ci = CurrentFloorIndex;
-                // Floor below
                 if (ci > 0)
                 {
                     _yOff = -FloorSpacing;
                     BuildGhostFloor(Level.Floors[ci - 1], alien, 0.2f);
                 }
-                // Floor above
                 if (ci < Level.Floors.Count - 1)
                 {
                     _yOff = FloorSpacing;
@@ -595,6 +595,29 @@ void main(){
                     WallQuad(ft, x1, yb, z0, x1, yb, z1, x1, yt, z1, x1, yt, z0, sE);
             }
         }
+
+        // Roof: cover inside cells where no floor exists above
+        if (ShowRoof)
+        {
+            int roofTex = Tex("roof");
+            Color rc = Darken(ec, 0.85f);
+            float roofY = _yOff + ExtH;
+            for (int gy = 1; gy <= h; gy++)
+                for (int gx = 1; gx <= w; gx++)
+                    if (_hullInside[gy, gx] && !HasFloorAbove(floor, gx, gy))
+                        FlatQuad(roofTex, (gx - 1) * Cell, roofY, (gy - 1) * Cell, gx * Cell, gy * Cell, rc);
+        }
+    }
+
+    private bool HasFloorAbove(FloorData floor, int gx, int gy)
+    {
+        if (Level == null) return false;
+        int fi = Level.Floors.IndexOf(floor);
+        if (fi < 0 || fi >= Level.Floors.Count - 1) return false;
+        var above = Level.Floors[fi + 1];
+        if (gx < 1 || gx > above.Width || gy < 1 || gy > above.Height) return false;
+        // If the cell above is open (corridor/room), there's a floor above
+        return !IsWallLike(above.Map[gy, gx]);
     }
 
     private void BuildEntitiesForFloor(FloorData floor)
