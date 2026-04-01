@@ -151,6 +151,15 @@ public class MainForm : Form
         hullPad.ValueChanged += (_, _) => { _preview3D.HullPadding = (int)hullPad.Value; _grid.HullPadding = (int)hullPad.Value; _grid.Invalidate(); };
         toolFlow.Controls.Add(hullPad);
 
+        // Show all floors
+        var allFloorsCheck = new CheckBox
+        {
+            Text = "Show All Floors", ForeColor = Color.White, AutoSize = true,
+            Margin = new Padding(2, 4, 2, 2),
+        };
+        allFloorsCheck.CheckedChanged += (_, _) => _preview3D.ShowAllFloors = allFloorsCheck.Checked;
+        toolFlow.Controls.Add(allFloorsCheck);
+
         // ── Draw Tools ──────────────────────────────────
         toolFlow.Controls.Add(MakeLabel("DRAW TOOLS"));
         var toolButtons = new (string label, EditTool tool)[]
@@ -470,6 +479,7 @@ public class MainForm : Form
         if (_in3D)
         {
             _preview3D.Floor = _grid.Floor;
+            _preview3D.Level = _level;
             _preview3D.StartPreview();
             _grid.Visible = false;
             _preview3D.Visible = true;
@@ -578,6 +588,7 @@ public class MainForm : Form
         _grid.Undo.SetBaseline(_level.Floors[idx]);
         _grid.Invalidate();
         _preview3D.Floor = _level.Floors[idx];
+        _preview3D.Level = _level;
         if (_in3D)
             _preview3D.StartPreview();
         UpdateStatus();

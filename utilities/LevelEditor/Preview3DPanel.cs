@@ -9,8 +9,11 @@ namespace SpaceHulksLevelEditor;
 public class Preview3DPanel : Panel
 {
     public FloorData? Floor { get; set; }
+    public LevelData? Level { get; set; }
     public bool ShowExterior { get; set; } = true;
+    public bool ShowAllFloors { get; set; }
     public int HullPadding { get; set; } = 0; // wall layers from interior
+    private const float FloorSpacing = WallH + 1.5f; // vertical gap between floors
     public ShipType ShipType { get; set; } = ShipType.Human;
 
     private GLControl? _gl;
@@ -301,22 +304,21 @@ void main(){
     // Compute hull inside mask (shared by interior + exterior)
     private bool[,]? _hullInside;
 
-    private void ComputeHullMask(int w, int h)
+    private void ComputeHullMask(FloorData fl, int w, int h)
     {
         _hullInside = new bool[h + 2, w + 2];
-        if (Floor == null) return;
         var queue = new Queue<(int, int)>();
 
-        int sx = Floor.SpawnGX, sy = Floor.SpawnGY;
-        if (sx >= 1 && sx <= w && sy >= 1 && sy <= h && !IsWallLike(Floor.Map[sy, sx]))
+        int sx = fl.SpawnGX, sy = fl.SpawnGY;
+        if (sx >= 1 && sx <= w && sy >= 1 && sy <= h && !IsWallLike(fl.Map[sy, sx]))
         {
             _hullInside[sy, sx] = true;
             queue.Enqueue((sy, sx));
         }
-        foreach (var room in Floor.Rooms)
+        foreach (var room in fl.Rooms)
         {
             int rcx = room.CenterX, rcy = room.CenterY;
-            if (rcx >= 1 && rcx <= w && rcy >= 1 && rcy <= h && !_hullInside[rcy, rcx] && !IsWallLike(Floor.Map[rcy, rcx]))
+            if (rcx >= 1 && rcx <= w && rcy >= 1 && rcy <= h && !_hullInside[rcy, rcx] && !IsWallLike(fl.Map[rcy, rcx]))
             {
                 _hullInside[rcy, rcx] = true;
                 queue.Enqueue((rcy, rcx));
@@ -332,7 +334,7 @@ void main(){
                 int ny = cy + dy[d], nx = cx + dx[d];
                 if (ny < 1 || ny > h || nx < 1 || nx > w) continue;
                 if (_hullInside[ny, nx]) continue;
-                if (IsWallLike(Floor.Map[ny, nx])) continue;
+                if (IsWallLike(fl.Map[ny, nx])) continue;
                 _hullInside[ny, nx] = true;
                 queue.Enqueue((ny, nx));
             }
@@ -344,7 +346,7 @@ void main(){
             var toExpand = new List<(int y, int x)>();
             for (int gy = 1; gy <= h; gy++)
                 for (int gx = 1; gx <= w; gx++)
-                    if (IsWallLike(Floor.Map[gy, gx]) && !_hullInside[gy, gx])
+                    if (IsWallLike(fl.Map[gy, gx]) && !_hullInside[gy, gx])
                         if ((gy > 1 && _hullInside[gy - 1, gx]) || (gy < h && _hullInside[gy + 1, gx]) ||
                             (gx > 1 && _hullInside[gy, gx - 1]) || (gx < w && _hullInside[gy, gx + 1]))
                             toExpand.Add((gy, gx));
@@ -353,25 +355,18 @@ void main(){
         }
 
         // Extend room sides
-        foreach (var room in Floor.Rooms)
+        foreach (var room in fl.Rooms)
         {
             int rx = room.X, ry = room.Y, rw = room.Width, rh = room.Height;
-            // North wall: inward = +1 (toward room which is south of the wall)
-            ExtendRoomSide(_hullInside, w, h, ry - 1, rx, rx + rw - 1, true, -1);
-            // South wall: inward = -1 (toward room)
-            ExtendRoomSide(_hullInside, w, h, ry + rh, rx, rx + rw - 1, true, +1);
-            // West wall: inward = +1
-            ExtendRoomSide(_hullInside, w, h, rx - 1, ry, ry + rh - 1, false, -1);
-            // East wall: inward = -1
-            ExtendRoomSide(_hullInside, w, h, rx + rw, ry, ry + rh - 1, false, +1);
+            ExtendRoomSide(fl, _hullInside, w, h, ry - 1, rx, rx + rw - 1, true, -1);
+            ExtendRoomSide(fl, _hullInside, w, h, ry + rh, rx, rx + rw - 1, true, +1);
+            ExtendRoomSide(fl, _hullInside, w, h, rx - 1, ry, ry + rh - 1, false, -1);
+            ExtendRoomSide(fl, _hullInside, w, h, rx + rw, ry, ry + rh - 1, false, +1);
         }
     }
 
-    private void ExtendRoomSide(bool[,] inside, int w, int h, int line, int from, int to, bool horizontal, int inwardDir)
+    private void ExtendRoomSide(FloorData fl, bool[,] inside, int w, int h, int line, int from, int to, bool horizontal, int inwardDir)
     {
-        // Only extend if the side faces inward (toward other inside cells)
-        // inwardDir: +1 or -1, the direction from the wall toward the ship interior
-        if (Floor == null) return;
         bool any = false;
         for (int i = from; i <= to; i++)
         {
@@ -391,10 +386,13 @@ void main(){
         for (int i = from; i <= to; i++)
         {
             int gy = horizontal ? line : i, gx = horizontal ? i : line;
-            if (gy >= 1 && gy <= h && gx >= 1 && gx <= w && IsWallLike(Floor.Map[gy, gx]))
+            if (gy >= 1 && gy <= h && gx >= 1 && gx <= w && IsWallLike(fl.Map[gy, gx]))
                 inside[gy, gx] = true;
         }
     }
+
+    // Y offset for current floor being built
+    private float _yOff;
 
     private void BuildGeometry()
     {
@@ -403,15 +401,32 @@ void main(){
         _emitToExt = false;
         if (Floor == null) return;
 
-        int w = Floor.Width, h = Floor.Height;
         bool alien = ShipType == ShipType.Alien;
+
+        if (ShowAllFloors && Level != null && Level.Floors.Count > 1)
+        {
+            for (int fi = 0; fi < Level.Floors.Count; fi++)
+            {
+                _yOff = fi * FloorSpacing;
+                BuildFloorGeometry(Level.Floors[fi], alien);
+            }
+        }
+        else
+        {
+            _yOff = 0;
+            BuildFloorGeometry(Floor, alien);
+        }
+    }
+
+    private void BuildFloorGeometry(FloorData floor, bool alien)
+    {
+        int w = floor.Width, h = floor.Height;
         int wallTex = alien ? Tex("bricks") : Tex("wall_a");
         int winTex = alien ? Tex("bricks") : Tex("wall_a_win");
         int floorTex = alien ? Tex("stone") : Tex("floor");
 
-        // Compute hull mask first (used by both interior + exterior)
         if (ShowExterior)
-            ComputeHullMask(w, h);
+            ComputeHullMask(floor, w, h);
         else
             _hullInside = null;
 
@@ -421,12 +436,13 @@ void main(){
             {
                 float x0 = (gx - 1) * Cell, x1 = gx * Cell;
                 float z0 = (gy - 1) * Cell, z1 = gy * Cell;
-                int ct = Floor.Map[gy, gx];
+                float yb = _yOff, yt = _yOff + WallH;
+                int ct = floor.Map[gy, gx];
 
                 if (IsWallLike(ct))
                 {
                     bool isWin = ct == (int)CellType.Window;
-                    var room = Floor.RoomAt(gx, gy);
+                    var room = floor.RoomAt(gx, gy);
                     Color wc = Color.FromArgb(160, 155, 165);
                     if (room != null && RoomColors.ContainsKey(room.Type))
                         wc = Lerp(wc, RoomColors[room.Type], 0.3f);
@@ -434,14 +450,11 @@ void main(){
                     int sideTex = isWin ? winTex : wallTex;
                     Color sc1 = Darken(wc, 0.6f), sc2 = Darken(wc, 0.75f);
 
-                    // Interior side faces: only if adjacent is open AND adjacent is inside hull
-                    // (skip faces that face outside the hull — exterior handles those)
-                    bool n = gy > 1 && !IsWallLike(Floor.Map[gy - 1, gx]);
-                    bool s = gy < h && !IsWallLike(Floor.Map[gy + 1, gx]);
-                    bool we = gx > 1 && !IsWallLike(Floor.Map[gy, gx - 1]);
-                    bool e = gx < w && !IsWallLike(Floor.Map[gy, gx + 1]);
+                    bool n = gy > 1 && !IsWallLike(floor.Map[gy - 1, gx]);
+                    bool s = gy < h && !IsWallLike(floor.Map[gy + 1, gx]);
+                    bool we = gx > 1 && !IsWallLike(floor.Map[gy, gx - 1]);
+                    bool e = gx < w && !IsWallLike(floor.Map[gy, gx + 1]);
 
-                    // If hull mask exists, also require neighbor to be inside hull
                     if (_hullInside != null)
                     {
                         n = n && _hullInside[gy - 1, gx];
@@ -450,38 +463,37 @@ void main(){
                         e = e && _hullInside[gy, gx + 1];
                     }
 
-                    if (n) WallQuad(sideTex, x0, 0, z0, x1, 0, z0, x1, WallH, z0, x0, WallH, z0, sc1);
-                    if (s) WallQuad(sideTex, x1, 0, z1, x0, 0, z1, x0, WallH, z1, x1, WallH, z1, sc1);
-                    if (we) WallQuad(sideTex, x0, 0, z1, x0, 0, z0, x0, WallH, z0, x0, WallH, z1, sc2);
-                    if (e) WallQuad(sideTex, x1, 0, z0, x1, 0, z1, x1, WallH, z1, x1, WallH, z0, sc2);
+                    if (n) WallQuad(sideTex, x0, yb, z0, x1, yb, z0, x1, yt, z0, x0, yt, z0, sc1);
+                    if (s) WallQuad(sideTex, x1, yb, z1, x0, yb, z1, x0, yt, z1, x1, yt, z1, sc1);
+                    if (we) WallQuad(sideTex, x0, yb, z1, x0, yb, z0, x0, yt, z0, x0, yt, z1, sc2);
+                    if (e) WallQuad(sideTex, x1, yb, z0, x1, yb, z1, x1, yt, z1, x1, yt, z0, sc2);
                 }
                 else
                 {
-                    // Floor
-                    var room = Floor.RoomAt(gx, gy);
+                    var room = floor.RoomAt(gx, gy);
                     Color fc = Color.FromArgb(130, 130, 125);
                     if (room != null && RoomColors.ContainsKey(room.Type))
                         fc = Lerp(fc, RoomColors[room.Type], 0.25f);
-                    FlatQuad(floorTex, x0, 0, z0, x1, z1, fc);
+                    FlatQuad(floorTex, x0, yb, z0, x1, z1, fc);
                 }
             }
         }
 
-        // Exterior (rendered in second pass)
+        // Exterior
         if (ShowExterior && _hullInside != null)
         {
             _emitToExt = true;
-            BuildExteriorFromMask(w, h, alien);
+            BuildExteriorForFloor(floor, w, h, alien);
             _emitToExt = false;
         }
 
-        // Entity markers
-        BuildEntities();
+        // Entities
+        BuildEntitiesForFloor(floor);
     }
 
-    private void BuildExteriorFromMask(int w, int h, bool alien)
+    private void BuildExteriorForFloor(FloorData floor, int w, int h, bool alien)
     {
-        if (Floor == null || _hullInside == null) return;
+        if (_hullInside == null) return;
         int extW = alien ? Tex("alien_ext") : Tex("ext_wall");
         int extWin = alien ? Tex("alien_ext_win") : Tex("ext_win");
         if (extW == 0) extW = Tex("wall_a");
@@ -497,51 +509,49 @@ void main(){
             {
                 if (!_hullInside[gy, gx]) continue;
 
-                bool isWin = Floor.Map[gy, gx] == (int)CellType.Window;
+                bool isWin = floor.Map[gy, gx] == (int)CellType.Window;
                 int ft = isWin ? extWin : extW;
                 float x0 = (gx - 1) * Cell, x1 = gx * Cell;
                 float z0 = (gy - 1) * Cell, z1 = gy * Cell;
 
+                float yb = _yOff, yt = _yOff + ExtH;
                 if (!_hullInside[gy - 1, gx])
-                    WallQuad(ft, x0, 0, z0, x1, 0, z0, x1, ExtH, z0, x0, ExtH, z0, sN);
+                    WallQuad(ft, x0, yb, z0, x1, yb, z0, x1, yt, z0, x0, yt, z0, sN);
                 if (!_hullInside[gy + 1, gx])
-                    WallQuad(ft, x1, 0, z1, x0, 0, z1, x0, ExtH, z1, x1, ExtH, z1, sN);
+                    WallQuad(ft, x1, yb, z1, x0, yb, z1, x0, yt, z1, x1, yt, z1, sN);
                 if (!_hullInside[gy, gx - 1])
-                    WallQuad(ft, x0, 0, z1, x0, 0, z0, x0, ExtH, z0, x0, ExtH, z1, sE);
+                    WallQuad(ft, x0, yb, z1, x0, yb, z0, x0, yt, z0, x0, yt, z1, sE);
                 if (!_hullInside[gy, gx + 1])
-                    WallQuad(ft, x1, 0, z0, x1, 0, z1, x1, ExtH, z1, x1, ExtH, z0, sE);
+                    WallQuad(ft, x1, yb, z0, x1, yb, z1, x1, yt, z1, x1, yt, z0, sE);
             }
         }
     }
 
-    private void BuildEntities()
+    private void BuildEntitiesForFloor(FloorData floor)
     {
-        if (Floor == null) return;
         float pad = 0.3f;
-        Marker(Floor.SpawnGX, Floor.SpawnGY, Color.Lime, 0.15f, pad);
-        if (Floor.HasUp) Marker(Floor.StairsGX, Floor.StairsGY, Color.Green, 0.45f, pad);
-        if (Floor.HasDown) Marker(Floor.DownGX, Floor.DownGY, Color.RoyalBlue, 0.45f, pad);
-        foreach (var e in Floor.Enemies)
+        Marker(floor.SpawnGX, floor.SpawnGY, Color.Lime, 0.15f, pad);
+        if (floor.HasUp) Marker(floor.StairsGX, floor.StairsGY, Color.Green, 0.45f, pad);
+        if (floor.HasDown) Marker(floor.DownGX, floor.DownGY, Color.RoyalBlue, 0.45f, pad);
+        foreach (var e in floor.Enemies)
             Marker(e.GX, e.GY, EnemyColors.GetValueOrDefault(e.EnemyType, Color.Gray), 0.3f, pad * 0.8f);
-        foreach (var c in Floor.Consoles)
+        foreach (var c in floor.Consoles)
             Marker(c.GX, c.GY, RoomColors.GetValueOrDefault(c.RoomType, Color.Teal), 0.15f, pad * 0.6f);
-        foreach (var l in Floor.Loot) Marker(l.GX, l.GY, Color.Gold, 0.3f, pad * 0.7f);
-        foreach (var o in Floor.Officers) Marker(o.GX, o.GY, Color.White, 0.4f, pad * 0.7f);
-        foreach (var n in Floor.Npcs) Marker(n.GX, n.GY, Color.Cyan, 0.4f, pad * 0.7f);
+        foreach (var l in floor.Loot) Marker(l.GX, l.GY, Color.Gold, 0.3f, pad * 0.7f);
+        foreach (var o in floor.Officers) Marker(o.GX, o.GY, Color.White, 0.4f, pad * 0.7f);
+        foreach (var n in floor.Npcs) Marker(n.GX, n.GY, Color.Cyan, 0.4f, pad * 0.7f);
     }
 
     private void Marker(int gx, int gy, Color c, float mh, float pad)
     {
         float x0 = (gx - 1) * Cell + pad, x1 = gx * Cell - pad;
         float z0 = (gy - 1) * Cell + pad, z1 = gy * Cell - pad;
-        // Top
-        FlatQuad(0, x0, mh, z0, x1, z1, c);
-        // Front
+        float yb = _yOff, yt = _yOff + mh;
+        FlatQuad(0, x0, yt, z0, x1, z1, c);
         Color d1 = Darken(c, 0.7f);
-        WallQuad(0, x0, 0, z1, x1, 0, z1, x1, mh, z1, x0, mh, z1, d1);
-        // Right
+        WallQuad(0, x0, yb, z1, x1, yb, z1, x1, yt, z1, x0, yt, z1, d1);
         Color d2 = Darken(c, 0.8f);
-        WallQuad(0, x1, 0, z0, x1, 0, z1, x1, mh, z1, x1, mh, z0, d2);
+        WallQuad(0, x1, yb, z0, x1, yb, z1, x1, yt, z1, x1, yt, z0, d2);
     }
 
     // ── Rendering ───────────────────────────────────────────────
