@@ -1222,6 +1222,9 @@ static bool combat_point_in_fan_card(float px, float py,
 /* ── Touch drag input (Slay the Spire style) ─────────────────────── */
 
 static void combat_touch_began(combat_state *cs, float fx, float fy) {
+    /* Pile viewer overlay blocks input (handled by draw via ui_button) */
+    if (cs->deck_view_open || cs->discard_view_open) return;
+
     /* Log button / log overlay interaction */
     if (cs->log_open) {
         /* Close button [X] */
@@ -1236,7 +1239,7 @@ static void combat_touch_began(combat_state *cs, float fx, float fy) {
     }
     /* LOG button */
     {
-        int lb_x = FB_WIDTH - 32, lb_y = 26;
+        int lb_x = FB_WIDTH - 32, lb_y = 38;
         if (fx >= lb_x && fx <= lb_x + 28 && fy >= lb_y && fy <= lb_y + 12) {
             cs->log_open = true;
             cs->log_scroll = 0;
@@ -1405,6 +1408,15 @@ static bool combat_handle_tap(combat_state *cs, float fx, float fy) {
 /* ── Keyboard input ──────────────────────────────────────────────── */
 
 static void combat_handle_key(combat_state *cs, int key) {
+    /* Close pile viewer on Escape */
+    if (cs->deck_view_open || cs->discard_view_open) {
+        if (key == SAPP_KEYCODE_ESCAPE) {
+            cs->deck_view_open = false;
+            cs->discard_view_open = false;
+            cs->pile_view_selected = -1;
+        }
+        return;
+    }
     /* Log toggle and scroll (works in any phase) */
     if (key == SAPP_KEYCODE_L) {
         cs->log_open = !cs->log_open;
@@ -2208,7 +2220,7 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
 
     /* ── LOG button (always visible) ─────────────────────────── */
     {
-        int lb_x = W - 32, lb_y = 26;
+        int lb_x = W - 32, lb_y = 38;
         combat_draw_rect(px, W, H, lb_x, lb_y, 28, 12, 0xFF1A1A22);
         combat_draw_rect_outline(px, W, H, lb_x, lb_y, 28, 12, 0xFF666688);
         sr_draw_text_shadow(px, W, H, lb_x + 4, lb_y + 2, "LOG", 0xFF888899, shadow);
@@ -2260,6 +2272,14 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
             snprintf(sbuf, sizeof(sbuf), "W/S SCROLL");
             sr_draw_text_shadow(px, W, H, lx + lw/2 - 25, ly + lh - 12, sbuf, dim, shadow);
         }
+    }
+
+    /* ── Pile viewer overlays ────────────────────────────────── */
+    if (combat.deck_view_open) {
+        combat_draw_pile_viewer(px, W, H, combat.deck, combat.deck_count, "DRAW PILE");
+    }
+    if (combat.discard_view_open) {
+        combat_draw_pile_viewer(px, W, H, combat.discard, combat.discard_count, "DISCARD PILE");
     }
 }
 

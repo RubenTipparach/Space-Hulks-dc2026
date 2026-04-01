@@ -120,6 +120,8 @@ typedef struct {
     int trash_cursor;    /* cursor into player deck for trashing */
     int trash_count;     /* number of cards trashed this visit */
     bool active;
+    int detail_idx;      /* shop card index shown in detail popup, -1 = none */
+    bool detail_open;
 } shop_state;
 
 static shop_state g_shop;
@@ -589,6 +591,8 @@ static void shop_generate(shop_state *shop) {
     shop->cursor = 0;
     shop->mode = 0;
     shop->trash_cursor = 0;
+    shop->detail_idx = -1;
+    shop->detail_open = false;
     shop->active = true;
 }
 
@@ -616,81 +620,133 @@ static void draw_shop(uint32_t *px, int W, int H) {
         g_shop.mode = 1;
 
     if (g_shop.mode == 0) {
-        /* Buy mode */
-        for (int i = 0; i < g_shop.count; i++) {
-            int cy = 44 + i * 30;
-            int rx0 = 60, rw = W - 120, rh = 26;
+        /* Buy mode — visual card grid */
+        int shop_cols = 3;
+        int cw = CARD_FAN_W, ch = CARD_FAN_H;  /* 70x96 */
+        int padX = 10, padY = 14;
+        int gridW = shop_cols * (cw + padX) - padX;
+        int startX = (W - gridW) / 2;
+        int startY = 42;
 
-            bool hovered = false;
-            bool row_clicked = ui_row_hover(rx0, cy, rw, rh, &hovered);
-            bool sel = (g_shop.cursor == i);
+        if (!g_shop.detail_open) {
+            for (int i = 0; i < g_shop.count; i++) {
+                int col = i % shop_cols;
+                int row = i / shop_cols;
+                int cx = startX + col * (cw + padX);
+                int cy = startY + row * (ch + padY);
 
-            /* Hover selects */
-            if (hovered) g_shop.cursor = i;
+                int card_type = g_shop.cards[i];
+                bool sel = (g_shop.cursor == i);
 
-            uint32_t bg = sel ? (hovered ? 0xFF2A2A55 : 0xFF222244) : (hovered ? 0xFF1A1A33 : 0xFF111122);
-
-            for (int ry = cy; ry < cy + rh && ry < H; ry++)
-                for (int rx = rx0; rx < rx0 + rw && rx < W; rx++)
-                    if (ry >= 0 && rx >= 0) px[ry * W + rx] = bg;
-
-            /* Border on selected/hovered */
-            if (sel || hovered) {
-                uint32_t bdr = hovered ? 0xFF6666CC : 0xFF4444AA;
-                for (int rx = rx0; rx < rx0 + rw; rx++) {
-                    if (cy >= 0 && cy < H) px[cy * W + rx] = bdr;
-                    if (cy+rh-1 >= 0 && cy+rh-1 < H) px[(cy+rh-1) * W + rx] = bdr;
-                }
-            }
-
-            int card_type = g_shop.cards[i];
-            uint32_t ccol = card_colors[card_type];
-            sr_draw_text_shadow(px, W, H, 66, cy + 4, card_names[card_type], ccol, shadow);
-
-            char cost_buf[16];
-            snprintf(cost_buf, sizeof(cost_buf), "%dE", card_energy_cost[card_type]);
-            sr_draw_text_shadow(px, W, H, 170, cy + 4, cost_buf, 0xFF888888, shadow);
-
-            char price_buf[16];
-            snprintf(price_buf, sizeof(price_buf), "%d SCRAP", g_shop.prices[i]);
-            uint32_t pcol = player_scrap >= g_shop.prices[i] ? 0xFF22CC22 : 0xFF882222;
-            sr_draw_text_shadow(px, W, H, W - 140, cy + 4, price_buf, pcol, shadow);
-
-            /* Buy button on selected row */
-            if (sel) {
-                if (ui_button(px, W, H, 66, cy + 14, 60, 12, "BUY",
-                              0xFF1A1A33, 0xFF222255, 0xFF44CC44)) {
-                    /* Trigger buy */
-                    if (player_scrap >= g_shop.prices[i] &&
-                        g_player.persistent_deck_count < COMBAT_DECK_MAX) {
-                        player_scrap -= g_shop.prices[i];
-                        g_player.persistent_deck[g_player.persistent_deck_count++] = g_shop.cards[i];
-                        for (int j = i; j < g_shop.count - 1; j++) {
-                            g_shop.cards[j] = g_shop.cards[j + 1];
-                            g_shop.prices[j] = g_shop.prices[j + 1];
+                /* Render card to temp buffer */
+                memset(card_fan_buf, 0, sizeof(card_fan_buf));
+                combat_draw_card_content(card_fan_buf, CARD_FAN_W, CARD_FAN_H,
+                                         0, 0, CARD_FAN_W, CARD_FAN_H,
+                                         card_type, sel, shadow, -1);
+                /* Blit to screen (no rotation) */
+                for (int ry = 0; ry < CARD_FAN_H; ry++)
+                    for (int rx = 0; rx < CARD_FAN_W; rx++) {
+                        int dx = cx + rx, dy = cy + ry;
+                        if (dx >= 0 && dx < W && dy >= 0 && dy < H) {
+                            uint32_t c = card_fan_buf[ry * CARD_FAN_W + rx];
+                            if (c & 0xFF000000) px[dy * W + dx] = c;
                         }
-                        g_shop.count--;
-                        if (g_shop.cursor >= g_shop.count && g_shop.count > 0)
-                            g_shop.cursor = g_shop.count - 1;
                     }
+
+                /* Price below card */
+                char price_buf[16];
+                snprintf(price_buf, sizeof(price_buf), "%dS", g_shop.prices[i]);
+                uint32_t pcol = player_scrap >= g_shop.prices[i] ? 0xFF22CC22 : 0xFF882222;
+                sr_draw_text_shadow(px, W, H, cx + cw/2 - 8, cy + ch + 2, price_buf, pcol, shadow);
+
+                /* Click detection — open detail popup */
+                if (ui_mouse_clicked &&
+                    ui_click_x >= cx && ui_click_x < cx + cw &&
+                    ui_click_y >= cy && ui_click_y < cy + ch) {
+                    g_shop.detail_idx = i;
+                    g_shop.detail_open = true;
+                    g_shop.cursor = i;
                 }
             }
+        }
 
-            /* Click row to buy (same as clicking buy button) */
-            if (row_clicked && sel) {
-                if (player_scrap >= g_shop.prices[i] &&
-                    g_player.persistent_deck_count < COMBAT_DECK_MAX) {
-                    player_scrap -= g_shop.prices[i];
-                    g_player.persistent_deck[g_player.persistent_deck_count++] = g_shop.cards[i];
-                    for (int j = i; j < g_shop.count - 1; j++) {
+        /* Detail popup */
+        if (g_shop.detail_open && g_shop.detail_idx >= 0 && g_shop.detail_idx < g_shop.count) {
+            int idx = g_shop.detail_idx;
+            int card_type = g_shop.cards[idx];
+            uint32_t ccol = card_colors[card_type];
+
+            int pw = 250, ph = 150;
+            int px2 = (W - pw) / 2;
+            int py = (H - ph) / 2;
+
+            /* Background */
+            combat_draw_rect(px, W, H, px2, py, pw, ph, 0xFF0A0A18);
+            combat_draw_rect_outline(px, W, H, px2, py, pw, ph, ccol);
+            combat_draw_rect(px, W, H, px2 + 1, py + 1, pw - 2, 3, ccol);
+
+            /* Card art (right side) */
+            if (card_type < (int)(sizeof(spr_card_table)/sizeof(spr_card_table[0]))) {
+                spr_draw(px, W, H, spr_card_table[card_type], px2 + pw - 60, py + 20, 3);
+            }
+
+            /* Card name */
+            sr_draw_text_shadow(px, W, H, px2 + 8, py + 6, card_names[card_type],
+                                0xFFFFFFFF, shadow);
+            /* Energy cost */
+            char ebuf[8];
+            snprintf(ebuf, sizeof(ebuf), "%dE", card_energy_cost[card_type]);
+            sr_draw_text_shadow(px, W, H, px2 + pw - 76, py + 6, ebuf, 0xFF22CCEE, shadow);
+
+            /* Target type */
+            const char *tgt = "";
+            int tt = card_targets[card_type];
+            if (tt == TARGET_SELF) tgt = "TARGET: SELF";
+            else if (tt == TARGET_ENEMY) tgt = "TARGET: 1 ENEMY";
+            else tgt = "TARGET: ALL";
+            sr_draw_text_shadow(px, W, H, px2 + 8, py + 18, tgt, 0xFF888888, shadow);
+
+            /* Effect text */
+            const char *effect = card_effect_text(card_type);
+            int ey = sr_draw_text_wrap(px, W, H, px2 + 8, py + 30, effect,
+                                       pw - 80, 8, ccol, shadow);
+
+            /* Description */
+            const char *desc = card_description_text(card_type);
+            sr_draw_text_wrap(px, W, H, px2 + 8, ey + 4, desc,
+                              pw - 80, 8, 0xFF666666, shadow);
+
+            /* Price */
+            char price_buf[24];
+            snprintf(price_buf, sizeof(price_buf), "PRICE: %d SCRAP", g_shop.prices[idx]);
+            bool can_buy = player_scrap >= g_shop.prices[idx] &&
+                           g_player.persistent_deck_count < COMBAT_DECK_MAX;
+            sr_draw_text_shadow(px, W, H, px2 + 8, py + ph - 30,
+                                price_buf, can_buy ? 0xFF22CC22 : 0xFF882222, shadow);
+
+            /* BUY button */
+            if (can_buy) {
+                if (ui_button(px, W, H, px2 + 8, py + ph - 18, 60, 14, "BUY",
+                              0xFF1A3311, 0xFF224422, 0xFF44CC44)) {
+                    player_scrap -= g_shop.prices[idx];
+                    g_player.persistent_deck[g_player.persistent_deck_count++] = g_shop.cards[idx];
+                    for (int j = idx; j < g_shop.count - 1; j++) {
                         g_shop.cards[j] = g_shop.cards[j + 1];
                         g_shop.prices[j] = g_shop.prices[j + 1];
                     }
                     g_shop.count--;
+                    g_shop.detail_open = false;
+                    g_shop.detail_idx = -1;
                     if (g_shop.cursor >= g_shop.count && g_shop.count > 0)
                         g_shop.cursor = g_shop.count - 1;
-                    break; /* list shifted, stop iterating */
                 }
+            }
+
+            /* CLOSE button */
+            if (ui_button(px, W, H, px2 + pw - 70, py + ph - 18, 60, 14, "CLOSE",
+                          0xFF111122, 0xFF222244, 0xFF333366)) {
+                g_shop.detail_open = false;
+                g_shop.detail_idx = -1;
             }
         }
     } else {
