@@ -293,24 +293,16 @@ public class GridPanel : Panel
             }
         }
 
-        // Expand walls iteratively until stable (fills wall gaps between rooms)
-        bool changed = true;
-        while (changed)
-        {
-            changed = false;
-            var toExpand = new List<(int y, int x)>();
-            for (int gy = 1; gy <= h; gy++)
-                for (int gx = 1; gx <= w; gx++)
-                    if (IsWallLike(Floor.Map[gy, gx]) && !inside[gy, gx])
-                        if ((gy > 1 && inside[gy - 1, gx]) || (gy < h && inside[gy + 1, gx]) ||
-                            (gx > 1 && inside[gy, gx - 1]) || (gx < w && inside[gy, gx + 1]))
-                            toExpand.Add((gy, gx));
-            foreach (var (ey, ex) in toExpand)
-            {
-                inside[ey, ex] = true;
-                changed = true;
-            }
-        }
+        // Expand one layer of walls (collect first to avoid cascade)
+        var toExpand = new List<(int y, int x)>();
+        for (int gy = 1; gy <= h; gy++)
+            for (int gx = 1; gx <= w; gx++)
+                if (IsWallLike(Floor.Map[gy, gx]) && !inside[gy, gx])
+                    if ((gy > 1 && inside[gy - 1, gx]) || (gy < h && inside[gy + 1, gx]) ||
+                        (gx > 1 && inside[gy, gx - 1]) || (gx < w && inside[gy, gx + 1]))
+                        toExpand.Add((gy, gx));
+        foreach (var (ey, ex) in toExpand)
+            inside[ey, ex] = true;
 
         // Extend room sides that face interior
         foreach (var room in Floor.Rooms)
