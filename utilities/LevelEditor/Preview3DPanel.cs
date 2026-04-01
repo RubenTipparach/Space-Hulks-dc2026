@@ -17,7 +17,7 @@ public class Preview3DPanel : Panel
     public bool ShowRoof { get; set; }
     public int HullPadding { get; set; } = 0;
     public int CurrentFloorIndex { get; set; }
-    private const float FloorSpacing = WallH + 1.5f;
+    private const float FloorSpacing = WallH;
 
     // Ghost floors (transparent adjacent)
     private readonly Dictionary<int, List<float>> _ghostBatches = new();
