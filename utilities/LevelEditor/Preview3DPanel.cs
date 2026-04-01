@@ -168,7 +168,9 @@ void main(){
 
         GL.ClearColor(0.07f, 0.07f, 0.11f, 1f);
         GL.Enable(EnableCap.DepthTest);
-        GL.Disable(EnableCap.CullFace);
+        GL.Enable(EnableCap.CullFace);
+        GL.CullFace(CullFaceMode.Back);
+        GL.FrontFace(FrontFaceDirection.Cw); // interior walls are CW from inside
 
         _glReady = true;
         LoadGLTextures();
@@ -350,18 +352,25 @@ void main(){
         if (Floor == null) return;
         int extW = alien ? Tex("alien_ext") : Tex("ext_wall");
         int extWin = alien ? Tex("alien_ext_win") : Tex("ext_win");
-        int roofTex = Tex("roof");
         Color ec = alien ? Color.FromArgb(120, 60, 80) : Color.FromArgb(60, 80, 130);
         Color es = Darken(ec, 0.7f);
         const float ExtH = WallH;
 
-        // Flood-fill from grid edges to find "outside" cells.
-        // Walls block the flood — everything not reached is "inside" the ship.
-        bool[,] outside = new bool[h + 2, w + 2];
+        // Build "inside" mask: flood fill from spawn through open cells,
+        // then expand to include adjacent walls. This ensures corridors
+        // and rooms are inside even if they touch the grid edge.
+        bool[,] inside = new bool[h + 2, w + 2];
         var queue = new Queue<(int, int)>();
-        for (int x = 0; x <= w + 1; x++) { outside[0, x] = true; queue.Enqueue((0, x)); outside[h + 1, x] = true; queue.Enqueue((h + 1, x)); }
-        for (int y = 1; y <= h; y++) { outside[y, 0] = true; queue.Enqueue((y, 0)); outside[y, w + 1] = true; queue.Enqueue((y, w + 1)); }
 
+        // Seed from spawn
+        int sx = Floor.SpawnGX, sy = Floor.SpawnGY;
+        if (sx >= 1 && sx <= w && sy >= 1 && sy <= h)
+        {
+            inside[sy, sx] = true;
+            queue.Enqueue((sy, sx));
+        }
+
+        // Flood fill through open cells
         while (queue.Count > 0)
         {
             var (cy, cx) = queue.Dequeue();
@@ -369,40 +378,69 @@ void main(){
             for (int d = 0; d < 4; d++)
             {
                 int ny = cy + dy[d], nx = cx + dx[d];
-                if (ny < 0 || ny > h + 1 || nx < 0 || nx > w + 1) continue;
-                if (outside[ny, nx]) continue;
-                if (ny >= 1 && ny <= h && nx >= 1 && nx <= w && IsWallLike(Floor.Map[ny, nx]))
-                    continue;
-                outside[ny, nx] = true;
+                if (ny < 1 || ny > h || nx < 1 || nx > w) continue;
+                if (inside[ny, nx]) continue;
+                if (IsWallLike(Floor.Map[ny, nx])) continue;
+                inside[ny, nx] = true;
                 queue.Enqueue((ny, nx));
             }
         }
 
-        // Continuous hull: draw exterior wall on ANY cell edge where
-        // one side is inside the ship and the other is outside.
-        // Also draw roof over ALL inside cells (wall + open).
+        // Expand: walls adjacent to reachable cells are also inside
+        for (int gy = 1; gy <= h; gy++)
+            for (int gx = 1; gx <= w; gx++)
+                if (IsWallLike(Floor.Map[gy, gx]) && !inside[gy, gx])
+                    if ((gy > 1 && inside[gy - 1, gx]) || (gy < h && inside[gy + 1, gx]) ||
+                        (gx > 1 && inside[gy, gx - 1]) || (gx < w && inside[gy, gx + 1]))
+                        inside[gy, gx] = true;
+
+        // Convex hull per row: for each row, find leftmost and rightmost
+        // inside cell, then mark everything between as inside (fills concavities)
+        for (int gy = 1; gy <= h; gy++)
+        {
+            int left = w + 1, right = 0;
+            for (int gx = 1; gx <= w; gx++)
+                if (inside[gy, gx]) { left = Math.Min(left, gx); right = Math.Max(right, gx); }
+            if (left <= right)
+                for (int gx = left; gx <= right; gx++)
+                    inside[gy, gx] = true;
+        }
+        // Also per column to fill vertical concavities
+        for (int gx = 1; gx <= w; gx++)
+        {
+            int top = h + 1, bottom = 0;
+            for (int gy = 1; gy <= h; gy++)
+                if (inside[gy, gx]) { top = Math.Min(top, gy); bottom = Math.Max(bottom, gy); }
+            if (top <= bottom)
+                for (int gy = top; gy <= bottom; gy++)
+                    inside[gy, gx] = true;
+        }
+
+        // Draw exterior walls at boundaries (inside cell next to non-inside)
+        // Winding: CW from outside (matches GL.FrontFace(CW))
         for (int gy = 1; gy <= h; gy++)
         {
             for (int gx = 1; gx <= w; gx++)
             {
-                if (outside[gy, gx]) continue; // skip outside cells
+                if (!inside[gy, gx]) continue;
 
                 bool isWin = Floor.Map[gy, gx] == (int)CellType.Window;
                 int ft = isWin ? extWin : extW;
                 float x0 = (gx - 1) * Cell, x1 = gx * Cell;
                 float z0 = (gy - 1) * Cell, z1 = gy * Cell;
 
-                // Exterior wall faces flush with grid at boundaries with outside
-                if (outside[gy - 1, gx])
-                    WallQuad(ft, x1, 0, z0, x0, 0, z0, x0, ExtH, z0, x1, ExtH, z0, es);
-                if (outside[gy + 1, gx])
-                    WallQuad(ft, x0, 0, z1, x1, 0, z1, x1, ExtH, z1, x0, ExtH, z1, es);
-                if (outside[gy, gx - 1])
-                    WallQuad(ft, x0, 0, z0, x0, 0, z1, x0, ExtH, z1, x0, ExtH, z0, ec);
-                if (outside[gy, gx + 1])
-                    WallQuad(ft, x1, 0, z1, x1, 0, z0, x1, ExtH, z0, x1, ExtH, z1, ec);
-
-                // No roof — just exterior walls
+                // North face (CW from north = outside)
+                if (!inside[gy - 1, gx])
+                    WallQuad(ft, x0, 0, z0, x1, 0, z0, x1, ExtH, z0, x0, ExtH, z0, es);
+                // South face (CW from south)
+                if (!inside[gy + 1, gx])
+                    WallQuad(ft, x1, 0, z1, x0, 0, z1, x0, ExtH, z1, x1, ExtH, z1, es);
+                // West face (CW from west)
+                if (!inside[gy, gx - 1])
+                    WallQuad(ft, x0, 0, z1, x0, 0, z0, x0, ExtH, z0, x0, ExtH, z1, ec);
+                // East face (CW from east)
+                if (!inside[gy, gx + 1])
+                    WallQuad(ft, x1, 0, z0, x1, 0, z1, x1, ExtH, z1, x1, ExtH, z0, ec);
             }
         }
     }
