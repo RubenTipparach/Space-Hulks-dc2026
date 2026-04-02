@@ -39,7 +39,6 @@
 #include "sr_lighting.h"
 #include "sr_sprites.h"
 #include "sr_scene_dungeon.h"
-#include "sr_combat.h"
 
 /* ── UI mouse state (framebuffer coords) ─────────────────────────── */
 static float ui_mouse_x = -1, ui_mouse_y = -1;
@@ -95,6 +94,8 @@ static bool ui_row_hover(int bx, int by, int bw, int bh, bool *out_hovered) {
     *out_hovered = hovered;
     return clicked;
 }
+
+#include "sr_combat.h"
 
 #include "sr_json.h"
 #include "sr_ship.h"
@@ -384,6 +385,8 @@ static void game_init_ship(void) {
             /* Populate ship state from JSON */
             lvl_load_ship(&current_ship, &lvl.json, lvl.root);
             dng_state.max_floors = current_ship.num_decks;
+            for (int dk = 0; dk < current_ship.num_decks && dk < DNG_MAX_FLOORS; dk++)
+                dng_state.deck_room_counts[dk] = current_ship.deck_room_count[dk];
 
             /* Load all floors directly from JSON */
             lvl_load_all_floors(&lvl, dng_state.floors,
@@ -430,14 +433,17 @@ static void game_init_ship(void) {
     uint32_t ship_seed = dng_state.seed_base + 9999;
     ship_generate(&current_ship, difficulty, ship_seed);
     dng_state.max_floors = current_ship.num_decks;
+    for (int dk = 0; dk < current_ship.num_decks && dk < DNG_MAX_FLOORS; dk++)
+        dng_state.deck_room_counts[dk] = current_ship.deck_room_count[dk];
 
-    /* Regenerate all existing floors with correct stair flags for num_decks */
+    /* Regenerate all existing floors with correct stair flags and room count */
     for (int fl = 0; fl < current_ship.num_decks && fl < DNG_MAX_FLOORS; fl++) {
         if (!dng_state.floor_generated[fl]) continue;
         bool is_last = (fl >= current_ship.num_decks - 1);
-        dng_generate(&dng_state.floors[fl], dng_state.grid_w, dng_state.grid_h,
-                     fl > 0, !is_last,
-                     dng_state.seed_base + (uint32_t)fl * 777, fl);
+        int deck_rooms = current_ship.deck_room_count[fl];
+        dng_generate_ex(&dng_state.floors[fl], dng_state.grid_w, dng_state.grid_h,
+                        fl > 0, !is_last,
+                        dng_state.seed_base + (uint32_t)fl * 777, fl, deck_rooms);
     }
     dng_state.dungeon = &dng_state.floors[dng_state.current_floor];
 

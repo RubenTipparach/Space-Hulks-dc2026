@@ -47,31 +47,32 @@ static const char *card_names[] = {
     "QCKSTEP"
 };
 
+/* Card colors — NOT-64 palette only (ABGR: 0xFFBBGGRR from #RRGGBB) */
 static const uint32_t card_colors[] = {
-    0xFFCC8822,  /* shield - blue */
-    0xFF2222CC,  /* shoot - red */
-    0xFF2266FF,  /* burst - orange */
-    0xFF22CC22,  /* move - green */
-    0xFF22CCCC,  /* melee - yellow */
-    0xFFEECC22,  /* overcharge - cyan */
-    0xFF22CC88,  /* repair - teal */
-    0xFFCC22CC,  /* stun - magenta */
-    0xFFFFAA22,  /* fortify - bright blue */
-    0xFF4444FF,  /* double shot - bright red */
-    0xFF44CCCC,  /* dash - bright yellow */
-    0xFFFFCC44,  /* ice - light blue */
-    0xFF22CCAA,  /* acid - green-teal */
-    0xFF2244FF,  /* fire - bright orange-red */
-    0xFFEEEE44,  /* lightning - bright cyan-yellow */
-    0xFF448844,  /* sniper - dark green */
-    0xFF2288DD,  /* shotgun - warm orange */
-    0xFF44AAFF,  /* welder - bright orange */
-    0xFF2244CC,  /* chainsaw - dark red */
-    0xFFFFFF44,  /* laser - bright cyan */
-    0xFFDDAA44,  /* deflector - steel blue */
-    0xFFCC88FF,  /* stun gun - light purple */
-    0xFF2266EE,  /* microwave - hot orange-red */
-    0xFF44EE44,  /* quickstep - bright green */
+    0xFFB4654D,  /* SHIELD    - #4d65b4 pal blue */
+    0xFF3138B3,  /* SHOOT     - #b33831 pal red */
+    0xFF1D6BFB,  /* BURST     - #fb6b1d pal orange */
+    0xFF639023,  /* MOVE      - #239063 pal green */
+    0xFF2BC2F9,  /* MELEE     - #f9c22b pal gold */
+    0xFF9BAF0E,  /* OVERCHRG  - #0eaf9b pal teal */
+    0xFF73BC1E,  /* REPAIR    - #1ebc73 pal emerald */
+    0xFF6F4BA2,  /* STUN      - #a24b6f pal mauve */
+    0xFFE69B4D,  /* FORTIFY   - #4d9be6 pal bright blue */
+    0xFF3B3BE8,  /* DBL SHOT  - #e83b3b pal bright red */
+    0xFF4BE0D5,  /* DASH      - #d5e04b pal lime */
+    0xFFFDD38F,  /* ICE       - #8fd3ff pal light blue */
+    0xFF47A9A2,  /* ACID      - #a2a947 pal olive */
+    0xFF364FEA,  /* FIRE      - #ea4f36 pal orange-red */
+    0xFF69DB91,  /* LIGHTNING  - #91db69 pal light green */
+    0xFF4C5A16,  /* SNIPER    - #165a4c pal dark teal */
+    0xFF3D68CD,  /* SHOTGUN   - #cd683d pal copper */
+    0xFF1797F7,  /* WELDER    - #f79617 pal amber */
+    0xFF3423AE,  /* CHAINSAW  - #ae2334 pal crimson */
+    0xFFB9E130,  /* LASER     - #30e1b9 pal bright cyan */
+    0xFF8A707F,  /* DEFLECTOR - #7f708a pal steel */
+    0xFFF384A8,  /* STUN GUN  - #a884f3 pal lavender */
+    0xFF4A7DF5,  /* MCROWAVE  - #f57d4a pal salmon */
+    0xFF6CDF34,  /* QCKSTEP   - #34df6c (close to #cddf6c) pal yellow-green */
 };
 
 static const int card_energy_cost[] = {
@@ -1167,7 +1168,7 @@ static void combat_card_fan_pos(const combat_state *cs, int i,
     if (is_sel) cy -= 16;
 
     /* Fan angle: edge cards tilt outward */
-    float angle = -t * 0.10f;
+    float angle = t * 0.10f;
 
     *out_cx = cx;
     *out_cy = cy;
@@ -1544,6 +1545,36 @@ static const char *card_effect_text(int card_type) {
         case CARD_STUN_GUN:    return "STUN 1T\n1 DMG";
         case CARD_MICROWAVE:   return "5 DMG\n*3 DMG ALL";
         case CARD_QUICKSTEP:   return "+1 MOVE\nTO DISC";
+        default:               return "";
+    }
+}
+
+static const char *card_description_text(int card_type) {
+    switch (card_type) {
+        case CARD_SHIELD:      return "ADDS SHIELD POINTS\nTHAT ABSORB DAMAGE\nBEFORE HP.";
+        case CARD_SHOOT:       return "BASIC RANGED ATTACK.\nWORKS AT ANY DISTANCE.";
+        case CARD_BURST:       return "HITS ALL ENEMIES\nFOR REDUCED DAMAGE.";
+        case CARD_MOVE:        return "GRANTS MOVEMENT\nPOINTS TO REPOSITION\nIN COMBAT.";
+        case CARD_MELEE:       return "POWERFUL CLOSE RANGE\nATTACK. MUST BE\nADJACENT TO TARGET.";
+        case CARD_OVERCHARGE:  return "GAIN EXTRA ENERGY\nTHIS TURN. COSTS\nNOTHING TO PLAY.";
+        case CARD_REPAIR:      return "RESTORE HIT POINTS.\nHEALING PERSISTS\nBETWEEN COMBATS.";
+        case CARD_STUN:        return "ALL ENEMIES SKIP\nTHEIR NEXT ATTACK\nPHASE.";
+        case CARD_FORTIFY:     return "HEAVY SHIELD BOOST.\nGREAT FOR BRACING\nAGAINST BIG HITS.";
+        case CARD_DOUBLE_SHOT: return "TWO SHOTS AT ONE\nTARGET FOR HIGH\nSINGLE-TARGET DMG.";
+        case CARD_DASH:        return "MOVE AND STRIKE.\nGAIN MOVEMENT THEN\nDEAL DAMAGE.";
+        case CARD_ICE:         return "FREEZES TARGET FOR\n3 TURNS. SLOWED AND\nTAKES DAMAGE OVER TIME.";
+        case CARD_ACID:        return "STACKING POISON.\nEACH STACK ADDS +1\nDMG PER TURN.";
+        case CARD_FIRE:        return "BURNING DAMAGE THAT\nSPREADS TO ADJACENT\nENEMIES.";
+        case CARD_LIGHTNING:   return "CHANCE TO STUN FOR\n1-2 TURNS PLUS\nDIRECT DAMAGE.";
+        case CARD_SNIPER:      return "HIGH DAMAGE BUT\nREQUIRES DISTANCE OF\n2 OR MORE.";
+        case CARD_SHOTGUN:     return "CLOSE RANGE BLAST.\nONLY WORKS WITHIN\nDISTANCE 0-1.";
+        case CARD_WELDER:      return "MELEE TOOL USED AS\nA WEAPON. MUST BE\nADJACENT.";
+        case CARD_CHAINSAW:    return "DEVASTATING MELEE\nDAMAGE BUT COSTS\n2 ENERGY.";
+        case CARD_LASER:       return "PRECISION ENERGY\nWEAPON. IGNORES\nSHIELD.";
+        case CARD_DEFLECTOR:   return "SHIELD THAT REFLECTS\n1 DAMAGE BACK AT\nATTACKERS.";
+        case CARD_STUN_GUN:    return "STUNS ONE ENEMY FOR\n1 TURN AND DEALS\nMINOR DAMAGE.";
+        case CARD_MICROWAVE:   return "DEALS 5 DAMAGE. IF\nTHE TARGET DIES, ALL\nOTHER ENEMIES TAKE 3.";
+        case CARD_QUICKSTEP:   return "GENERATES A MOVE\nCARD INTO YOUR\nDISCARD PILE.";
         default:               return "";
     }
 }

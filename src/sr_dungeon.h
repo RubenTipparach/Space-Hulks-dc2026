@@ -197,7 +197,11 @@ static void dng_find_down_stairs(sr_dungeon *d, const dng_room *room,
     *out_x = room->cx; *out_y = room->cy;
 }
 
+static void dng_generate_ex(sr_dungeon *d, int w, int h, bool has_down_stairs, bool has_up_stairs, uint32_t seed, int floor_num, int desired_rooms);
 static void dng_generate(sr_dungeon *d, int w, int h, bool has_down_stairs, bool has_up_stairs, uint32_t seed, int floor_num) {
+    dng_generate_ex(d, w, h, has_down_stairs, has_up_stairs, seed, floor_num, 0);
+}
+static void dng_generate_ex(sr_dungeon *d, int w, int h, bool has_down_stairs, bool has_up_stairs, uint32_t seed, int floor_num, int desired_rooms) {
     dng_rng_seed(seed);
     memset(d, 0, sizeof(*d));
     d->w = w; d->h = h;
@@ -219,9 +223,14 @@ static void dng_generate(sr_dungeon *d, int w, int h, bool has_down_stairs, bool
 
     dng_room rooms[DNG_MAX_ROOMS];
     /* Scale room count with grid size */
-    int max_rooms = (w <= 20) ? 8 : (w <= 40) ? 14 : 22;
-    int min_rooms = (w <= 20) ? 5 : (w <= 40) ? 8 : 12;
-    int num_rooms = min_rooms + dng_rng_int(max_rooms - min_rooms + 1);
+    int num_rooms;
+    if (desired_rooms > 0) {
+        num_rooms = desired_rooms;
+    } else {
+        int max_rooms = (w <= 20) ? 8 : (w <= 40) ? 14 : 22;
+        int min_rooms = (w <= 20) ? 5 : (w <= 40) ? 8 : 12;
+        num_rooms = min_rooms + dng_rng_int(max_rooms - min_rooms + 1);
+    }
     if (num_rooms > DNG_MAX_ROOMS) num_rooms = DNG_MAX_ROOMS;
 
     /* Scale room sizes with grid */
@@ -518,6 +527,7 @@ typedef struct {
     bool on_stairs;        /* suppress re-trigger after climb */
     uint32_t seed_base;
     int max_floors;        /* set to ship num_decks; caps stair generation */
+    int deck_room_counts[DNG_MAX_FLOORS]; /* rooms per deck (from ship) */
     int grid_w, grid_h;    /* actual grid size for this ship (20, 40, or 80) */
 } dng_game;
 
@@ -548,9 +558,10 @@ static void dng_go_up(dng_game *g) {
 
     if (!g->floor_generated[g->current_floor]) {
         bool is_last = (g->current_floor >= cap - 1);
-        dng_generate(&g->floors[g->current_floor], g->grid_w, g->grid_h,
-                     true, !is_last, g->seed_base + (uint32_t)g->current_floor * 777,
-                     g->current_floor);
+        int dr = g->deck_room_counts[g->current_floor];
+        dng_generate_ex(&g->floors[g->current_floor], g->grid_w, g->grid_h,
+                        true, !is_last, g->seed_base + (uint32_t)g->current_floor * 777,
+                        g->current_floor, dr);
         g->floor_generated[g->current_floor] = true;
     }
     g->dungeon = &g->floors[g->current_floor];

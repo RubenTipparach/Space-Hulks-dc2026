@@ -201,15 +201,51 @@ static void hub_generate(hub_state *hub) {
                 }
             }
 
-            /* Map room types from dungeon room data */
-            for (int i = 0; i < d->room_count; i++) {
-                /* Use consoles placed by JSON to infer room type */
-                int cx = d->room_cx[i], cy = d->room_cy[i];
-                if (cx >= 1 && cx <= d->w && cy >= 1 && cy <= d->h && d->consoles[cy][cx] > 0)
-                    hub->room_types[i] = d->consoles[cy][cx];
-                else
+            /* Map room types from JSON room type strings + place consoles */
+            {
+                /* Map JSON room type name -> hub room type */
+                static const struct { const char *name; int hub_type; int ship_type; } hub_type_map[] = {
+                    { "Bridge",     HUB_ROOM_BRIDGE,     ROOM_BRIDGE },
+                    { "Teleporter", HUB_ROOM_TELEPORTER, ROOM_SHIELDS },
+                    { "Cargo",      HUB_ROOM_SHOP,       ROOM_CARGO },
+                    { "Barracks",   HUB_ROOM_QUARTERS,   ROOM_BARRACKS },
+                    { "Medbay",     HUB_ROOM_MEDBAY,     ROOM_MEDBAY },
+                };
+                int rooms_arr = sr_json_find(&lvl.json, floor_tok, "rooms");
+                for (int i = 0; i < d->room_count; i++) {
                     hub->room_types[i] = HUB_ROOM_CORRIDOR;
-                d->room_light_on[i] = true;
+                    d->room_light_on[i] = true;
+
+                    /* Check if consoles already placed by JSON */
+                    int cx = d->room_cx[i], cy = d->room_cy[i];
+                    if (cx >= 1 && cx <= d->w && cy >= 1 && cy <= d->h && d->consoles[cy][cx] > 0) {
+                        /* Infer hub type from console's ship room type */
+                        for (int m = 0; m < 5; m++)
+                            if (d->consoles[cy][cx] == hub_type_map[m].ship_type)
+                                hub->room_types[i] = hub_type_map[m].hub_type;
+                        continue;
+                    }
+
+                    /* Parse room type from JSON and place console */
+                    if (rooms_arr >= 0) {
+                        int room_tok = sr_json_array_get(&lvl.json, rooms_arr, i);
+                        if (room_tok >= 0) {
+                            int type_tok = sr_json_find(&lvl.json, room_tok, "type");
+                            if (type_tok >= 0) {
+                                char tbuf[24] = {0};
+                                sr_json_str(&lvl.json, type_tok, tbuf, sizeof(tbuf));
+                                for (int m = 0; m < 5; m++) {
+                                    if (strcmp(tbuf, hub_type_map[m].name) == 0) {
+                                        hub->room_types[i] = hub_type_map[m].hub_type;
+                                        if (cx >= 1 && cx <= d->w && cy >= 1 && cy <= d->h)
+                                            d->consoles[cy][cx] = (uint8_t)hub_type_map[m].ship_type;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             dng_player_init(&hub->player, d->spawn_gx, d->spawn_gy, 1);
@@ -750,48 +786,101 @@ static void draw_shop(uint32_t *px, int W, int H) {
             }
         }
     } else {
-        /* Trash mode - show player's deck */
+        /* Trash mode - show player's deck with card details */
         int trash_cost = 30 + g_shop.trash_count * 5;
         char trash_hdr[48];
         snprintf(trash_hdr, sizeof(trash_hdr), "YOUR DECK:  TRASH COST: %d SCRAP", trash_cost);
-        sr_draw_text_shadow(px, W, H, 60, 44, trash_hdr, 0xFFCCCCCC, shadow);
-        int cols = 4;
+        sr_draw_text_shadow(px, W, H, 60, 44, trash_hdr, 0xFFD0CDC7, shadow); /* pal #8 c7dcd0 */
+
+        /* Card list (left side) */
+        int list_x = 30, list_y = 58;
+        int list_w = 100;
         for (int i = 0; i < g_player.persistent_deck_count; i++) {
-            int col = i % cols;
-            int row = i / cols;
-            int cx = 60 + col * 100;
-            int cy = 58 + row * 24;
+            int cy = list_y + i * 12;
+            if (cy > H - 40) break;
 
             bool hovered = false;
-            ui_row_hover(cx, cy, 90, 20, &hovered);
+            ui_row_hover(list_x, cy, list_w, 11, &hovered);
             if (hovered) g_shop.trash_cursor = i;
             bool sel = (g_shop.trash_cursor == i);
 
             int card_type = g_player.persistent_deck[i];
-            uint32_t ccol = hovered ? 0xFF00FFFF : (sel ? 0xFF00DDDD : card_colors[card_type]);
-            sr_draw_text_shadow(px, W, H, cx, cy, card_names[card_type], ccol, shadow);
+            uint32_t ccol = sel ? 0xFFD0CDC7 : card_colors[card_type]; /* pal #8 when selected */
             if (sel) {
-                bool can_trash = g_player.persistent_deck_count > 5 && player_scrap >= trash_cost;
-                char tbuf[24];
-                snprintf(tbuf, sizeof(tbuf), "TRASH (%d)", trash_cost);
-                if (ui_button(px, W, H, cx, cy + 10, 70, 12, tbuf,
-                              can_trash ? 0xFF331111 : 0xFF222222,
-                              can_trash ? 0xFF442222 : 0xFF333333,
-                              can_trash ? 0xFFCC2222 : 0xFF333333)) {
-                    if (can_trash) {
-                        player_scrap -= trash_cost;
-                        g_shop.trash_count++;
-                        for (int j = i; j < g_player.persistent_deck_count - 1; j++)
-                            g_player.persistent_deck[j] = g_player.persistent_deck[j + 1];
-                        g_player.persistent_deck_count--;
-                        if (g_shop.trash_cursor >= g_player.persistent_deck_count)
-                            g_shop.trash_cursor = g_player.persistent_deck_count - 1;
-                    }
+                /* Highlight bar */
+                for (int ry = cy; ry < cy + 11 && ry < H; ry++)
+                    for (int rx = list_x; rx < list_x + list_w && rx < W; rx++)
+                        if (rx >= 0 && ry >= 0) px[ry * W + rx] = 0xFF46353E; /* pal #1 */
+            }
+            sr_draw_text_shadow(px, W, H, list_x + 2, cy + 1, card_names[card_type], ccol, shadow);
+
+            /* Energy cost pip */
+            char ebuf[4];
+            snprintf(ebuf, sizeof(ebuf), "%d", card_energy_cost[card_type]);
+            sr_draw_text_shadow(px, W, H, list_x + list_w - 12, cy + 1, ebuf,
+                                0xFF9BAF0E, shadow); /* pal #41 teal */
+        }
+
+        /* Card detail panel (right side) */
+        if (g_shop.trash_cursor >= 0 && g_shop.trash_cursor < g_player.persistent_deck_count) {
+            int idx = g_shop.trash_cursor;
+            int card_type = g_player.persistent_deck[idx];
+            int px2 = 150, py = 56, pw = W - 180, ph = H - 90;
+            uint32_t ccol = card_colors[card_type];
+
+            /* Panel background */
+            for (int ry = py; ry < py + ph && ry < H; ry++)
+                for (int rx = px2; rx < px2 + pw && rx < W; rx++)
+                    if (rx >= 0 && ry >= 0) px[ry * W + rx] = 0xFF2F222E; /* pal #0 */
+
+            /* Border in card color */
+            combat_draw_rect_outline(px, W, H, px2, py, pw, ph, ccol);
+
+            /* Card art */
+            if (card_type < (int)(sizeof(spr_card_table)/sizeof(spr_card_table[0])) &&
+                spr_card_table[card_type])
+                spr_draw(px, W, H, spr_card_table[card_type], px2 + pw - 42, py + 4, 2);
+
+            /* Card name */
+            sr_draw_text_shadow(px, W, H, px2 + 6, py + 6, card_names[card_type], ccol, shadow);
+
+            /* Energy cost */
+            char ebuf2[16];
+            snprintf(ebuf2, sizeof(ebuf2), "COST: %d", card_energy_cost[card_type]);
+            sr_draw_text_shadow(px, W, H, px2 + 6, py + 16, ebuf2, 0xFF9BAF0E, shadow); /* pal #41 */
+
+            /* Effect text */
+            const char *effect = card_effect_text(card_type);
+            int ey = sr_draw_text_wrap(px, W, H, px2 + 6, py + 28, effect,
+                                       pw - 50, 8, ccol, shadow);
+
+            /* Description */
+            const char *desc = card_description_text(card_type);
+            sr_draw_text_wrap(px, W, H, px2 + 6, ey + 4, desc,
+                              pw - 12, 8, 0xFF8A707F, shadow); /* pal #7 steel */
+
+            /* Trash button */
+            bool can_trash = g_player.persistent_deck_count > 5 && player_scrap >= trash_cost;
+            char tbuf[24];
+            snprintf(tbuf, sizeof(tbuf), "TRASH (%d)", trash_cost);
+            if (ui_button(px, W, H, px2 + 6, py + ph - 20, 80, 14, tbuf,
+                          can_trash ? 0xFF27276E : 0xFF46353E, /* pal #10 dk red / pal #1 */
+                          can_trash ? 0xFF3E459E : 0xFF46353E, /* pal #20 / pal #1 */
+                          can_trash ? 0xFF3B3BE8 : 0xFF46353E)) { /* pal #15 bright red */
+                if (can_trash) {
+                    player_scrap -= trash_cost;
+                    g_shop.trash_count++;
+                    for (int j = idx; j < g_player.persistent_deck_count - 1; j++)
+                        g_player.persistent_deck[j] = g_player.persistent_deck[j + 1];
+                    g_player.persistent_deck_count--;
+                    if (g_shop.trash_cursor >= g_player.persistent_deck_count)
+                        g_shop.trash_cursor = g_player.persistent_deck_count - 1;
                 }
             }
+            if (!can_trash && g_player.persistent_deck_count <= 5)
+                sr_draw_text_shadow(px, W, H, px2 + 6, py + ph - 34, "MIN 5 CARDS",
+                                    0xFF655562, shadow);
         }
-        sr_draw_text_shadow(px, W, H, 60, H - 30,
-            "MIN 5 CARDS", 0xFF888888, shadow);
     }
 
     /* Leave button */
@@ -1174,36 +1263,7 @@ static void starmap_handle_key(int key_code) {
 static bool deck_view_active = false;
 static int deck_view_selected = -1; /* index of selected card for detail view, -1 = none */
 
-/* Get card description text */
-static const char *card_description_text(int card_type) {
-    switch (card_type) {
-        case CARD_SHIELD:      return "ADDS SHIELD POINTS\nTHAT ABSORB DAMAGE\nBEFORE HP.";
-        case CARD_SHOOT:       return "BASIC RANGED ATTACK.\nWORKS AT ANY DISTANCE.";
-        case CARD_BURST:       return "HITS ALL ENEMIES\nFOR REDUCED DAMAGE.";
-        case CARD_MOVE:        return "GRANTS MOVEMENT\nPOINTS TO REPOSITION\nIN COMBAT.";
-        case CARD_MELEE:       return "POWERFUL CLOSE RANGE\nATTACK. MUST BE\nADJACENT TO TARGET.";
-        case CARD_OVERCHARGE:  return "GAIN EXTRA ENERGY\nTHIS TURN. COSTS\nNOTHING TO PLAY.";
-        case CARD_REPAIR:      return "RESTORE HIT POINTS.\nHEALING PERSISTS\nBETWEEN COMBATS.";
-        case CARD_STUN:        return "ALL ENEMIES SKIP\nTHEIR NEXT ATTACK\nPHASE.";
-        case CARD_FORTIFY:     return "HEAVY SHIELD BOOST.\nGREAT FOR BRACING\nAGAINST BIG HITS.";
-        case CARD_DOUBLE_SHOT: return "TWO SHOTS AT ONE\nTARGET FOR HIGH\nSINGLE-TARGET DMG.";
-        case CARD_DASH:        return "MOVE AND STRIKE.\nGAIN MOVEMENT THEN\nDEAL DAMAGE.";
-        case CARD_ICE:         return "FREEZES TARGET FOR\n3 TURNS. SLOWED AND\nTAKES DAMAGE OVER TIME.";
-        case CARD_ACID:        return "STACKING POISON.\nEACH STACK ADDS +1\nDMG PER TURN.";
-        case CARD_FIRE:        return "BURNING DAMAGE THAT\nSPREADS TO ADJACENT\nENEMIES.";
-        case CARD_LIGHTNING:   return "CHANCE TO STUN FOR\n1-2 TURNS PLUS\nDIRECT DAMAGE.";
-        case CARD_SNIPER:      return "HIGH DAMAGE BUT\nREQUIRES DISTANCE OF\n2 OR MORE.";
-        case CARD_SHOTGUN:     return "CLOSE RANGE BLAST.\nONLY WORKS WITHIN\nDISTANCE 0-1.";
-        case CARD_WELDER:      return "MELEE TOOL USED AS\nA WEAPON. MUST BE\nADJACENT.";
-        case CARD_CHAINSAW:    return "DEVASTATING MELEE\nDAMAGE BUT COSTS\n2 ENERGY.";
-        case CARD_LASER:       return "PRECISION ENERGY\nWEAPON. IGNORES\nSHIELD.";
-        case CARD_DEFLECTOR:   return "SHIELD THAT REFLECTS\n1 DAMAGE BACK AT\nATTACKERS.";
-        case CARD_STUN_GUN:    return "STUNS ONE ENEMY FOR\n1 TURN AND DEALS\nMINOR DAMAGE.";
-        case CARD_MICROWAVE:   return "DEALS 5 DAMAGE. IF\nTHE TARGET DIES, ALL\nOTHER ENEMIES TAKE 3.";
-        case CARD_QUICKSTEP:   return "GENERATES A MOVE\nCARD INTO YOUR\nDISCARD PILE.";
-        default:               return "";
-    }
-}
+/* card_description_text() is now in sr_combat.h */
 
 static void draw_deck_viewer(uint32_t *px, int W, int H) {
     if (!deck_view_active) return;
