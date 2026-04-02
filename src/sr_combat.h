@@ -159,7 +159,7 @@ static const char_class char_classes[] = {
 enum { ENEMY_LURKER, ENEMY_BRUTE, ENEMY_SPITTER, ENEMY_HIVEGUARD, ENEMY_TYPE_COUNT };
 
 /* Enemy intent types */
-enum { INTENT_ATTACK, INTENT_MOVE };
+enum { INTENT_ATTACK, INTENT_MOVE, INTENT_DEFEND, INTENT_BUFF };
 
 typedef struct {
     const char *name;
@@ -167,13 +167,15 @@ typedef struct {
     int damage;
     int attack_range;  /* distance at which this enemy attacks */
     int ranged;        /* 1 = ranged attack, 0 = melee */
+    int base_defense;  /* base defense (damage reduction per hit) */
+    const char *ability; /* short ability description */
 } enemy_template;
 
 static const enemy_template enemy_templates[] = {
-    [ENEMY_LURKER]    = { "LURKER",     8,  2, 2, 1 },  /* ranged: attacks at dist <= 2 */
-    [ENEMY_BRUTE]     = { "BRUTE",     18,  5, 1, 0 },  /* melee: attacks at dist <= 1 */
-    [ENEMY_SPITTER]   = { "SPITTER",   10,  3, 3, 1 },  /* ranged: attacks at dist <= 3 */
-    [ENEMY_HIVEGUARD] = { "HIVEGUARD", 24,  4, 2, 1 },  /* ranged: attacks at dist <= 2 */
+    [ENEMY_LURKER]    = { "LURKER",     8,  2, 2, 1, 0, "Evasive" },
+    [ENEMY_BRUTE]     = { "BRUTE",     18,  5, 1, 0, 2, "Rage" },
+    [ENEMY_SPITTER]   = { "SPITTER",   10,  3, 3, 1, 0, "Acid Spit" },
+    [ENEMY_HIVEGUARD] = { "HIVEGUARD", 24,  4, 2, 1, 1, "Shield Wall" },
 };
 
 /* ── Combat state ────────────────────────────────────────────────── */
@@ -190,9 +192,12 @@ typedef struct {
     int distance;      /* this enemy's distance from player (0=melee, max 5) */
     int damage;
     int ranged;
-    int intent;        /* INTENT_ATTACK or INTENT_MOVE */
+    int intent;        /* INTENT_ATTACK, INTENT_MOVE, INTENT_DEFEND, INTENT_BUFF */
     int flash_timer;   /* > 0 = flashing white */
     bool alive;
+    /* Defense & buffs (reset each turn) */
+    int shield;          /* damage absorbed before HP, expires next turn */
+    int atk_buff;        /* +damage this turn, expires next turn */
     /* Elemental status effects */
     int ice_turns;       /* > 0: frozen, skip move every other turn, reduced dmg */
     int acid_stacks;     /* > 0: take acid_stacks dmg each turn, stackable */
@@ -260,6 +265,9 @@ typedef struct {
     /* Elemental state */
     int fire_atk_bonus;  /* +1 per burning enemy, boosts player attack dmg */
     bool player_deflect; /* true = deflector active, reflects damage back */
+
+    /* Enemy inspect popup */
+    int inspect_enemy;        /* -1 = none, index of enemy being inspected */
 
     /* Pile viewer overlay */
     bool deck_view_open;
@@ -425,6 +433,7 @@ static void combat_init(combat_state *cs, int player_class, int floor, int cell_
     cs->log_count = 0;
     cs->log_scroll = 0;
     cs->log_open = false;
+    cs->inspect_enemy = -1;
     snprintf(cs->message, sizeof(cs->message), "ENEMIES DETECTED!");
     combat_log(cs, "-- COMBAT START --");
 }
@@ -487,7 +496,19 @@ static void combat_roll_intents(combat_state *cs) {
             continue;
         }
         bool in_range = (e->distance <= e->attack_range);
-        e->intent = in_range ? INTENT_ATTACK : INTENT_MOVE;
+        if (!in_range) {
+            e->intent = INTENT_MOVE;
+            continue;
+        }
+        /* In range: usually attack, but sometimes defend or buff based on type */
+        int roll = dng_rng_int(100);
+        if (e->type == ENEMY_HIVEGUARD && roll < 25) {
+            e->intent = INTENT_DEFEND; /* 25% chance: shield wall */
+        } else if (e->type == ENEMY_BRUTE && roll < 20) {
+            e->intent = INTENT_BUFF;   /* 20% chance: rage (+atk) */
+        } else {
+            e->intent = INTENT_ATTACK;
+        }
     }
 }
 
@@ -505,11 +526,26 @@ static int combat_first_alive_enemy(combat_state *cs) {
 
 static void combat_deal_damage_enemy(combat_state *cs, int idx, int dmg) {
     if (idx < 0 || idx >= cs->enemy_count || !cs->enemies[idx].alive) return;
-    cs->enemies[idx].hp -= dmg;
-    cs->enemies[idx].flash_timer = 10;
-    if (cs->enemies[idx].hp <= 0) {
-        cs->enemies[idx].hp = 0;
-        cs->enemies[idx].alive = false;
+    combat_enemy *e = &cs->enemies[idx];
+    /* Base defense reduces damage */
+    int def = enemy_templates[e->type].base_defense;
+    dmg -= def;
+    if (dmg < 1) dmg = 1;
+    /* Shield absorbs before HP */
+    if (e->shield > 0) {
+        int absorbed = dmg < e->shield ? dmg : e->shield;
+        e->shield -= absorbed;
+        dmg -= absorbed;
+        if (absorbed > 0)
+            combat_log(cs, "  %s shield absorb %d", enemy_templates[e->type].name, absorbed);
+    }
+    if (dmg > 0) {
+        e->hp -= dmg;
+        e->flash_timer = 10;
+        if (e->hp <= 0) {
+            e->hp = 0;
+            e->alive = false;
+        }
     }
 }
 
@@ -876,6 +912,10 @@ static void combat_tick_status_effects(combat_state *cs) {
         combat_enemy *e = &cs->enemies[i];
         if (!e->alive) continue;
 
+        /* Clear one-turn buffs from previous turn */
+        e->shield = 0;
+        e->atk_buff = 0;
+
         /* Acid: deal damage per stack each turn */
         if (e->acid_stacks > 0) {
             e->hp -= e->acid_stacks;
@@ -971,6 +1011,22 @@ static void combat_begin_enemy_turn(combat_state *cs) {
         }
     }
 
+    /* Execute defend/buff intents (instant, before attacks) */
+    for (int i = 0; i < cs->enemy_count; i++) {
+        combat_enemy *e = &cs->enemies[i];
+        if (!e->alive) continue;
+        if (e->lightning_stun > 0 || e->flash_timer > 10) continue;
+        if (e->intent == INTENT_DEFEND) {
+            e->shield = 4 + enemy_templates[e->type].base_defense;
+            combat_log(cs, "%s raises shield (%d)",
+                       enemy_templates[e->type].name, e->shield);
+        } else if (e->intent == INTENT_BUFF) {
+            e->atk_buff = 3;
+            combat_log(cs, "%s enrages (+%d atk)",
+                       enemy_templates[e->type].name, e->atk_buff);
+        }
+    }
+
     cs->enemy_atk_idx = combat_next_attacker(cs, 0);
     if (cs->enemy_atk_idx < 0) {
         /* No enemies can attack — skip straight to next draw phase */
@@ -1033,7 +1089,7 @@ static void combat_update(combat_state *cs) {
             combat_enemy *e = &cs->enemies[cs->enemy_atk_idx];
             char buf[64];
 
-            int dmg = e->damage;
+            int dmg = e->damage + e->atk_buff;
             if (e->ice_turns > 0) dmg = dmg / 2;
             if (dmg < 1) dmg = 1;
             combat_log(cs, "%s attacks for %d",
@@ -1223,6 +1279,12 @@ static bool combat_point_in_fan_card(float px, float py,
 /* ── Touch drag input (Slay the Spire style) ─────────────────────── */
 
 static void combat_touch_began(combat_state *cs, float fx, float fy) {
+    /* Close inspect popup on any tap */
+    if (cs->inspect_enemy >= 0) {
+        cs->inspect_enemy = -1;
+        return;
+    }
+
     /* Pile viewer overlay blocks input (handled by draw via ui_button) */
     if (cs->deck_view_open || cs->discard_view_open) return;
 
@@ -1328,14 +1390,18 @@ static void combat_touch_began(combat_state *cs, float fx, float fy) {
         }
     }
 
-    /* Tap on enemy to target */
+    /* Tap on enemy: first tap targets, second tap on same target opens inspect */
     if (cs->enemy_count > 0) {
         int spacing = FB_WIDTH / (cs->enemy_count + 1);
         for (int i = 0; i < cs->enemy_count; i++) {
             if (!cs->enemies[i].alive) continue;
             int ecx = spacing * (i + 1);
             if (fx >= ecx - 24 && fx <= ecx + 24 && fy >= 10 && fy <= 90) {
-                cs->target = i;
+                if (cs->target == i) {
+                    cs->inspect_enemy = i; /* already targeted, open details */
+                } else {
+                    cs->target = i;
+                }
                 return;
             }
         }
@@ -1844,8 +1910,14 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
                     } else if (e->intent == INTENT_MOVE) {
                         sr_draw_text_shadow(px, W, H, cx - 6, sprite_y - 10,
                                             ">>", 0xFFCC8844, shadow);
+                    } else if (e->intent == INTENT_DEFEND) {
+                        sr_draw_text_shadow(px, W, H, cx - 10, sprite_y - 10,
+                                            "DEF", 0xFFFFCC44, shadow);
+                    } else if (e->intent == INTENT_BUFF) {
+                        sr_draw_text_shadow(px, W, H, cx - 8, sprite_y - 10,
+                                            "BUFF", 0xFFFF8844, shadow);
                     } else if (e->intent == INTENT_ATTACK) {
-                        int dmg = e->damage / 2; if (dmg < 1) dmg = 1;
+                        int dmg = (e->damage + e->atk_buff) / 2; if (dmg < 1) dmg = 1;
                         if (e->ice_turns > 0) { dmg = dmg / 2; if (dmg < 1) dmg = 1; }
                         char intent_buf[16];
                         snprintf(intent_buf, sizeof(intent_buf), "%d", dmg);
@@ -1874,10 +1946,23 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
                 snprintf(hpbuf, sizeof(hpbuf), "%d/%d", e->hp, e->hp_max);
                 sr_draw_text_shadow(px, W, H, cx - 10, info_y + 16, hpbuf, gray, shadow);
 
-                /* Distance + range indicator */
-                char distbuf[16];
-                snprintf(distbuf, sizeof(distbuf), "D:%d R:%d", e->distance, e->attack_range);
-                sr_draw_text_shadow(px, W, H, cx - 16, info_y + 26, distbuf, dim, shadow);
+                /* Attack damage indicator (red when in range) */
+                {
+                    int edmg = e->damage + e->atk_buff;
+                    if (e->ice_turns > 0) { edmg = edmg / 2; if (edmg < 1) edmg = 1; }
+                    bool in_range = (e->distance <= e->attack_range);
+                    uint32_t atk_color = in_range ? 0xFF4444FF : dim;
+                    char atkbuf[16];
+                    snprintf(atkbuf, sizeof(atkbuf), "x%d", edmg);
+                    /* Sword icon: / character as attack symbol */
+                    sr_draw_text_shadow(px, W, H, cx - 16, info_y + 26, "/", atk_color, shadow);
+                    sr_draw_text_shadow(px, W, H, cx - 10, info_y + 26, atkbuf, atk_color, shadow);
+                    /* Shield indicator if enemy has shield */
+                    if (e->shield > 0) {
+                        char shbuf[8]; snprintf(shbuf, sizeof(shbuf), "[%d]", e->shield);
+                        sr_draw_text_shadow(px, W, H, cx + 6, info_y + 26, shbuf, 0xFFFFCC44, shadow);
+                    }
+                }
 
                 /* Status effect indicators */
                 int sx = cx - 18;
@@ -2303,6 +2388,120 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
             snprintf(sbuf, sizeof(sbuf), "W/S SCROLL");
             sr_draw_text_shadow(px, W, H, lx + lw/2 - 25, ly + lh - 12, sbuf, dim, shadow);
         }
+    }
+
+    /* ── Enemy inspect popup ──────────────────────────────────── */
+    if (combat.inspect_enemy >= 0 && combat.inspect_enemy < combat.enemy_count) {
+        combat_enemy *ie = &combat.enemies[combat.inspect_enemy];
+        const enemy_template *it = &enemy_templates[ie->type];
+
+        /* Darken background */
+        for (int i = 0; i < W * H; i++) {
+            uint32_t c = px[i];
+            px[i] = ((c >> 24) << 24) |
+                    ((((c>>16)&0xFF)/2)<<16) |
+                    ((((c>>8)&0xFF)/2)<<8) |
+                    (((c)&0xFF)/2);
+        }
+
+        /* Panel */
+        int px0 = 30, py0 = 20, pw = W - 60, ph = 160;
+        combat_draw_rect(px, W, H, px0, py0, pw, ph, 0xFF0A0A14);
+        combat_draw_rect_outline(px, W, H, px0, py0, pw, ph, 0xFF6666CC);
+        combat_draw_rect_outline(px, W, H, px0+1, py0+1, pw-2, ph-2, 0xFF333366);
+
+        int tx = px0 + 8, ty = py0 + 6;
+
+        /* Name */
+        sr_draw_text_shadow(px, W, H, tx, ty, it->name, yellow, shadow);
+        sr_draw_text_shadow(px, W, H, px0 + pw - 30, ty, "[X]", 0xFFCC4444, shadow);
+        ty += 14;
+
+        /* HP */
+        {
+            char hpb[32];
+            snprintf(hpb, sizeof(hpb), "HP: %d/%d", ie->hp, ie->hp_max);
+            sr_draw_text_shadow(px, W, H, tx, ty, hpb, ie->alive ? white : 0xFF444444, shadow);
+            combat_draw_bar(px, W, H, tx + 80, ty + 1, 60, 5,
+                            ie->hp, ie->hp_max, 0xFF2222CC, 0xFF333333);
+        }
+        ty += 12;
+
+        /* Attack */
+        {
+            int edmg = ie->damage + ie->atk_buff;
+            char atkb[32];
+            snprintf(atkb, sizeof(atkb), "ATK: %d%s  RNG: %d",
+                     edmg, ie->atk_buff > 0 ? "(+)" : "",
+                     ie->attack_range);
+            sr_draw_text_shadow(px, W, H, tx, ty, atkb, white, shadow);
+        }
+        ty += 12;
+
+        /* Defense */
+        {
+            char defb[32];
+            snprintf(defb, sizeof(defb), "DEF: %d  SHIELD: %d",
+                     it->base_defense, ie->shield);
+            sr_draw_text_shadow(px, W, H, tx, ty, defb, white, shadow);
+        }
+        ty += 12;
+
+        /* Ability */
+        {
+            char abb[32];
+            snprintf(abb, sizeof(abb), "ABILITY: %s", it->ability);
+            sr_draw_text_shadow(px, W, H, tx, ty, abb, 0xFFCCBB88, shadow);
+        }
+        ty += 12;
+
+        /* Type */
+        {
+            sr_draw_text_shadow(px, W, H, tx, ty,
+                ie->ranged ? "TYPE: Ranged" : "TYPE: Melee",
+                dim, shadow);
+        }
+        ty += 14;
+
+        /* Status effects (debuffs) */
+        sr_draw_text_shadow(px, W, H, tx, ty, "STATUS:", dim, shadow);
+        {
+            int sx = tx + 48;
+            bool has_status = false;
+            if (ie->ice_turns > 0) {
+                char b[16]; snprintf(b, sizeof(b), "ICE(%d)", ie->ice_turns);
+                sr_draw_text_shadow(px, W, H, sx, ty, b, 0xFFFFCC44, shadow);
+                sx += 46; has_status = true;
+            }
+            if (ie->acid_stacks > 0) {
+                char b[16]; snprintf(b, sizeof(b), "ACID(%d)", ie->acid_stacks);
+                sr_draw_text_shadow(px, W, H, sx, ty, b, 0xFF22CCAA, shadow);
+                sx += 50; has_status = true;
+            }
+            if (ie->fire_turns > 0) {
+                char b[16]; snprintf(b, sizeof(b), "FIRE(%d)", ie->fire_turns);
+                sr_draw_text_shadow(px, W, H, sx, ty, b, 0xFF2244FF, shadow);
+                sx += 50; has_status = true;
+            }
+            if (ie->lightning_stun > 0) {
+                char b[16]; snprintf(b, sizeof(b), "STUN(%d)", ie->lightning_stun);
+                sr_draw_text_shadow(px, W, H, sx, ty, b, 0xFFEEEE44, shadow);
+                sx += 50; has_status = true;
+            }
+            if (ie->atk_buff > 0) {
+                char b[16]; snprintf(b, sizeof(b), "RAGE(+%d)", ie->atk_buff);
+                sr_draw_text_shadow(px, W, H, sx, ty, b, 0xFFFF8844, shadow);
+                sx += 56; has_status = true;
+            }
+            if (!has_status) {
+                sr_draw_text_shadow(px, W, H, sx, ty, "None", dim, shadow);
+            }
+        }
+        ty += 14;
+
+        /* Tap to close hint */
+        sr_draw_text_shadow(px, W, H, px0 + pw/2 - 30, py0 + ph - 12,
+                            "TAP TO CLOSE", dim, shadow);
     }
 
     /* ── Pile viewer overlays ────────────────────────────────── */
