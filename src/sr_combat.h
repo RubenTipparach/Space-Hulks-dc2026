@@ -158,6 +158,76 @@ static const char_class char_classes[] = {
 
 enum { ENEMY_LURKER, ENEMY_BRUTE, ENEMY_SPITTER, ENEMY_HIVEGUARD, ENEMY_TYPE_COUNT };
 
+/* ── Element types (for weakness system) ─────────────────────────── */
+
+enum { ELEM_ICE, ELEM_ACID, ELEM_FIRE, ELEM_LIGHTNING, ELEM_COUNT };
+
+static const char *elem_names[] = { "ICE", "ACID", "FIRE", "LIGHTNING" };
+static const uint32_t elem_colors[] = {
+    0xFFFFCC44,   /* ICE: cyan-ish (ABGR) */
+    0xFF22CCAA,   /* ACID: green */
+    0xFF2244FF,   /* FIRE: red-orange */
+    0xFFEEEE44,   /* LIGHTNING: yellow */
+};
+
+/* Map card type -> element index (-1 = not elemental) */
+static int card_element(int card) {
+    switch (card) {
+        case CARD_ICE:       return ELEM_ICE;
+        case CARD_ACID:      return ELEM_ACID;
+        case CARD_FIRE:      return ELEM_FIRE;
+        case CARD_LIGHTNING: return ELEM_LIGHTNING;
+        default:             return -1;
+    }
+}
+
+/* ── Enemy weakness system (per run) ────────────────────────────── */
+
+typedef struct {
+    int weakness[ENEMY_TYPE_COUNT];        /* element each enemy type is weak to */
+    bool discovered[ENEMY_TYPE_COUNT][ELEM_COUNT]; /* which elements tested per type */
+    bool weakness_known[ENEMY_TYPE_COUNT]; /* true once we found the weakness */
+    bool initialized;
+} weakness_table;
+
+static weakness_table g_weakness;
+
+/* Randomize weaknesses for a new game run using the given seed */
+static void weakness_init(uint32_t seed) {
+    memset(&g_weakness, 0, sizeof(g_weakness));
+    uint32_t rng = seed ^ 0xDEADBEEF;
+    for (int i = 0; i < ENEMY_TYPE_COUNT; i++) {
+        rng = rng * 1103515245u + 12345u;
+        g_weakness.weakness[i] = (int)(((rng >> 16) & 0x7FFF) % (uint32_t)ELEM_COUNT);
+    }
+    g_weakness.initialized = true;
+}
+
+/* Call when player attacks enemy_type with an elemental card.
+   Returns true if weakness was just discovered for the first time. */
+static bool weakness_discover(int enemy_type, int elem) {
+    if (enemy_type < 0 || enemy_type >= ENEMY_TYPE_COUNT) return false;
+    if (elem < 0 || elem >= ELEM_COUNT) return false;
+    g_weakness.discovered[enemy_type][elem] = true;
+    if (g_weakness.weakness[enemy_type] == elem && !g_weakness.weakness_known[enemy_type]) {
+        g_weakness.weakness_known[enemy_type] = true;
+        return true;
+    }
+    return false;
+}
+
+/* Check if enemy_type is weak to elem */
+static bool weakness_check(int enemy_type, int elem) {
+    if (enemy_type < 0 || enemy_type >= ENEMY_TYPE_COUNT) return false;
+    if (elem < 0 || elem >= ELEM_COUNT) return false;
+    return g_weakness.weakness[enemy_type] == elem;
+}
+
+/* Element icon texture indices (matches STEX_ enum order) */
+static const int elem_icon_stex[] = {
+    STEX_ICON_ICE, STEX_ICON_ACID, STEX_ICON_FIRE, STEX_ICON_LIGHTNING
+};
+
 /* Enemy intent types */
 enum { INTENT_ATTACK, INTENT_MOVE };
 
@@ -260,6 +330,10 @@ typedef struct {
     /* Elemental state */
     int fire_atk_bonus;  /* +1 per burning enemy, boosts player attack dmg */
     bool player_deflect; /* true = deflector active, reflects damage back */
+
+    /* Enemy info popup */
+    int info_popup_enemy;    /* -1 = none, else enemy index to show details for */
+    int info_popup_timer;    /* auto-dismiss timer */
 
     /* Pile viewer overlay */
     bool deck_view_open;
@@ -425,6 +499,8 @@ static void combat_init(combat_state *cs, int player_class, int floor, int cell_
     cs->log_count = 0;
     cs->log_scroll = 0;
     cs->log_open = false;
+    cs->info_popup_enemy = -1;
+    cs->info_popup_timer = 0;
     snprintf(cs->message, sizeof(cs->message), "ENEMIES DETECTED!");
     combat_log(cs, "-- COMBAT START --");
 }
@@ -664,8 +740,19 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
             if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
             if (t >= 0) {
                 cs->enemies[t].ice_turns = 3;
-                combat_deal_damage_enemy(cs, t, 1);
-                snprintf(buf, sizeof(buf), "ICE %s! FROZEN 3T", enemy_templates[cs->enemies[t].type].name);
+                int dmg = 1;
+                bool is_weak = weakness_check(cs->enemies[t].type, ELEM_ICE);
+                if (is_weak) dmg *= 2;
+                bool just_found = weakness_discover(cs->enemies[t].type, ELEM_ICE);
+                combat_deal_damage_enemy(cs, t, dmg);
+                if (just_found) {
+                    snprintf(buf, sizeof(buf), "ICE %s! WEAK! x2!", enemy_templates[cs->enemies[t].type].name);
+                    combat_log(cs, ">> %s WEAK TO ICE! <<", enemy_templates[cs->enemies[t].type].name);
+                } else if (is_weak) {
+                    snprintf(buf, sizeof(buf), "ICE %s! WEAK x2!", enemy_templates[cs->enemies[t].type].name);
+                } else {
+                    snprintf(buf, sizeof(buf), "ICE %s! FROZEN 3T", enemy_templates[cs->enemies[t].type].name);
+                }
                 combat_set_message(cs, buf);
             }
             break;
@@ -677,8 +764,19 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
             if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
             if (t >= 0) {
                 cs->enemies[t].acid_stacks++;
-                combat_deal_damage_enemy(cs, t, 1);
-                snprintf(buf, sizeof(buf), "ACID %s x%d!", enemy_templates[cs->enemies[t].type].name, cs->enemies[t].acid_stacks);
+                int dmg = 1;
+                bool is_weak = weakness_check(cs->enemies[t].type, ELEM_ACID);
+                if (is_weak) dmg *= 2;
+                bool just_found = weakness_discover(cs->enemies[t].type, ELEM_ACID);
+                combat_deal_damage_enemy(cs, t, dmg);
+                if (just_found) {
+                    snprintf(buf, sizeof(buf), "ACID %s! WEAK! x2!", enemy_templates[cs->enemies[t].type].name);
+                    combat_log(cs, ">> %s WEAK TO ACID! <<", enemy_templates[cs->enemies[t].type].name);
+                } else if (is_weak) {
+                    snprintf(buf, sizeof(buf), "ACID %s! WEAK x2!", enemy_templates[cs->enemies[t].type].name);
+                } else {
+                    snprintf(buf, sizeof(buf), "ACID %s x%d!", enemy_templates[cs->enemies[t].type].name, cs->enemies[t].acid_stacks);
+                }
                 combat_set_message(cs, buf);
             }
             break;
@@ -690,8 +788,19 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
             if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
             if (t >= 0) {
                 cs->enemies[t].fire_turns = 3;
-                combat_deal_damage_enemy(cs, t, 1);
-                snprintf(buf, sizeof(buf), "FIRE %s! BURN 3T", enemy_templates[cs->enemies[t].type].name);
+                int dmg = 1;
+                bool is_weak = weakness_check(cs->enemies[t].type, ELEM_FIRE);
+                if (is_weak) dmg *= 2;
+                bool just_found = weakness_discover(cs->enemies[t].type, ELEM_FIRE);
+                combat_deal_damage_enemy(cs, t, dmg);
+                if (just_found) {
+                    snprintf(buf, sizeof(buf), "FIRE %s! WEAK! x2!", enemy_templates[cs->enemies[t].type].name);
+                    combat_log(cs, ">> %s WEAK TO FIRE! <<", enemy_templates[cs->enemies[t].type].name);
+                } else if (is_weak) {
+                    snprintf(buf, sizeof(buf), "FIRE %s! WEAK x2!", enemy_templates[cs->enemies[t].type].name);
+                } else {
+                    snprintf(buf, sizeof(buf), "FIRE %s! BURN 3T", enemy_templates[cs->enemies[t].type].name);
+                }
                 combat_set_message(cs, buf);
             }
             break;
@@ -704,8 +813,19 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
             if (t >= 0) {
                 int stun_turns = 1 + dng_rng_int(2); /* 1-2 turns */
                 cs->enemies[t].lightning_stun = stun_turns;
-                combat_deal_damage_enemy(cs, t, 2);
-                snprintf(buf, sizeof(buf), "ZAP %s! STUN %dT", enemy_templates[cs->enemies[t].type].name, stun_turns);
+                int dmg = 2;
+                bool is_weak = weakness_check(cs->enemies[t].type, ELEM_LIGHTNING);
+                if (is_weak) dmg *= 2;
+                bool just_found = weakness_discover(cs->enemies[t].type, ELEM_LIGHTNING);
+                combat_deal_damage_enemy(cs, t, dmg);
+                if (just_found) {
+                    snprintf(buf, sizeof(buf), "ZAP %s! WEAK! x2!", enemy_templates[cs->enemies[t].type].name);
+                    combat_log(cs, ">> %s WEAK TO LIGHTNING! <<", enemy_templates[cs->enemies[t].type].name);
+                } else if (is_weak) {
+                    snprintf(buf, sizeof(buf), "ZAP %s! WEAK x2!", enemy_templates[cs->enemies[t].type].name);
+                } else {
+                    snprintf(buf, sizeof(buf), "ZAP %s! STUN %dT", enemy_templates[cs->enemies[t].type].name, stun_turns);
+                }
                 combat_set_message(cs, buf);
             }
             break;
@@ -989,6 +1109,10 @@ static void combat_update(combat_state *cs) {
     if (cs->message_timer > 0) cs->message_timer--;
     if (cs->player_flash_timer > 0) cs->player_flash_timer--;
     if (cs->player_shield_flash_timer > 0) cs->player_shield_flash_timer--;
+    if (cs->info_popup_timer > 0) {
+        cs->info_popup_timer--;
+        if (cs->info_popup_timer == 0) cs->info_popup_enemy = -1;
+    }
     for (int i = 0; i < cs->enemy_count; i++)
         if (cs->enemies[i].flash_timer > 0) cs->enemies[i].flash_timer--;
 
@@ -1328,7 +1452,7 @@ static void combat_touch_began(combat_state *cs, float fx, float fy) {
         }
     }
 
-    /* Tap on enemy to target */
+    /* Tap on enemy to target + show info popup */
     if (cs->enemy_count > 0) {
         int spacing = FB_WIDTH / (cs->enemy_count + 1);
         for (int i = 0; i < cs->enemy_count; i++) {
@@ -1336,8 +1460,20 @@ static void combat_touch_began(combat_state *cs, float fx, float fy) {
             int ecx = spacing * (i + 1);
             if (fx >= ecx - 24 && fx <= ecx + 24 && fy >= 10 && fy <= 90) {
                 cs->target = i;
+                /* Toggle info popup: tap same enemy again to dismiss */
+                if (cs->info_popup_enemy == i) {
+                    cs->info_popup_enemy = -1;
+                } else {
+                    cs->info_popup_enemy = i;
+                    cs->info_popup_timer = 180; /* auto-dismiss after ~3 seconds */
+                }
                 return;
             }
+        }
+        /* Tapped elsewhere: dismiss popup */
+        if (cs->info_popup_enemy >= 0) {
+            cs->info_popup_enemy = -1;
+            return;
         }
     }
 }
@@ -1861,10 +1997,32 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
             /* Info below sprite */
             int info_y = sprite_y + spr_sz + 2;
 
-            /* Enemy name */
-            sr_draw_text_shadow(px, W, H, cx - 18, info_y,
-                                enemy_templates[e->type].name,
-                                e->alive ? white : 0xFF444444, shadow);
+            /* Enemy name + weakness indicator */
+            {
+                int etype = e->type;
+                bool wk_known = g_weakness.initialized && g_weakness.weakness_known[etype];
+                char namebuf[32];
+                if (wk_known) {
+                    /* Show element initial next to name (e.g. "LURKER [I]") */
+                    int wk_elem = g_weakness.weakness[etype];
+                    const char *elem_short[] = { "I", "A", "F", "L" };
+                    snprintf(namebuf, sizeof(namebuf), "%s [%s]",
+                             enemy_templates[etype].name, elem_short[wk_elem]);
+                } else {
+                    snprintf(namebuf, sizeof(namebuf), "%s ?",
+                             enemy_templates[etype].name);
+                }
+                sr_draw_text_shadow(px, W, H, cx - 18, info_y, namebuf,
+                                    e->alive ? white : 0xFF444444, shadow);
+                /* Draw element icon sprite if weakness known */
+                if (e->alive && wk_known) {
+                    int wk_elem = g_weakness.weakness[etype];
+                    int icon_x = cx + 20;
+                    int icon_y = info_y - 2;
+                    spr_draw_tex(px, W, H, &stextures[elem_icon_stex[wk_elem]],
+                                 icon_x, icon_y, 1);
+                }
+            }
 
             /* HP bar + distance */
             if (e->alive) {
@@ -2134,6 +2292,7 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
         } else {
             /* Highlight targeted enemy */
             int espacing = W / (combat.enemy_count + 1);
+            int elem = card_element(card);
             for (int i = 0; i < combat.enemy_count; i++) {
                 if (!combat.enemies[i].alive) continue;
                 int ecx = espacing * (i + 1);
@@ -2143,9 +2302,84 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
                 int esz = 16 * escale;
                 int esy = 10 + combat.enemies[i].distance * 6;
                 if (combat.drag_x >= ecx - esz && combat.drag_x <= ecx + esz && combat.drag_y < esy + esz + 40) {
-                    combat_draw_rect_outline(px, W, H, ecx - esz/2 - 4, esy - 4, esz + 8, esz + 50, yellow);
+                    /* Check weakness for elemental cards */
+                    bool is_weak = (elem >= 0 && g_weakness.initialized &&
+                                    g_weakness.weakness_known[combat.enemies[i].type] &&
+                                    weakness_check(combat.enemies[i].type, elem));
+                    uint32_t highlight_col = is_weak ? 0xFF00FFFF : yellow;
+                    combat_draw_rect_outline(px, W, H, ecx - esz/2 - 4, esy - 4, esz + 8, esz + 50, highlight_col);
+                    if (is_weak) {
+                        /* Show WEAKNESS in bold (double-draw for bold effect) */
+                        sr_draw_text_shadow(px, W, H, ecx - 22, esy - 18,
+                                            "WEAKNESS!", 0xFF00FFFF, shadow);
+                        sr_draw_text_shadow(px, W, H, ecx - 21, esy - 18,
+                                            "WEAKNESS!", 0xFF00FFFF, shadow);
+                        /* Show 2x damage preview */
+                        int base_dmg = (card == CARD_LIGHTNING) ? 2 : 1;
+                        char dmgbuf[16];
+                        snprintf(dmgbuf, sizeof(dmgbuf), "-%d x2!", base_dmg * 2);
+                        sr_draw_text_shadow(px, W, H, ecx - 12, esy + esz + 42,
+                                            dmgbuf, 0xFF00FFFF, shadow);
+                    }
                 }
             }
+        }
+    }
+
+    /* ── Enemy info popup (weakness details) ──────────────────── */
+    if (combat.info_popup_enemy >= 0 && combat.info_popup_enemy < combat.enemy_count
+        && combat.enemies[combat.info_popup_enemy].alive) {
+        combat_enemy *pe = &combat.enemies[combat.info_popup_enemy];
+        int etype = pe->type;
+
+        /* Popup box */
+        int pw = 120, ph = 70;
+        int ppx = (W - pw) / 2;
+        int ppy = 100;
+
+        /* Dark background */
+        combat_draw_rect(px, W, H, ppx, ppy, pw, ph, 0xEE111122);
+        combat_draw_rect_outline(px, W, H, ppx, ppy, pw, ph, 0xFFCCCCCC);
+
+        /* Enemy name */
+        sr_draw_text_shadow(px, W, H, ppx + 4, ppy + 4,
+                            enemy_templates[etype].name, white, shadow);
+
+        /* Weakness info */
+        if (g_weakness.initialized && g_weakness.weakness_known[etype]) {
+            int wk = g_weakness.weakness[etype];
+            /* Draw element icon */
+            spr_draw_tex(px, W, H, &stextures[elem_icon_stex[wk]],
+                         ppx + pw - 20, ppy + 4, 1);
+            char wbuf[32];
+            snprintf(wbuf, sizeof(wbuf), "WEAK: %s", elem_names[wk]);
+            /* Draw twice offset for bold effect */
+            sr_draw_text_shadow(px, W, H, ppx + 4, ppy + 16, wbuf, elem_colors[wk], shadow);
+            sr_draw_text_shadow(px, W, H, ppx + 5, ppy + 16, wbuf, elem_colors[wk], shadow);
+            sr_draw_text_shadow(px, W, H, ppx + 4, ppy + 28,
+                                "2x DMG!", 0xFF00FFFF, shadow);
+        } else {
+            sr_draw_text_shadow(px, W, H, ppx + 4, ppy + 16,
+                                "WEAKNESS: ???", 0xFF888888, shadow);
+            sr_draw_text_shadow(px, W, H, ppx + 4, ppy + 28,
+                                "Use elemental", 0xFF666666, shadow);
+            sr_draw_text_shadow(px, W, H, ppx + 4, ppy + 38,
+                                "cards to find!", 0xFF666666, shadow);
+        }
+
+        /* Show which elements have been tested */
+        int tx = ppx + 4;
+        int ty = ppy + 52;
+        for (int el = 0; el < ELEM_COUNT; el++) {
+            const char *eshort[] = { "I", "A", "F", "L" };
+            if (g_weakness.discovered[etype][el]) {
+                bool is_weak = (g_weakness.weakness[etype] == el);
+                uint32_t c = is_weak ? elem_colors[el] : 0xFF555555;
+                sr_draw_text_shadow(px, W, H, tx, ty, eshort[el], c, shadow);
+            } else {
+                sr_draw_text_shadow(px, W, H, tx, ty, "?", 0xFF444444, shadow);
+            }
+            tx += 14;
         }
     }
 
