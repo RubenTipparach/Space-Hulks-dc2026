@@ -1442,11 +1442,14 @@ static void combat_touch_ended(combat_state *cs, float fx, float fy) {
         for (int i = 0; i < cs->enemy_count; i++) {
             if (!cs->enemies[i].alive) continue;
             int ecx = spacing * (i + 1);
-            int escale = 3;
-            if (cs->enemies[i].distance >= 4) escale = 1;
-            else if (cs->enemies[i].distance >= 2) escale = 2;
+            int ed = cs->enemies[i].distance;
+            int escale;
+            if (ed <= 0) escale = 4;
+            else if (ed <= 2) escale = 3;
+            else if (ed <= 4) escale = 2;
+            else escale = 1;
             int esz = 16 * escale;
-            int esy = 10 + cs->enemies[i].distance * 6;
+            int esy = 10 + ed * 8;
             if (fx >= ecx - esz && fx <= ecx + esz && fy < esy + esz + 40) {
                 hit_enemy = i;
                 break;
@@ -1870,14 +1873,18 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
             combat_enemy *e = &combat.enemies[i];
             int cx = spacing * (i + 1);
 
-            /* Scale sprite by distance: dist 0 = scale 3, dist 5 = scale 1 */
-            int scale = 3;
-            if (e->distance >= 4) scale = 1;
-            else if (e->distance >= 2) scale = 2;
+            /* Scale sprite by distance: dist 0 = scale 4, dist 5 = scale 1 */
+            int scale;
+            if (e->distance <= 0) scale = 4;
+            else if (e->distance == 1) scale = 3;
+            else if (e->distance <= 2) scale = 3;
+            else if (e->distance <= 3) scale = 2;
+            else if (e->distance <= 4) scale = 2;
+            else scale = 1;
             int spr_sz = 16 * scale;
             /* Position: farther enemies drawn higher (more distant) */
             int sprite_x = cx - spr_sz / 2;
-            int sprite_y = 10 + e->distance * 6;
+            int sprite_y = 10 + e->distance * 8;
 
             if (e->alive) {
                 const uint32_t *sprite = spr_enemy_table[e->type];
@@ -1926,11 +1933,11 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
                     }
                 }
             } else {
-                int sprite_y_dead = 10 + e->distance * 6;
+                int sprite_y_dead = 10 + e->distance * 8;
                 sr_draw_text_shadow(px, W, H, cx - 12, sprite_y_dead + 12, "DEAD", 0xFF444444, shadow);
             }
 
-            /* Info below sprite */
+            /* Info below sprite — tight, just 2px gap */
             int info_y = sprite_y + spr_sz + 2;
 
             /* Enemy name */
@@ -1938,13 +1945,13 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
                                 enemy_templates[e->type].name,
                                 e->alive ? white : 0xFF444444, shadow);
 
-            /* HP bar + distance */
+            /* HP bar + attack indicator */
             if (e->alive) {
-                combat_draw_bar(px, W, H, cx - 18, info_y + 10, 36, 4,
+                combat_draw_bar(px, W, H, cx - 18, info_y + 8, 36, 3,
                                 e->hp, e->hp_max, 0xFF2222CC, 0xFF333333);
                 char hpbuf[16];
                 snprintf(hpbuf, sizeof(hpbuf), "%d/%d", e->hp, e->hp_max);
-                sr_draw_text_shadow(px, W, H, cx - 10, info_y + 16, hpbuf, gray, shadow);
+                sr_draw_text_shadow(px, W, H, cx - 10, info_y + 12, hpbuf, gray, shadow);
 
                 /* Attack damage indicator (red when in range) */
                 {
@@ -1954,19 +1961,17 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
                     uint32_t atk_color = in_range ? 0xFF4444FF : dim;
                     char atkbuf[16];
                     snprintf(atkbuf, sizeof(atkbuf), "x%d", edmg);
-                    /* Sword icon: / character as attack symbol */
-                    sr_draw_text_shadow(px, W, H, cx - 16, info_y + 26, "/", atk_color, shadow);
-                    sr_draw_text_shadow(px, W, H, cx - 10, info_y + 26, atkbuf, atk_color, shadow);
-                    /* Shield indicator if enemy has shield */
+                    sr_draw_text_shadow(px, W, H, cx - 16, info_y + 20, "/", atk_color, shadow);
+                    sr_draw_text_shadow(px, W, H, cx - 10, info_y + 20, atkbuf, atk_color, shadow);
                     if (e->shield > 0) {
                         char shbuf[8]; snprintf(shbuf, sizeof(shbuf), "[%d]", e->shield);
-                        sr_draw_text_shadow(px, W, H, cx + 6, info_y + 26, shbuf, 0xFFFFCC44, shadow);
+                        sr_draw_text_shadow(px, W, H, cx + 6, info_y + 20, shbuf, 0xFFFFCC44, shadow);
                     }
                 }
 
                 /* Status effect indicators */
                 int sx = cx - 18;
-                int sy = info_y + 36;
+                int sy = info_y + 28;
                 if (e->ice_turns > 0) {
                     char ibuf[8]; snprintf(ibuf, sizeof(ibuf), "I%d", e->ice_turns);
                     sr_draw_text_shadow(px, W, H, sx, sy, ibuf, 0xFFFFCC44, shadow);
@@ -2222,11 +2227,14 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
             for (int i = 0; i < combat.enemy_count; i++) {
                 if (!combat.enemies[i].alive) continue;
                 int ecx = espacing * (i + 1);
-                int escale = 3;
-                if (combat.enemies[i].distance >= 4) escale = 1;
-                else if (combat.enemies[i].distance >= 2) escale = 2;
+                int ed = combat.enemies[i].distance;
+                int escale;
+                if (ed <= 0) escale = 4;
+                else if (ed <= 2) escale = 3;
+                else if (ed <= 4) escale = 2;
+                else escale = 1;
                 int esz = 16 * escale;
-                int esy = 10 + combat.enemies[i].distance * 6;
+                int esy = 10 + ed * 8;
                 if (combat.drag_x >= ecx - esz && combat.drag_x <= ecx + esz && combat.drag_y < esy + esz + 40) {
                     combat_draw_rect_outline(px, W, H, ecx - esz/2 - 4, esy - 4, esz + 8, esz + 50, yellow);
                 }
