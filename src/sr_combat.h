@@ -203,6 +203,9 @@ typedef struct {
     int acid_stacks;     /* > 0: take acid_stacks dmg each turn, stackable */
     int fire_turns;      /* > 0: burning, take fire dmg each turn, can spread */
     int lightning_stun;  /* > 0: stunned, can't move or attack */
+    /* Visual animation state */
+    float visual_scale;  /* current rendered scale (lerps toward target) */
+    float wobble_phase;  /* idle wobble sine phase (radians) */
 } combat_enemy;
 
 typedef struct {
@@ -261,6 +264,12 @@ typedef struct {
     int drag_card;         /* index in hand being dragged */
     float drag_x, drag_y;  /* current drag position (framebuffer coords) */
     float drag_start_x, drag_start_y;
+
+    /* Card animation state */
+    float card_offsets[COMBAT_HAND_MAX];  /* horizontal lerp offset per card */
+    float card_lifts[COMBAT_HAND_MAX];   /* vertical lerp offset per card */
+    int prev_cursor;                     /* previous cursor for detecting changes */
+    int frame_counter;                   /* global frame counter for animations */
 
     /* Elemental state */
     int fire_atk_bonus;  /* +1 per burning enemy, boosts player attack dmg */
@@ -378,6 +387,23 @@ static void combat_generate_rewards(combat_state *cs) {
 
 static void combat_log(combat_state *cs, const char *fmt, ...); /* forward decl */
 
+/* Target scale for a given distance (6 distinct levels, 0-5) */
+static float combat_target_scale(int distance) {
+    switch (distance) {
+        case 0: return 4.0f;
+        case 1: return 3.5f;
+        case 2: return 3.0f;
+        case 3: return 2.5f;
+        case 4: return 2.0f;
+        default: return 1.5f; /* distance 5+ */
+    }
+}
+
+/* Lerp helper */
+static float combat_lerpf(float a, float b, float t) {
+    return a + (b - a) * t;
+}
+
 static void combat_init(combat_state *cs, int player_class, int floor, int cell_alien_type) {
     memset(cs, 0, sizeof(*cs));
     cs->player_class = player_class;
@@ -419,10 +445,19 @@ static void combat_init(combat_state *cs, int player_class, int floor, int cell_
         cs->enemies[i].intent = INTENT_MOVE;
         cs->enemies[i].flash_timer = 0;
         cs->enemies[i].alive = true;
+        /* Init visual animation */
+        cs->enemies[i].wobble_phase = i * 1.5f; /* stagger wobble */
+        cs->enemies[i].visual_scale = combat_target_scale(cs->enemies[i].distance);
     }
 
     cs->cursor = 0;
     cs->target = 0;
+    cs->prev_cursor = -1;
+    cs->frame_counter = 0;
+    for (int i = 0; i < COMBAT_HAND_MAX; i++) {
+        cs->card_offsets[i] = 0;
+        cs->card_lifts[i] = 0;
+    }
     cs->phase = CPHASE_DRAW;
     cs->turn = 1;
     cs->anim_timer = 30;
@@ -1041,12 +1076,49 @@ static void combat_begin_enemy_turn(combat_state *cs) {
 /* ── Update ──────────────────────────────────────────────────────── */
 
 static void combat_update(combat_state *cs) {
+    cs->frame_counter++;
+
     /* Decrement timers */
     if (cs->message_timer > 0) cs->message_timer--;
     if (cs->player_flash_timer > 0) cs->player_flash_timer--;
     if (cs->player_shield_flash_timer > 0) cs->player_shield_flash_timer--;
     for (int i = 0; i < cs->enemy_count; i++)
         if (cs->enemies[i].flash_timer > 0) cs->enemies[i].flash_timer--;
+
+    /* ── Animate enemies: lerp scale + wobble ──────────────────── */
+    for (int i = 0; i < cs->enemy_count; i++) {
+        combat_enemy *e = &cs->enemies[i];
+        if (!e->alive) continue;
+        /* Lerp visual scale toward target */
+        float target = combat_target_scale(e->distance);
+        e->visual_scale = combat_lerpf(e->visual_scale, target, 0.12f);
+        /* Idle wobble (sine wave on phase) */
+        e->wobble_phase += 0.04f;
+        if (e->wobble_phase > 6.283f) e->wobble_phase -= 6.283f;
+    }
+
+    /* ── Animate cards: lerp offsets and lifts ─────────────────── */
+    {
+        float lerp_speed = 0.18f;
+        int sel = (cs->phase == CPHASE_PLAYER_TURN) ? cs->cursor : -1;
+        for (int i = 0; i < cs->hand_count; i++) {
+            /* Target lift: selected card rises */
+            float target_lift = (i == sel) ? -20.0f : 0.0f;
+            cs->card_lifts[i] = combat_lerpf(cs->card_lifts[i], target_lift, lerp_speed);
+
+            /* Target offset: cards push apart from selected */
+            float target_off = 0.0f;
+            if (sel >= 0 && i != sel) {
+                target_off = (i < sel) ? -12.0f : 12.0f;
+            }
+            cs->card_offsets[i] = combat_lerpf(cs->card_offsets[i], target_off, lerp_speed);
+        }
+        /* Reset offsets for cards no longer in hand */
+        for (int i = cs->hand_count; i < COMBAT_HAND_MAX; i++) {
+            cs->card_offsets[i] = 0;
+            cs->card_lifts[i] = 0;
+        }
+    }
 
     if (cs->phase == CPHASE_DRAW) {
         if (cs->anim_timer > 0) {
@@ -1206,10 +1278,10 @@ static void combat_action_move_back(combat_state *cs) {
 
 static uint32_t card_fan_buf[CARD_FAN_W * CARD_FAN_H];
 
-/* Compute fan position for card i. Returns bottom-center (cx, cy) and angle. */
+/* Compute fan position for card i. Returns bottom-center (cx, cy) and angle.
+   Incorporates lerped card_offsets and card_lifts for smooth animation. */
 static void combat_card_fan_pos(const combat_state *cs, int i,
                                 float *out_cx, float *out_cy, float *out_angle) {
-    bool is_sel = (i == cs->cursor && cs->phase == CPHASE_PLAYER_TURN);
     int n = cs->hand_count;
     float mid = (n > 1) ? (n - 1) * 0.5f : 0;
     float t = (n > 1) ? (i - mid) / mid : 0;  /* -1 to 1 */
@@ -1219,9 +1291,14 @@ static void combat_card_fan_pos(const combat_state *cs, int i,
     float total = (n - 1) * spacing;
     float cx = (FB_WIDTH - total) * 0.5f + i * spacing;
 
+    /* Apply lerped horizontal offset */
+    if (i < COMBAT_HAND_MAX) cx += cs->card_offsets[i];
+
     /* Vertical: bottom of card near screen bottom, edges dip lower */
     float cy = (float)FB_HEIGHT + 4.0f + t * t * 10.0f;
-    if (is_sel) cy -= 16;
+
+    /* Apply lerped vertical lift (replaces old instant is_sel offset) */
+    if (i < COMBAT_HAND_MAX) cy += cs->card_lifts[i];
 
     /* Fan angle: edge cards tilt outward */
     float angle = t * 0.10f;
@@ -1442,14 +1519,9 @@ static void combat_touch_ended(combat_state *cs, float fx, float fy) {
         for (int i = 0; i < cs->enemy_count; i++) {
             if (!cs->enemies[i].alive) continue;
             int ecx = spacing * (i + 1);
-            int ed = cs->enemies[i].distance;
-            int escale;
-            if (ed <= 0) escale = 4;
-            else if (ed <= 2) escale = 3;
-            else if (ed <= 4) escale = 2;
-            else escale = 1;
-            int esz = 16 * escale;
-            int esy = 10 + ed * 8;
+            float efs = cs->enemies[i].visual_scale;
+            int esz = (int)(16.0f * efs + 0.5f);
+            int esy = 10 + cs->enemies[i].distance * 8;
             if (fx >= ecx - esz && fx <= ecx + esz && fy < esy + esz + 40) {
                 hit_enemy = i;
                 break;
@@ -1873,34 +1945,31 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
             combat_enemy *e = &combat.enemies[i];
             int cx = spacing * (i + 1);
 
-            /* Scale sprite by distance: dist 0 = scale 4, dist 5 = scale 1 */
-            int scale;
-            if (e->distance <= 0) scale = 4;
-            else if (e->distance == 1) scale = 3;
-            else if (e->distance <= 2) scale = 3;
-            else if (e->distance <= 3) scale = 2;
-            else if (e->distance <= 4) scale = 2;
-            else scale = 1;
-            int spr_sz = 16 * scale;
+            /* Use lerped float scale for smooth approach animation */
+            float fscale = e->visual_scale;
+            int spr_sz = (int)(16.0f * fscale + 0.5f);
             /* Position: farther enemies drawn higher (more distant) */
             int sprite_x = cx - spr_sz / 2;
             int sprite_y = 10 + e->distance * 8;
 
+            /* Idle wobble: gentle sway left-right */
+            int wobble_x = (int)(sinf(e->wobble_phase) * (2.0f + fscale * 0.5f));
+
             if (e->alive) {
                 const uint32_t *sprite = spr_enemy_table[e->type];
 
-                /* Wiggle offset during this enemy's attack animation */
-                int wiggle_x = 0;
+                /* Attack wiggle overrides idle wobble */
+                int anim_x = wobble_x;
                 if (combat.phase == CPHASE_ENEMY_TURN &&
                     combat.enemy_atk_idx == i &&
                     combat.enemy_atk_timer > ENEMY_ATK_HIT_FRAME) {
-                    wiggle_x = ((combat.enemy_atk_timer % 4) < 2) ? 3 : -3;
+                    anim_x = ((combat.enemy_atk_timer % 4) < 2) ? 3 : -3;
                 }
 
                 if (e->flash_timer > 0 && (e->flash_timer & 2))
-                    spr_draw_flash(px, W, H, sprite, sprite_x + wiggle_x, sprite_y, scale);
+                    spr_draw_flash_f(px, W, H, sprite, sprite_x + anim_x, sprite_y, fscale);
                 else
-                    spr_draw(px, W, H, sprite, sprite_x + wiggle_x, sprite_y, scale);
+                    spr_draw_f(px, W, H, sprite, sprite_x + anim_x, sprite_y, fscale);
 
                 /* Target highlight (yellow border around selected enemy) */
                 if (i == combat.target && combat.phase == CPHASE_PLAYER_TURN) {
@@ -1934,6 +2003,7 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
                 }
             } else {
                 int sprite_y_dead = 10 + e->distance * 8;
+                (void)wobble_x; /* unused for dead enemies */
                 sr_draw_text_shadow(px, W, H, cx - 12, sprite_y_dead + 12, "DEAD", 0xFF444444, shadow);
             }
 
@@ -2227,14 +2297,9 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
             for (int i = 0; i < combat.enemy_count; i++) {
                 if (!combat.enemies[i].alive) continue;
                 int ecx = espacing * (i + 1);
-                int ed = combat.enemies[i].distance;
-                int escale;
-                if (ed <= 0) escale = 4;
-                else if (ed <= 2) escale = 3;
-                else if (ed <= 4) escale = 2;
-                else escale = 1;
-                int esz = 16 * escale;
-                int esy = 10 + ed * 8;
+                float efs = combat.enemies[i].visual_scale;
+                int esz = (int)(16.0f * efs + 0.5f);
+                int esy = 10 + combat.enemies[i].distance * 8;
                 if (combat.drag_x >= ecx - esz && combat.drag_x <= ecx + esz && combat.drag_y < esy + esz + 40) {
                     combat_draw_rect_outline(px, W, H, ecx - esz/2 - 4, esy - 4, esz + 8, esz + 50, yellow);
                 }
