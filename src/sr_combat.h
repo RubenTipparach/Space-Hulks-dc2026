@@ -2001,26 +2001,19 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
             {
                 int etype = e->type;
                 bool wk_known = g_weakness.initialized && g_weakness.weakness_known[etype];
-                char namebuf[32];
-                if (wk_known) {
-                    /* Show element initial next to name (e.g. "LURKER [I]") */
-                    int wk_elem = g_weakness.weakness[etype];
-                    const char *elem_short[] = { "I", "A", "F", "L" };
-                    snprintf(namebuf, sizeof(namebuf), "%s [%s]",
-                             enemy_templates[etype].name, elem_short[wk_elem]);
-                } else {
-                    snprintf(namebuf, sizeof(namebuf), "%s ?",
-                             enemy_templates[etype].name);
-                }
-                sr_draw_text_shadow(px, W, H, cx - 18, info_y, namebuf,
+                const char *ename = enemy_templates[etype].name;
+                /* Draw name */
+                sr_draw_text_shadow(px, W, H, cx - 18, info_y, ename,
                                     e->alive ? white : 0xFF444444, shadow);
-                /* Draw element icon sprite if weakness known */
+                /* After name: show element icon if known, "?" if not */
+                int name_end_x = cx - 18 + (int)strlen(ename) * 6 + 2;
                 if (e->alive && wk_known) {
                     int wk_elem = g_weakness.weakness[etype];
-                    int icon_x = cx + 20;
-                    int icon_y = info_y - 2;
                     spr_draw_tex(px, W, H, &stextures[elem_icon_stex[wk_elem]],
-                                 icon_x, icon_y, 1);
+                                 name_end_x, info_y - 3, 1);
+                } else if (e->alive) {
+                    sr_draw_text_shadow(px, W, H, name_end_x, info_y,
+                                        "?", 0xFF888888, shadow);
                 }
             }
 
