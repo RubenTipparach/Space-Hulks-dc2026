@@ -61,13 +61,26 @@ static int    screenshot_counter;
 
 /* ── App state ─────────────────────────────────────────────────── */
 
-enum { STATE_TITLE, STATE_CLASS_SELECT, STATE_RUNNING, STATE_COMBAT,
+enum { STATE_TITLE, STATE_CLASS_SELECT, STATE_INTRO, STATE_RUNNING, STATE_COMBAT,
        STATE_SHIP_HUB, STATE_SHOP, STATE_DIALOG, STATE_STARMAP };
 static int app_state = STATE_TITLE;
 static int selected_class = 0;  /* 0=scout, 1=marine */
 static int class_select_cursor = 0;
 static int title_cursor = 0;
 static bool save_exists = false;
+
+/* ── Mission flow tracking ─────────────────────────────────────── */
+
+static bool mission_briefed = false;     /* talked to captain for briefing */
+static bool mission_medbay_done = false; /* cleared by Dr Vasquez */
+static bool mission_armory_done = false; /* visited Chen's armory */
+static bool mission_first_done = false;  /* completed first derelict mission */
+static int  captain_briefing_page = 0;   /* current page in multi-page briefing */
+
+/* Intro teletype state */
+static int  intro_char_idx = 0;   /* total chars revealed so far */
+static int  intro_timer = 0;      /* frame counter for typing speed */
+static bool intro_done = false;   /* all text revealed */
 
 /* ── Player progression / currency ─────────────────────────────── */
 

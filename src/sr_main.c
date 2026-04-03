@@ -101,6 +101,7 @@ static bool ui_row_hover(int bx, int by, int bw, int bh, bool *out_hovered) {
 #include "sr_json.h"
 #include "sr_ship.h"
 #include "sr_level_loader.h"
+#include "sr_dialog_data.h"
 #include "sr_scene_ship_hub.h"
 #include "sr_menu.h"
 static void handle_screen_tap(float sx, float sy); /* forward decl */
@@ -321,6 +322,12 @@ static bool game_load(void) {
         app_state = STATE_RUNNING;
     }
 
+    /* Loading a save means player is past the intro flow */
+    mission_briefed = true;
+    mission_medbay_done = true;
+    mission_armory_done = true;
+    mission_first_done = true;
+
     return true;
 }
 
@@ -372,6 +379,88 @@ static void draw_title_screen(sr_framebuffer *fb_ptr) {
         sr_draw_text_shadow(px, W, H, bx + 26, by + 7, "CONTINUE", col, shadow);
         if (!save_exists)
             sr_draw_text_shadow(px, W, H, bx + 12, by + bh + 4, "NO SAVE FOUND", 0xFF444444, shadow);
+    }
+}
+
+/* ── Intro teletype screen ──────────────────────────────────────── */
+
+static void draw_intro_screen(sr_framebuffer *fb_ptr) {
+    int W = fb_ptr->width, H = fb_ptr->height;
+    uint32_t *px = fb_ptr->color;
+    uint32_t shadow = 0xFF000000;
+    uint32_t green = 0xFF44CC44;
+    uint32_t dim_green = 0xFF227722;
+
+    for (int i = 0; i < W * H; i++) px[i] = 0xFF0A0A0A;
+
+    if (!g_dlgd.loaded) return;
+
+    /* Advance teletype: 2 chars per frame */
+    intro_timer++;
+    if (!intro_done) {
+        intro_char_idx = intro_timer * 2;
+        /* Count total chars across all lines */
+        int total = 0;
+        for (int i = 0; i < g_dlgd.intro_count; i++)
+            total += (int)strlen(g_dlgd.intro_lines[i]) + 1; /* +1 for newline */
+        if (intro_char_idx >= total) {
+            intro_char_idx = total;
+            intro_done = true;
+        }
+    }
+
+    /* Draw revealed text */
+    int chars_left = intro_char_idx;
+    int y = 20;
+    for (int i = 0; i < g_dlgd.intro_count && chars_left > 0; i++) {
+        const char *line = g_dlgd.intro_lines[i];
+        int llen = (int)strlen(line);
+
+        /* Blank line marker */
+        if (line[0] == '_' && llen == 1) {
+            y += 10;
+            chars_left -= 2; /* consume the line + newline */
+            continue;
+        }
+
+        /* Build partial string if typing through this line */
+        char partial[DLGD_LINE_LEN];
+        int show = (chars_left >= llen) ? llen : chars_left;
+        memcpy(partial, line, show);
+        partial[show] = '\0';
+
+        sr_draw_text_shadow(px, W, H, 30, y, partial, green, shadow);
+        chars_left -= llen + 1;
+        y += 10;
+    }
+
+    /* Blinking cursor */
+    if (!intro_done && (intro_timer / 15) % 2 == 0) {
+        /* Find cursor position */
+        int cx = 30, cy = 20;
+        int remain = intro_char_idx;
+        for (int i = 0; i < g_dlgd.intro_count && remain > 0; i++) {
+            const char *line = g_dlgd.intro_lines[i];
+            int llen = (int)strlen(line);
+            if (line[0] == '_' && llen == 1) {
+                cy += 10; remain -= 2; continue;
+            }
+            int show = (remain >= llen) ? llen : remain;
+            cx = 30 + show * 6;
+            remain -= llen + 1;
+            if (remain >= 0) { cy += 10; cx = 30; }
+        }
+        sr_draw_text_shadow(px, W, H, cx, cy, "_", green, shadow);
+    }
+
+    /* Skip / continue prompt */
+    if (intro_done) {
+        uint32_t blink = ((intro_timer / 30) % 2 == 0) ? green : dim_green;
+        sr_draw_text_shadow(px, W, H, W/2 - 60, H - 20,
+                            "PRESS SPACE TO CONTINUE", blink, shadow);
+    } else {
+        sr_draw_text_shadow(px, W, H, W - 90, H - 12,
+                            "SPACE TO SKIP", dim_green, shadow);
     }
 }
 
@@ -1090,6 +1179,7 @@ static void init(void) {
 
     dng_load_config();
     hub_load_config();
+    dlgd_load();
     sr_audio_init();
 
 #ifdef _WIN32
@@ -1133,6 +1223,8 @@ static void frame(void) {
 
     if (app_state == STATE_TITLE) {
         draw_title_screen(&fb);
+    } else if (app_state == STATE_INTRO) {
+        draw_intro_screen(&fb);
     } else if (app_state == STATE_CLASS_SELECT) {
         draw_class_select(&fb);
     } else if (app_state == STATE_COMBAT) {
@@ -1487,13 +1579,34 @@ static void handle_screen_tap(float sx, float sy) {
                     weakness_init((uint32_t)(time(NULL) ^ (selected_class * 31337)));
                     player_scrap = 30;
                     player_sector = 0;
-                    hub_generate(&g_hub);
-                    app_state = STATE_SHIP_HUB;
+                    /* Reset mission flow state for new game */
+                    mission_briefed = false;
+                    mission_medbay_done = false;
+                    mission_armory_done = false;
+                    mission_first_done = false;
+                    captain_briefing_page = 0;
+                    /* Start intro teletype */
+                    intro_char_idx = 0;
+                    intro_timer = 0;
+                    intro_done = false;
+                    app_state = STATE_INTRO;
                 } else {
                     class_select_cursor = ci;
                 }
                 return;
             }
+        }
+        return;
+    }
+
+    if (app_state == STATE_INTRO) {
+        /* Click to skip or advance */
+        if (intro_done) {
+            hub_generate(&g_hub);
+            app_state = STATE_SHIP_HUB;
+        } else {
+            intro_done = true;
+            intro_char_idx = 9999;
         }
         return;
     }
@@ -1539,14 +1652,40 @@ static void handle_screen_tap(float sx, float sy) {
             g_dialog.active = false;
             if (action != DIALOG_ACTION_NONE) {
                 switch (action) {
+                    case DIALOG_ACTION_BRIEFING_NEXT: {
+                        captain_briefing_page++;
+                        if (captain_briefing_page < g_dlgd.captain_briefing_pages) {
+                            /* Show next briefing page */
+                            memset(&g_dialog, 0, sizeof(g_dialog));
+                            snprintf(g_dialog.speaker, sizeof(g_dialog.speaker), "CPT HARDEN");
+                            dialog_from_block(&g_dlgd.captain_briefing[captain_briefing_page]);
+                            if (captain_briefing_page < g_dlgd.captain_briefing_pages - 1)
+                                g_dialog.pending_action = DIALOG_ACTION_BRIEFING_NEXT;
+                            else {
+                                g_dialog.pending_action = DIALOG_ACTION_NONE;
+                                mission_briefed = true;
+                            }
+                            g_dialog.active = true;
+                        } else {
+                            mission_briefed = true;
+                        }
+                        break;
+                    }
                     case DIALOG_ACTION_STARMAP:
-                        dng_rng_seed((uint32_t)(player_sector * 1337 + 42));
-                        starmap_generate(&g_starmap, player_sector);
-                        app_state = STATE_STARMAP;
+                        if (!mission_first_done) {
+                            /* Star map locked before first mission */
+                            snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "INVESTIGATE THE DERELICT FIRST");
+                            g_hub.hud_msg_timer = 90;
+                        } else {
+                            dng_rng_seed((uint32_t)(player_sector * 1337 + 42));
+                            starmap_generate(&g_starmap, player_sector);
+                            app_state = STATE_STARMAP;
+                        }
                         break;
                     case DIALOG_ACTION_SHOP:
                         dng_rng_seed((uint32_t)(player_sector * 7777 + 123));
                         shop_generate(&g_shop);
+                        if (!mission_armory_done) mission_armory_done = true;
                         app_state = STATE_SHOP;
                         break;
                     case DIALOG_ACTION_TELEPORT:
@@ -1555,22 +1694,31 @@ static void handle_screen_tap(float sx, float sy) {
                         break;
                     case DIALOG_ACTION_TELEPORT_GO:
                         if (g_hub.mission_available) {
-                            dng_game_init(&dng_state);
+                            { int sw, sh; game_ship_size(player_sector, &sw, &sh);
+                            dng_game_init_sized(&dng_state, sw, sh); }
                             game_init_ship();
                             dng_initialized = true;
                             last_player_gx = dng_state.player.gx;
                             last_player_gy = dng_state.player.gy;
                             g_hub.mission_available = false;
+                            if (!mission_first_done) mission_first_done = true;
                             app_state = STATE_RUNNING;
                         }
                         break;
                     case DIALOG_ACTION_HEAL:
-                        if (g_player.hp < g_player.hp_max && player_scrap >= 10) {
+                        if (!mission_medbay_done && mission_briefed && !mission_first_done) {
+                            /* First visit during prep: free heal + check off objective */
+                            g_player.hp = g_player.hp_max;
+                            mission_medbay_done = true;
+                            snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "VITALS LOGGED. YOU'RE CLEAR.");
+                            g_hub.hud_msg_timer = 90;
+                        } else if (g_player.hp < g_player.hp_max && player_scrap >= 10) {
                             player_scrap -= 10;
                             g_player.hp = g_player.hp_max;
                             snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "FULLY HEALED!");
                             g_hub.hud_msg_timer = 60;
                         } else if (g_player.hp >= g_player.hp_max) {
+                            if (!mission_medbay_done && mission_briefed) mission_medbay_done = true;
                             snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "ALREADY AT FULL HP");
                             g_hub.hud_msg_timer = 60;
                         } else {
@@ -1775,12 +1923,34 @@ static void event(const sapp_event *ev) {
             case SAPP_KEYCODE_SPACE:
                 selected_class = class_select_cursor;
                 player_persist_init(selected_class);
-                player_scrap = 30; /* starting scrap */
+                weakness_init((uint32_t)(time(NULL) ^ (selected_class * 31337)));
+                player_scrap = 30;
                 player_sector = 0;
-                hub_generate(&g_hub);
-                app_state = STATE_SHIP_HUB;
+                mission_briefed = false;
+                mission_medbay_done = false;
+                mission_armory_done = false;
+                mission_first_done = false;
+                captain_briefing_page = 0;
+                intro_char_idx = 0;
+                intro_timer = 0;
+                intro_done = false;
+                app_state = STATE_INTRO;
                 break;
             default: break;
+        }
+        return;
+    }
+
+    /* ── Intro teletype ─────────────────────────────────────── */
+    if (app_state == STATE_INTRO) {
+        if (ev->key_code == SAPP_KEYCODE_SPACE || ev->key_code == SAPP_KEYCODE_ENTER) {
+            if (intro_done) {
+                hub_generate(&g_hub);
+                app_state = STATE_SHIP_HUB;
+            } else {
+                intro_done = true;
+                intro_char_idx = 9999;
+            }
         }
         return;
     }
@@ -1822,12 +1992,14 @@ static void event(const sapp_event *ev) {
                     switch (action) {
                         case DIALOG_ACTION_TELEPORT_GO:
                             if (g_hub.mission_available) {
-                                dng_game_init(&dng_state);
+                                { int sw, sh; game_ship_size(player_sector, &sw, &sh);
+                                dng_game_init_sized(&dng_state, sw, sh); }
                                 game_init_ship();
                                 dng_initialized = true;
                                 last_player_gx = dng_state.player.gx;
                                 last_player_gy = dng_state.player.gy;
                                 g_hub.mission_available = false;
+                                if (!mission_first_done) mission_first_done = true;
                                 app_state = STATE_RUNNING;
                             }
                             break;
@@ -1844,14 +2016,38 @@ static void event(const sapp_event *ev) {
                 /* Trigger pending action on dismiss (not on ESC) */
                 if (ev->key_code != SAPP_KEYCODE_ESCAPE && action != DIALOG_ACTION_NONE) {
                     switch (action) {
+                        case DIALOG_ACTION_BRIEFING_NEXT: {
+                            captain_briefing_page++;
+                            if (captain_briefing_page < g_dlgd.captain_briefing_pages) {
+                                memset(&g_dialog, 0, sizeof(g_dialog));
+                                snprintf(g_dialog.speaker, sizeof(g_dialog.speaker), "CPT HARDEN");
+                                dialog_from_block(&g_dlgd.captain_briefing[captain_briefing_page]);
+                                if (captain_briefing_page < g_dlgd.captain_briefing_pages - 1)
+                                    g_dialog.pending_action = DIALOG_ACTION_BRIEFING_NEXT;
+                                else {
+                                    g_dialog.pending_action = DIALOG_ACTION_NONE;
+                                    mission_briefed = true;
+                                }
+                                g_dialog.active = true;
+                            } else {
+                                mission_briefed = true;
+                            }
+                            break;
+                        }
                         case DIALOG_ACTION_STARMAP:
-                            dng_rng_seed((uint32_t)(player_sector * 1337 + 42));
-                            starmap_generate(&g_starmap, player_sector);
-                            app_state = STATE_STARMAP;
+                            if (!mission_first_done) {
+                                snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "INVESTIGATE THE DERELICT FIRST");
+                                g_hub.hud_msg_timer = 90;
+                            } else {
+                                dng_rng_seed((uint32_t)(player_sector * 1337 + 42));
+                                starmap_generate(&g_starmap, player_sector);
+                                app_state = STATE_STARMAP;
+                            }
                             break;
                         case DIALOG_ACTION_SHOP:
                             dng_rng_seed((uint32_t)(player_sector * 7777 + 123));
                             shop_generate(&g_shop);
+                            if (!mission_armory_done) mission_armory_done = true;
                             app_state = STATE_SHOP;
                             break;
                         case DIALOG_ACTION_TELEPORT:
@@ -1860,22 +2056,30 @@ static void event(const sapp_event *ev) {
                             break;
                         case DIALOG_ACTION_TELEPORT_GO:
                             if (g_hub.mission_available) {
-                                dng_game_init(&dng_state);
+                                { int sw, sh; game_ship_size(player_sector, &sw, &sh);
+                                dng_game_init_sized(&dng_state, sw, sh); }
                                 game_init_ship();
                                 dng_initialized = true;
                                 last_player_gx = dng_state.player.gx;
                                 last_player_gy = dng_state.player.gy;
                                 g_hub.mission_available = false;
+                                if (!mission_first_done) mission_first_done = true;
                                 app_state = STATE_RUNNING;
                             }
                             break;
                         case DIALOG_ACTION_HEAL:
-                            if (g_player.hp < g_player.hp_max && player_scrap >= 10) {
+                            if (!mission_medbay_done && mission_briefed && !mission_first_done) {
+                                g_player.hp = g_player.hp_max;
+                                mission_medbay_done = true;
+                                snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "VITALS LOGGED. YOU'RE CLEAR.");
+                                g_hub.hud_msg_timer = 90;
+                            } else if (g_player.hp < g_player.hp_max && player_scrap >= 10) {
                                 player_scrap -= 10;
                                 g_player.hp = g_player.hp_max;
                                 snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "FULLY HEALED!");
                                 g_hub.hud_msg_timer = 60;
                             } else if (g_player.hp >= g_player.hp_max) {
+                                if (!mission_medbay_done && mission_briefed) mission_medbay_done = true;
                                 snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "ALREADY AT FULL HP");
                                 g_hub.hud_msg_timer = 60;
                             } else {

@@ -138,6 +138,7 @@ enum {
     DIALOG_ACTION_TELEPORT,       /* opens confirm prompt */
     DIALOG_ACTION_TELEPORT_GO,    /* confirmed — actually teleport */
     DIALOG_ACTION_HEAL,
+    DIALOG_ACTION_BRIEFING_NEXT,  /* captain briefing: advance to next page */
 };
 
 typedef struct {
@@ -490,19 +491,12 @@ static int hub_room_at_pos(int gx, int gy) {
 
 /* ── Dialog system ──────────────────────────────────────────────── */
 
-/* Default crew dialogs (non-captain) */
-static const char *crew_dialogs[][3] = {
-    /* 0: CPT HARDEN — overridden dynamically below */
-    { "", "", "" },
-    /* 1: SGT REYES (teleporter) */
-    { "TELEPORTER IS PRIMED.", "STEP ON THE PAD WHEN", "YOU'RE READY FOR ACTION." },
-    /* 2: QM CHEN (shop) */
-    { "GOT SOME NEW GEAR.", "TAKE A LOOK AT WHAT", "I'VE SCROUNGED UP." },
-    /* 3: PVT KOWALSKI (quarters) */
-    { "ANOTHER DAY IN SPACE.", "AT LEAST WE'RE STILL", "BREATHING, RIGHT?" },
-    /* 4: DR VASQUEZ (medbay) */
-    { "YOU LOOK ROUGHED UP.", "LET ME PATCH YOU UP", "BEFORE YOUR NEXT RUN." },
-};
+/* Helper: fill dialog from a dlgd_block */
+static void dialog_from_block(const dlgd_block *blk) {
+    g_dialog.line_count = blk->count;
+    for (int i = 0; i < blk->count && i < DIALOG_MAX_LINES; i++)
+        snprintf(g_dialog.lines[i], DIALOG_LINE_LEN, "%s", blk->lines[i]);
+}
 
 static void hub_start_dialog(int npc_idx, int action) {
     if (npc_idx < 0 || npc_idx >= g_hub.crew_count) return;
@@ -513,25 +507,85 @@ static void hub_start_dialog(int npc_idx, int action) {
     int did = npc->dialog_id;
     if (did < 0 || did > 4) did = 0;
 
-    /* Captain has dynamic dialog based on ship status */
+    /* Captain (dialog_id 0) — complex state machine */
     if (did == 0) {
-        if (g_hub.mission_available) {
-            /* Under attack */
-            snprintf(g_dialog.lines[0], DIALOG_LINE_LEN, "WE'RE UNDER ATTACK!");
-            snprintf(g_dialog.lines[1], DIALOG_LINE_LEN, "GET TO THE TELEPORTER");
-            snprintf(g_dialog.lines[2], DIALOG_LINE_LEN, "AND BOARD THAT SHIP!");
-            g_dialog.line_count = 3;
+        if (!mission_first_done && !mission_briefed) {
+            /* First time: start multi-page briefing */
+            captain_briefing_page = 0;
+            if (g_dlgd.loaded && g_dlgd.captain_briefing_pages > 0) {
+                dialog_from_block(&g_dlgd.captain_briefing[0]);
+                if (g_dlgd.captain_briefing_pages > 1)
+                    action = DIALOG_ACTION_BRIEFING_NEXT;
+                else {
+                    mission_briefed = true;
+                    action = DIALOG_ACTION_NONE;
+                }
+            }
+        } else if (!mission_first_done) {
+            /* Already briefed but haven't done first mission */
+            if (g_dlgd.loaded)
+                dialog_from_block(&g_dlgd.captain_pre_mission);
+            action = DIALOG_ACTION_NONE;
+        } else if (g_hub.mission_available) {
+            /* Post-first-mission, under attack */
+            if (g_dlgd.loaded)
+                dialog_from_block(&g_dlgd.captain_under_attack);
         } else {
-            /* Enemy neutralized — ready to jump */
-            snprintf(g_dialog.lines[0], DIALOG_LINE_LEN, "ENEMY NEUTRALIZED.");
-            snprintf(g_dialog.lines[1], DIALOG_LINE_LEN, "WE'RE READY TO JUMP.");
-            snprintf(g_dialog.lines[2], DIALOG_LINE_LEN, "HEAD TO THE STAR MAP.");
-            g_dialog.line_count = 3;
+            /* Post-first-mission, neutralized — ready to jump */
+            if (g_dlgd.loaded)
+                dialog_from_block(&g_dlgd.captain_post_mission);
+            action = DIALOG_ACTION_STARMAP;
         }
-    } else {
-        g_dialog.line_count = 3;
-        for (int i = 0; i < 3; i++)
-            snprintf(g_dialog.lines[i], DIALOG_LINE_LEN, "%s", crew_dialogs[did][i]);
+    }
+    /* SGT REYES (dialog_id 1) — teleporter */
+    else if (did == 1) {
+        if (!mission_first_done && !mission_briefed) {
+            if (g_dlgd.loaded) dialog_from_block(&g_dlgd.crew_init[1]);
+            action = DIALOG_ACTION_NONE;
+        } else if (!mission_first_done && mission_briefed) {
+            if (mission_medbay_done && mission_armory_done) {
+                if (g_dlgd.loaded) dialog_from_block(&g_dlgd.post_reyes_ready);
+                action = DIALOG_ACTION_TELEPORT;
+            } else {
+                if (g_dlgd.loaded) dialog_from_block(&g_dlgd.post_reyes_blocked);
+                action = DIALOG_ACTION_NONE;
+            }
+        } else {
+            if (g_dlgd.loaded) dialog_from_block(&g_dlgd.crew_default[1]);
+        }
+    }
+    /* QM CHEN (dialog_id 2) — armory */
+    else if (did == 2) {
+        if (!mission_first_done && !mission_briefed) {
+            if (g_dlgd.loaded) dialog_from_block(&g_dlgd.crew_init[2]);
+            action = DIALOG_ACTION_NONE;
+        } else if (!mission_first_done && mission_briefed && !mission_armory_done) {
+            if (g_dlgd.loaded) dialog_from_block(&g_dlgd.post_chen);
+            action = DIALOG_ACTION_SHOP;
+        } else {
+            if (g_dlgd.loaded) dialog_from_block(&g_dlgd.crew_default[2]);
+        }
+    }
+    /* PVT KOWALSKI (dialog_id 3) — quarters */
+    else if (did == 3) {
+        if (!mission_first_done && !mission_briefed) {
+            if (g_dlgd.loaded) dialog_from_block(&g_dlgd.crew_init[3]);
+        } else {
+            if (g_dlgd.loaded) dialog_from_block(&g_dlgd.crew_default[3]);
+        }
+        action = DIALOG_ACTION_NONE;
+    }
+    /* DR VASQUEZ (dialog_id 4) — medbay */
+    else if (did == 4) {
+        if (!mission_first_done && !mission_briefed) {
+            if (g_dlgd.loaded) dialog_from_block(&g_dlgd.crew_init[4]);
+            action = DIALOG_ACTION_NONE;
+        } else if (!mission_first_done && mission_briefed && !mission_medbay_done) {
+            if (g_dlgd.loaded) dialog_from_block(&g_dlgd.post_vasquez);
+            action = DIALOG_ACTION_HEAL;
+        } else {
+            if (g_dlgd.loaded) dialog_from_block(&g_dlgd.crew_default[4]);
+        }
     }
 
     g_dialog.pending_action = action;
@@ -1485,7 +1539,7 @@ static void hub_draw_hud(uint32_t *px, int W, int H) {
     uint32_t shadow = 0xFF000000;
 
     /* Ship name */
-    sr_draw_text_shadow(px, W, H, 4, 4, "ISS ENDURANCE", 0xFF22CCEE, shadow);
+    sr_draw_text_shadow(px, W, H, 4, 4, "ISS ENDEAVOR", 0xFF22CCEE, shadow);
 
     /* Player HP */
     char hp_buf[32];
@@ -1501,6 +1555,22 @@ static void hub_draw_hud(uint32_t *px, int W, int H) {
     char sec_buf[32];
     snprintf(sec_buf, sizeof(sec_buf), "SECTOR %d", player_sector + 1);
     sr_draw_text_shadow(px, W, H, W - 60, 4, sec_buf, 0xFF888888, shadow);
+
+    /* Mission objectives (only during initial prep flow) */
+    if (mission_briefed && !mission_first_done && g_dlgd.loaded) {
+        int oy = 40;
+        sr_draw_text_shadow(px, W, H, 4, oy, "OBJECTIVES:", 0xFFCC8822, shadow);
+        oy += 10;
+        bool obj_done[3] = { mission_medbay_done, mission_armory_done, false };
+        for (int i = 0; i < g_dlgd.objective_count && i < 3; i++) {
+            char obj_buf[DLGD_LINE_LEN + 8];
+            bool done = obj_done[i];
+            snprintf(obj_buf, sizeof(obj_buf), "[%c] %s", done ? 'X' : ' ', g_dlgd.objectives[i]);
+            uint32_t col = done ? 0xFF448844 : 0xFFCCCCCC;
+            sr_draw_text_shadow(px, W, H, 8, oy, obj_buf, col, shadow);
+            oy += 10;
+        }
+    }
 
     /* Deck button (clickable) */
     char deck_buf[32];
@@ -1545,10 +1615,14 @@ static void hub_draw_hud(uint32_t *px, int W, int H) {
         const char *btn_label = NULL;
         uint32_t rc = hub_room_colors[rt];
         int action = DIALOG_ACTION_NONE;
-        if (rt == HUB_ROOM_TELEPORTER && g_hub.mission_available) {
-            btn_label = "TELEPORTER"; action = DIALOG_ACTION_TELEPORT;
+        if (rt == HUB_ROOM_TELEPORTER) {
+            btn_label = "TELEPORTER";
+            /* Only allow teleport if mission available AND prep done (or post-first-mission) */
+            if (g_hub.mission_available && (mission_first_done || (mission_medbay_done && mission_armory_done)))
+                action = DIALOG_ACTION_TELEPORT;
         } else if (rt == HUB_ROOM_BRIDGE) {
-            btn_label = "BRIDGE"; action = DIALOG_ACTION_STARMAP;
+            btn_label = "BRIDGE";
+            action = DIALOG_ACTION_STARMAP;
         } else if (rt == HUB_ROOM_SHOP) {
             btn_label = "ARMORY"; action = DIALOG_ACTION_SHOP;
         } else if (rt == HUB_ROOM_MEDBAY) {

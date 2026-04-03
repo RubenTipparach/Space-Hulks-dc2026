@@ -1,0 +1,159 @@
+# Dialog configuration for Space Hulks
+# All dialog text is loaded at startup and referenced by key.
+# Lines are indexed: key.line0, key.line1, etc.
+# Max 4 lines per dialog, 47 chars per line.
+
+# ── Opening teletype sequence ──────────────────────────────────
+
+intro:
+  line0: TERRAN SCIENCE VESSEL "ENDEAVOR"
+  line1: MISSION LOG - DAY 1
+  line2: _
+  line3: DRAKE'S VOID. A REGION OF SPACE DISCOVERED
+  line4: ONLY THREE CYCLES AGO. RICH IN RESOURCES.
+  line5: DOZENS OF COLONIES ESTABLISHED WITHIN MONTHS.
+  line6: _
+  line7: THEN THE SPORES CAME.
+  line8: _
+  line9: A DRAGON-LIKE PARASITE. ORIGIN UNKNOWN.
+  line10: IT INFECTS ENTIRE WORLDS - TWISTING LIFE
+  line11: INTO SOMETHING HOSTILE. SOMETHING HUNGRY.
+  line12: _
+  line13: COLONY AFTER COLONY HAS GONE DARK.
+  line14: IF THE SPORES REACH THE OUTER CLUSTERS
+  line15: CONTAINMENT WILL BE IMPOSSIBLE.
+  line16: _
+  line17: THE ENDEAVOR HAS BEEN DISPATCHED TO OBTAIN
+  line18: BIOLOGICAL SAMPLES FROM INFECTED VESSELS.
+  line19: OUR MISSION - DEVELOP A VACCINE BEFORE
+  line20: DRAKE'S VOID CONSUMES EVERYTHING.
+  line21: _
+  line22: WE HAVE ARRIVED AT OUR FIRST TARGET.
+  line23: A DERELICT SHIP. DRIFTING AND SILENT.
+  line24: _
+  line25: REPORT TO YOUR CREW FOR BRIEFING.
+  count: 26
+
+# ── Crew initial dialogs (new game, before captain briefing) ───
+
+crew_init:
+  kowalski:
+    line0: FIRST TIME IN DRAKE'S VOID.
+    line1: PLACE GIVES ME THE CREEPS.
+    line2: YOU SHOULD TALK TO THE CAPTAIN.
+    count: 3
+  reyes:
+    line0: TELEPORTER IS CALIBRATED.
+    line1: BUT DON'T JUMP IN BLIND.
+    line2: GET YOUR BRIEFING FIRST.
+    count: 3
+  chen:
+    line0: I'VE GOT YOUR LOADOUT READY.
+    line1: BUT CHECK IN WITH THE CAP
+    line2: BEFORE YOU GEAR UP.
+    count: 3
+  vasquez:
+    line0: THESE SPORE READINGS ARE OFF
+    line1: THE CHARTS. BE CAREFUL.
+    line2: SEE THE CAPTAIN WHEN YOU CAN.
+    count: 3
+
+# ── Captain mission briefing (multi-page) ──────────────────────
+
+captain_briefing:
+  page0:
+    line0: WELCOME ABOARD THE ENDEAVOR.
+    line1: WE'VE GOT A DERELICT AHEAD.
+    line2: INFECTED. FULL OF HOSTILES.
+    count: 3
+  page1:
+    line0: WE NEED SAMPLES FROM INSIDE.
+    line1: FIRST - GET CLEARED BY
+    line2: DR VASQUEZ IN THE MEDBAY.
+    count: 3
+  page2:
+    line0: THEN GRAB YOUR GEAR FROM
+    line1: CHEN IN THE ARMORY. AFTER
+    line2: THAT HEAD TO THE TELEPORTER.
+    count: 3
+  pages: 3
+
+# ── Post-briefing crew dialogs (after talking to captain) ──────
+
+crew_post_briefing:
+  vasquez:
+    line0: CAPTAIN SENT YOU? GOOD.
+    line1: LET ME RUN A QUICK SCAN...
+    line2: YOU'RE CLEAR. VITALS LOGGED.
+    count: 3
+  chen:
+    line0: DOC CLEARED YOU? GOOD.
+    line1: HERE'S YOUR STANDARD KIT.
+    line2: PICK ANYTHING ELSE YOU NEED.
+    count: 3
+  reyes_ready:
+    line0: ALL CHECKED OUT? GOOD.
+    line1: STEP ON THE PAD. I'LL BEAM
+    line2: YOU TO THAT DERELICT.
+    count: 3
+  reyes_blocked:
+    line0: HOLD UP. YOU'RE NOT CLEARED.
+    line1: FINISH YOUR PREP FIRST.
+    line2: CAPTAIN'S ORDERS.
+    count: 3
+
+# ── Captain dialogs (after first mission and ongoing) ──────────
+
+captain:
+  pre_mission:
+    line0: WE CAN'T JUMP YET.
+    line1: INVESTIGATE THAT DERELICT
+    line2: FIRST. WE NEED THOSE SAMPLES.
+    count: 3
+  post_mission:
+    line0: GOOD WORK OUT THERE.
+    line1: WE'VE GOT WHAT WE NEED.
+    line2: STAR MAP IS READY. PICK A TARGET.
+    count: 3
+  under_attack:
+    line0: WE'RE UNDER ATTACK!
+    line1: GET TO THE TELEPORTER
+    line2: AND BOARD THAT SHIP!
+    count: 3
+  neutralized:
+    line0: ENEMY NEUTRALIZED.
+    line1: WE'RE READY TO JUMP.
+    line2: HEAD TO THE STAR MAP.
+    count: 3
+
+# ── Default crew dialogs (used after initial mission flow) ─────
+
+crew_default:
+  reyes:
+    line0: TELEPORTER IS PRIMED.
+    line1: STEP ON THE PAD WHEN
+    line2: YOU'RE READY FOR ACTION.
+    count: 3
+  chen:
+    line0: GOT SOME NEW GEAR.
+    line1: TAKE A LOOK AT WHAT
+    line2: I'VE SCROUNGED UP.
+    count: 3
+  kowalski:
+    line0: ANOTHER DAY IN SPACE.
+    line1: AT LEAST WE'RE STILL
+    line2: BREATHING RIGHT?
+    count: 3
+  vasquez:
+    line0: YOU LOOK ROUGHED UP.
+    line1: LET ME PATCH YOU UP
+    line2: BEFORE YOUR NEXT RUN.
+    count: 3
+
+# ── Mission objectives ─────────────────────────────────────────
+
+objectives:
+  obj0: REPORT TO MEDBAY
+  obj1: VISIT THE ARMORY
+  obj2: BOARD THE DERELICT
+  count: 3

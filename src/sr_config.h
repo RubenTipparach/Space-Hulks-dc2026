@@ -21,7 +21,7 @@
 #include <string.h>
 #include <ctype.h>
 
-#define SR_CFG_MAX_ENTRIES 64
+#define SR_CFG_MAX_ENTRIES 256
 #define SR_CFG_MAX_KEY     128
 #define SR_CFG_MAX_VAL     256
 
