@@ -658,7 +658,7 @@ static void draw_shop(uint32_t *px, int W, int H) {
     if (g_shop.mode == 0) {
         /* Buy mode — visual card grid */
         int shop_cols = 3;
-        int cw = CARD_FAN_W, ch = CARD_FAN_H;  /* 70x96 */
+        int cw = 60, ch = 80;
         int padX = 10, padY = 14;
         int gridW = shop_cols * (cw + padX) - padX;
         int startX = (W - gridW) / 2;
@@ -676,15 +676,15 @@ static void draw_shop(uint32_t *px, int W, int H) {
 
                 /* Render card to temp buffer */
                 memset(card_fan_buf, 0, sizeof(card_fan_buf));
-                combat_draw_card_content(card_fan_buf, CARD_FAN_W, CARD_FAN_H,
-                                         0, 0, CARD_FAN_W, CARD_FAN_H,
+                combat_draw_card_content(card_fan_buf, cw, ch,
+                                         0, 0, cw, ch,
                                          card_type, sel, shadow, -1);
                 /* Blit to screen (no rotation) */
-                for (int ry = 0; ry < CARD_FAN_H; ry++)
-                    for (int rx = 0; rx < CARD_FAN_W; rx++) {
+                for (int ry = 0; ry < ch; ry++)
+                    for (int rx = 0; rx < cw; rx++) {
                         int dx = cx + rx, dy = cy + ry;
                         if (dx >= 0 && dx < W && dy >= 0 && dy < H) {
-                            uint32_t c = card_fan_buf[ry * CARD_FAN_W + rx];
+                            uint32_t c = card_fan_buf[ry * cw + rx];
                             if (c & 0xFF000000) px[dy * W + dx] = c;
                         }
                     }
