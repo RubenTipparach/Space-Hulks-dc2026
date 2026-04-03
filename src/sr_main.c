@@ -39,6 +39,7 @@
 #include "sr_lighting.h"
 #include "sr_sprites.h"
 #include "sr_scene_dungeon.h"
+#include "sr_audio.h"
 
 /* ── UI mouse state (framebuffer coords) ─────────────────────────── */
 static float ui_mouse_x = -1, ui_mouse_y = -1;
@@ -1054,6 +1055,9 @@ static void init(void) {
     itextures[ITEX_TILE]  = sr_indexed_load("assets/indexed/tile.idx");
     itextures[ITEX_STONE]  = sr_indexed_load("assets/indexed/stone.idx");
     itextures[ITEX_WALL_A] = sr_indexed_load("assets/indexed/wall_a.idx");
+    itextures[ITEX_HUB_FLOOR]    = sr_indexed_load("assets/indexed/hub_floor.idx");
+    itextures[ITEX_HUB_CEILING]  = sr_indexed_load("assets/indexed/hub_ceiling.idx");
+    itextures[ITEX_HUB_CORRIDOR] = sr_indexed_load("assets/indexed/hub_corridor_wall.idx");
 
     stextures[STEX_LURKER]    = sr_texture_load("assets/sprites/lurker.png");
     stextures[STEX_BRUTE]     = sr_texture_load("assets/sprites/brute.png");
@@ -1086,6 +1090,7 @@ static void init(void) {
 
     dng_load_config();
     hub_load_config();
+    sr_audio_init();
 
 #ifdef _WIN32
     timeBeginPeriod(1);
@@ -1098,6 +1103,7 @@ static void init(void) {
 static void frame(void) {
     double dt = sapp_frame_duration();
     time_acc += dt;
+    dng_time += dt;
     frame_counter++;
 
     fps_timer += dt;
@@ -1107,6 +1113,19 @@ static void frame(void) {
         fps_frame_count = 0;
         fps_timer -= 1.0;
     }
+
+    /* ── Audio state transitions ────────────────────────────── */
+    {
+        static int prev_app_state = -1;
+        if (app_state != prev_app_state) {
+            if (app_state == STATE_SHIP_HUB)
+                sr_audio_start_hub_ambient();
+            else if (prev_app_state == STATE_SHIP_HUB)
+                sr_audio_stop_hub_ambient();
+            prev_app_state = app_state;
+        }
+    }
+    sr_audio_update((float)dt);
 
     /* ── CPU rasterize ───────────────────────────────────────── */
     sr_stats_reset();
@@ -1412,6 +1431,7 @@ static void cleanup(void) {
     for (int i = 0; i < CONSOLE_TEX_COUNT; i++) {
         if (console_textures[i].pixels) { free(console_textures[i].pixels); console_textures[i].pixels = NULL; }
     }
+    sr_audio_shutdown();
     sr_framebuffer_destroy(&fb);
     sr_framebuffer_destroy(&shadow_fb);
     sg_shutdown();

@@ -16,7 +16,7 @@ gcc -O2 -std=c99 ^
     src/sr_texture.c ^
     src/sr_gif.c ^
     -o build/starraster.exe ^
-    -lopengl32 -lgdi32 -luser32 -lkernel32 -lshell32 -lwinmm -lm
+    -lopengl32 -lgdi32 -luser32 -lkernel32 -lshell32 -lole32 -lwinmm -lm
 
 if %errorlevel% neq 0 (
     echo [FAIL] Build failed.

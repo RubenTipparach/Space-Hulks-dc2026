@@ -52,6 +52,8 @@ public class GridPanel : Panel
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer, true);
     }
 
+    private int _lastMouseX, _lastMouseY;
+
     private (int gx, int gy) ScreenToGrid(int sx, int sy)
     {
         int gx = (sx - Margin) / CellSize + 1;
@@ -61,6 +63,19 @@ public class GridPanel : Panel
 
     private bool InBounds(int gx, int gy) =>
         Floor != null && gx >= 1 && gx <= Floor.Width && gy >= 1 && gy <= Floor.Height;
+
+    private WallDir ScreenToFaceDir(int sx, int sy)
+    {
+        float fx = ((sx - Margin) % CellSize) / (float)CellSize;
+        float fy = ((sy - MarginY) % CellSize) / (float)CellSize;
+        if (fx < 0) fx += 1; if (fy < 0) fy += 1;
+        float dN = fy, dS = 1 - fy, dW = fx, dE = 1 - fx;
+        float min = Math.Min(Math.Min(dN, dS), Math.Min(dW, dE));
+        if (min == dN) return WallDir.North;
+        if (min == dS) return WallDir.South;
+        if (min == dW) return WallDir.West;
+        return WallDir.East;
+    }
 
     protected override void OnPaint(PaintEventArgs e)
     {
@@ -90,8 +105,6 @@ public class GridPanel : Panel
                 Color bg;
                 if (cell == (int)CellType.Wall)
                     bg = Color.FromArgb(40, 40, 50);
-                else if (cell == (int)CellType.Window)
-                    bg = Color.FromArgb(60, 80, 120);
                 else
                     bg = Color.FromArgb(100, 100, 110);
 
@@ -109,9 +122,8 @@ public class GridPanel : Panel
                 // Draw texture background then color overlay
                 Bitmap? cellTex = cell switch
                 {
-                    (int)CellType.Wall => alien ? TextureCache.Bricks : TextureCache.WallA,
-                    (int)CellType.Window => alien ? TextureCache.Bricks : TextureCache.WallAWindow,
-                    _ => alien ? TextureCache.Stone : TextureCache.Floor,
+                    (int)CellType.Wall => alien ? TextureCache.Bricks : TextureCache.HubCorridor,
+                    _ => alien ? TextureCache.Bricks : TextureCache.HubFloor,
                 };
 
                 if (cellTex != null)
@@ -159,6 +171,24 @@ public class GridPanel : Panel
                 g.FillEllipse(Brushes.Yellow,
                     Margin + (room.CenterX - 1) * CellSize + CellSize / 2 - 3,
                     MarginY + (room.CenterY - 1) * CellSize + 1, 6, 6);
+            }
+        }
+
+        // Draw window face indicators
+        if (Floor.Windows != null)
+        {
+            using var winPen = new Pen(Color.FromArgb(200, 100, 180, 255), 3);
+            foreach (var wf in Floor.Windows)
+            {
+                int wpx = Margin + (wf.GX - 1) * CellSize;
+                int wpy = MarginY + (wf.GY - 1) * CellSize;
+                switch (wf.Dir)
+                {
+                    case WallDir.North: g.DrawLine(winPen, wpx + 1, wpy, wpx + CellSize - 2, wpy); break;
+                    case WallDir.South: g.DrawLine(winPen, wpx + 1, wpy + CellSize - 1, wpx + CellSize - 2, wpy + CellSize - 1); break;
+                    case WallDir.West:  g.DrawLine(winPen, wpx, wpy + 1, wpx, wpy + CellSize - 2); break;
+                    case WallDir.East:  g.DrawLine(winPen, wpx + CellSize - 1, wpy + 1, wpx + CellSize - 1, wpy + CellSize - 2); break;
+                }
             }
         }
 
@@ -225,7 +255,7 @@ public class GridPanel : Panel
             DrawMarker(g, n.GX, n.GY, Color.Cyan, "N");
     }
 
-    private static bool IsWallLike(int c) => c == (int)CellType.Wall || c == (int)CellType.Window;
+    private static bool IsWallLike(int c) => c == (int)CellType.Wall;
 
     private void ExtendSide(bool[,] inside, int w, int h, int line, int from, int to, bool horiz, int inDir)
     {
@@ -390,6 +420,7 @@ public class GridPanel : Panel
     {
         base.OnMouseDown(e);
         if (Floor == null) return;
+        _lastMouseX = e.X; _lastMouseY = e.Y;
 
         if (e.Button == MouseButtons.Middle)
         {
@@ -627,7 +658,7 @@ public class GridPanel : Panel
         _hoverGX = gx; _hoverGY = gy;
 
         if (_painting && e.Button == MouseButtons.Left &&
-            (Tool == EditTool.Corridor || Tool == EditTool.Wall || Tool == EditTool.Window))
+            (Tool == EditTool.Corridor || Tool == EditTool.Wall))
         {
             ApplyTool(gx, gy);
         }
@@ -660,6 +691,7 @@ public class GridPanel : Panel
         {
             case EditTool.Corridor:
                 Floor.Map[gy, gx] = (int)CellType.Open;
+                Floor.Windows.RemoveAll(w => w.GX == gx && w.GY == gy);
                 break;
 
             case EditTool.Wall:
@@ -667,8 +699,31 @@ public class GridPanel : Panel
                 break;
 
             case EditTool.Window:
-                Floor.Map[gy, gx] = (int)CellType.Window;
+            {
+                var dir = ScreenToFaceDir(_lastMouseX, _lastMouseY);
+                // Window faces go on wall cells facing open cells (or vice versa)
+                int ct = Floor.Map[gy, gx];
+                int nx = gx + (dir == WallDir.East ? 1 : dir == WallDir.West ? -1 : 0);
+                int ny = gy + (dir == WallDir.South ? 1 : dir == WallDir.North ? -1 : 0);
+                if (InBounds(nx, ny))
+                {
+                    int nct = Floor.Map[ny, nx];
+                    // One side wall, other side open
+                    if ((IsWallLike(ct) && nct == (int)CellType.Open) ||
+                        (ct == (int)CellType.Open && IsWallLike(nct)))
+                    {
+                        // Place window on the wall cell's face
+                        int wgx = IsWallLike(ct) ? gx : nx;
+                        int wgy = IsWallLike(ct) ? gy : ny;
+                        WallDir wdir = IsWallLike(ct) ? dir :
+                            (dir == WallDir.North ? WallDir.South :
+                             dir == WallDir.South ? WallDir.North :
+                             dir == WallDir.East ? WallDir.West : WallDir.East);
+                        Floor.ToggleWindow(wgx, wgy, wdir);
+                    }
+                }
                 break;
+            }
 
             case EditTool.Room:
                 AddRoom(gx, gy);
@@ -765,6 +820,7 @@ public class GridPanel : Panel
                 Floor.Loot.RemoveAll(l => l.GX == gx && l.GY == gy);
                 Floor.Officers.RemoveAll(o => o.GX == gx && o.GY == gy);
                 Floor.Npcs.RemoveAll(n => n.GX == gx && n.GY == gy);
+                Floor.Windows.RemoveAll(w => w.GX == gx && w.GY == gy);
                 if (Floor.HasUp && Floor.StairsGX == gx && Floor.StairsGY == gy)
                     Floor.HasUp = false;
                 if (Floor.HasDown && Floor.DownGX == gx && Floor.DownGY == gy)

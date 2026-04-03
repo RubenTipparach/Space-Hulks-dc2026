@@ -84,7 +84,10 @@ static int dng_light_mode = 0;
 static bool dng_show_info = false;
 static bool dng_expanded_map = false;
 static bool dng_sprites_unlit = false;  /* true = sprites skip fog tint */
-static int  dng_wall_texture = -1;     /* -1 = default ITEX_BRICK, else override */
+static int  dng_wall_texture = -1;      /* -1 = default ITEX_BRICK, else override */
+static int  dng_room_wall_texture = -1; /* -1 = same as wall_texture; wall faces facing room cells */
+static int  dng_floor_texture = -1;    /* -1 = default ITEX_TILE, else override */
+static int  dng_ceiling_texture = -1;  /* -1 = default ITEX_WOOD, else override */
 static bool dng_skip_pillars = false;  /* true = don't draw corner pillars */
 static float (*dng_fog_fn)(float, float, float) = NULL; /* override for fog vertex intensity */
 
@@ -348,6 +351,12 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
 
     const sr_indexed_texture *wall_tex = (dng_wall_texture >= 0)
         ? &itextures[dng_wall_texture] : &itextures[ITEX_BRICK];
+    const sr_indexed_texture *room_wall_tex = (dng_room_wall_texture >= 0)
+        ? &itextures[dng_room_wall_texture] : wall_tex;
+    const sr_indexed_texture *floor_tex = (dng_floor_texture >= 0)
+        ? &itextures[dng_floor_texture] : &itextures[ITEX_TILE];
+    const sr_indexed_texture *ceil_tex = (dng_ceiling_texture >= 0)
+        ? &itextures[dng_ceiling_texture] : &itextures[ITEX_WOOD];
     float WP = dng_skip_pillars ? 0.0f : P; /* wall padding (0 = flush, no pillar gaps) */
 
     /* Render cells */
@@ -363,30 +372,35 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
             float z1 = gy * DNG_CELL_SIZE;
 
             if (d->map[gy][gx] == 1) {
-                /* Wall cell — draw faces toward open cells */
+                /* Wall cell — draw faces toward open cells.
+                 * Pick texture per-face: room faces get room_wall_tex, corridor faces get wall_tex. */
                 if (gy < d->h && d->map[gy+1][gx] != 1 && dng_vis[gy+1][gx]) {
+                    const sr_indexed_texture *ft = (dng_room_at(d, gx, gy+1) >= 0) ? room_wall_tex : wall_tex;
                     dng_draw_wall(fb_ptr, &mvp,
                         x0+WP, y_hi, z1,  x1-WP, y_hi, z1,
                         x1-WP, y_lo, z1,  x0+WP, y_lo, z1,
-                        wall_tex, 0, 0, 1);
+                        ft, 0, 0, 1);
                 }
                 if (gy > 1 && d->map[gy-1][gx] != 1 && dng_vis[gy-1][gx]) {
+                    const sr_indexed_texture *ft = (dng_room_at(d, gx, gy-1) >= 0) ? room_wall_tex : wall_tex;
                     dng_draw_wall(fb_ptr, &mvp,
                         x1-WP, y_hi, z0,  x0+WP, y_hi, z0,
                         x0+WP, y_lo, z0,  x1-WP, y_lo, z0,
-                        wall_tex, 0, 0, -1);
+                        ft, 0, 0, -1);
                 }
                 if (gx < d->w && d->map[gy][gx+1] != 1 && dng_vis[gy][gx+1]) {
+                    const sr_indexed_texture *ft = (dng_room_at(d, gx+1, gy) >= 0) ? room_wall_tex : wall_tex;
                     dng_draw_wall(fb_ptr, &mvp,
                         x1, y_hi, z1-WP,  x1, y_hi, z0+WP,
                         x1, y_lo, z0+WP,  x1, y_lo, z1-WP,
-                        wall_tex, 1, 0, 0);
+                        ft, 1, 0, 0);
                 }
                 if (gx > 1 && d->map[gy][gx-1] != 1 && dng_vis[gy][gx-1]) {
+                    const sr_indexed_texture *ft = (dng_room_at(d, gx-1, gy) >= 0) ? room_wall_tex : wall_tex;
                     dng_draw_wall(fb_ptr, &mvp,
                         x0, y_hi, z0+WP,  x0, y_hi, z1-WP,
                         x0, y_lo, z1-WP,  x0, y_lo, z0+WP,
-                        wall_tex, -1, 0, 0);
+                        ft, -1, 0, 0);
                 }
             } else {
                 /* Open cell */
@@ -514,19 +528,19 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
                         dng_draw_hquad(fb_ptr, &mvp,
                             x0,y_hi,z1, x1,y_hi,z1,
                             x1,y_hi,z0, x0,y_hi,z0,
-                            0,1,1,0, &itextures[ITEX_WOOD], 0,-1,0);
+                            0,1,1,0, ceil_tex, 0,-1,0);
                     }
                 } else {
                     /* Normal floor + ceiling */
                     dng_draw_hquad(fb_ptr, &mvp,
                         x0,y_lo,z0, x1,y_lo,z0,
                         x1,y_lo,z1, x0,y_lo,z1,
-                        0,0,1,1, &itextures[ITEX_TILE], 0,1,0);
+                        0,0,1,1, floor_tex, 0,1,0);
 
                     dng_draw_hquad(fb_ptr, &mvp,
                         x0,y_hi,z1, x1,y_hi,z1,
                         x1,y_hi,z0, x0,y_hi,z0,
-                        0,1,1,0, &itextures[ITEX_WOOD], 0,-1,0);
+                        0,1,1,0, ceil_tex, 0,-1,0);
                 }
             }
         }

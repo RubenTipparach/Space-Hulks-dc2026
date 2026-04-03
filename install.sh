@@ -29,9 +29,10 @@ curl -sL -o third_party/sokol/sokol_app.h   https://raw.githubusercontent.com/fl
 curl -sL -o third_party/sokol/sokol_gfx.h   https://raw.githubusercontent.com/floooh/sokol/master/sokol_gfx.h
 curl -sL -o third_party/sokol/sokol_glue.h   https://raw.githubusercontent.com/floooh/sokol/master/sokol_glue.h
 curl -sL -o third_party/sokol/sokol_log.h    https://raw.githubusercontent.com/floooh/sokol/master/sokol_log.h
+curl -sL -o third_party/sokol/sokol_audio.h  https://raw.githubusercontent.com/floooh/sokol/master/sokol_audio.h
 
 # Verify downloads
-for f in sokol_app.h sokol_gfx.h sokol_glue.h sokol_log.h; do
+for f in sokol_app.h sokol_gfx.h sokol_glue.h sokol_log.h sokol_audio.h; do
     if [ ! -f "third_party/sokol/$f" ]; then
         echo "[FAIL] Failed to download $f"
         exit 1
@@ -52,6 +53,28 @@ for f in stb_image.h stb_image_write.h; do
     fi
 done
 echo "[OK] stb headers downloaded"
+
+# Download minimp3
+echo
+echo "Downloading minimp3..."
+mkdir -p third_party/minimp3
+curl -sL -o third_party/minimp3/minimp3.h     https://raw.githubusercontent.com/lieff/minimp3/master/minimp3.h
+curl -sL -o third_party/minimp3/minimp3_ex.h  https://raw.githubusercontent.com/lieff/minimp3/master/minimp3_ex.h
+
+for f in minimp3.h minimp3_ex.h; do
+    if [ ! -f "third_party/minimp3/$f" ]; then
+        echo "[FAIL] Failed to download $f"
+        exit 1
+    fi
+done
+echo "[OK] minimp3 downloaded"
+
+# Check for ALSA dev headers (Linux audio)
+if [[ "$(uname)" == "Linux" ]] && ! pkg-config --exists alsa 2>/dev/null; then
+    echo
+    echo "[WARN] libasound2-dev not found. Audio may not compile."
+    echo "       Install: sudo apt install libasound2-dev"
+fi
 
 echo
 echo "============================================"

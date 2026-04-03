@@ -1451,7 +1451,10 @@ static void hub_draw_scene(sr_framebuffer *fb_ptr) {
     dng_fog_fn = hub_fog_vertex_intensity;
     dng_render_radius = hub_cfg.draw_distance;
     dng_sprites_unlit = true;
-    dng_wall_texture = ITEX_WALL_A;
+    dng_wall_texture = ITEX_HUB_CORRIDOR;
+    dng_room_wall_texture = ITEX_WALL_A;
+    dng_floor_texture = ITEX_HUB_FLOOR;
+    dng_ceiling_texture = ITEX_HUB_CEILING;
     dng_skip_pillars = true;
 
     sr_mat4 vp;
@@ -1465,6 +1468,9 @@ static void hub_draw_scene(sr_framebuffer *fb_ptr) {
     dng_fog_fn = NULL;
     dng_sprites_unlit = false;
     dng_wall_texture = -1;
+    dng_room_wall_texture = -1;
+    dng_floor_texture = -1;
+    dng_ceiling_texture = -1;
     dng_skip_pillars = false;
     dng_cfg.ambient_brightness = save_ambient;
     dng_cfg.light_brightness = save_torch;

@@ -133,7 +133,7 @@ public class MainForm : Form
             Text = "Hub Ship", ForeColor = Color.White, AutoSize = true,
             Margin = new Padding(2, 4, 2, 2),
         };
-        _hubCheck.CheckedChanged += (_, _) => _level.IsHub = _hubCheck.Checked;
+        _hubCheck.CheckedChanged += (_, _) => { _level.IsHub = _hubCheck.Checked; _state.IsHub = _hubCheck.Checked; };
         toolFlow.Controls.Add(_hubCheck);
 
         // Show exterior toggle
@@ -148,18 +148,28 @@ public class MainForm : Form
         // Hull padding
         toolFlow.Controls.Add(MakeLabel("Hull Padding:"));
         var hullPad = new NumericUpDown { Minimum = 0, Maximum = 10, Value = (decimal)_state.HullPadding, Width = 60,
-            DecimalPlaces = 1, Increment = 0.5m,
+            DecimalPlaces = 2, Increment = 0.05m,
             BackColor = Color.FromArgb(40, 40, 50), ForeColor = Color.White };
-        hullPad.ValueChanged += (_, _) => { _state.HullPadding = (float)hullPad.Value; _grid.Invalidate(); };
         toolFlow.Controls.Add(hullPad);
 
         // Hull corner chamfer
         toolFlow.Controls.Add(MakeLabel("Hull Corner:"));
-        var hullCorner = new NumericUpDown { Minimum = 0, Maximum = 1, Value = (decimal)_state.HullCorner, Width = 60,
-            DecimalPlaces = 2, Increment = 0.1m,
+        var hullCorner = new NumericUpDown { Minimum = 0, Maximum = 10, Value = (decimal)_state.HullCorner, Width = 60,
+            DecimalPlaces = 2, Increment = 0.05m,
             BackColor = Color.FromArgb(40, 40, 50), ForeColor = Color.White };
-        hullCorner.ValueChanged += (_, _) => { _state.HullCorner = (float)hullCorner.Value; _grid.Invalidate(); };
         toolFlow.Controls.Add(hullCorner);
+
+        // Wire up events after both controls exist (corner clamped to padding)
+        hullPad.ValueChanged += (_, _) => {
+            _state.HullPadding = (float)hullPad.Value;
+            if (hullCorner.Value > hullPad.Value) hullCorner.Value = hullPad.Value;
+            _grid.Invalidate();
+        };
+        hullCorner.ValueChanged += (_, _) => {
+            if (hullCorner.Value > hullPad.Value) hullCorner.Value = hullPad.Value;
+            _state.HullCorner = (float)hullCorner.Value;
+            _grid.Invalidate();
+        };
 
         // Show all floors
         var allFloorsCheck = new CheckBox
@@ -609,6 +619,7 @@ public class MainForm : Form
         _hullHpNum.Value = Math.Clamp(_level.HullHp, 0, 999);
         _hullHpMaxNum.Value = Math.Clamp(_level.HullHpMax, 0, 999);
         _state.ShipType = _level.ShipType;
+        _state.IsHub = _level.IsHub;
         RefreshMissionList();
     }
 

@@ -121,6 +121,10 @@ public class UndoManager
         {
             GX = n.GX, GY = n.GY, Name = n.Name, DialogId = n.DialogId,
         }).ToList();
+        dto.Windows = f.Windows.Select(w => new WindowFace
+        {
+            GX = w.GX, GY = w.GY, Dir = w.Dir,
+        }).ToList();
 
         return JsonSerializer.Serialize(dto, Opts);
     }
@@ -139,6 +143,7 @@ public class UndoManager
             Rooms = dto.Rooms, Enemies = dto.Enemies,
             Consoles = dto.Consoles, Loot = dto.Loot,
             Officers = dto.Officers, Npcs = dto.Npcs,
+            Windows = dto.Windows ?? new(),
         };
         for (int y = 0; y < dto.Height && y < dto.Map.Length; y++)
             for (int x = 0; x < dto.Width && x < dto.Map[y].Length; x++)
@@ -168,5 +173,6 @@ public class UndoManager
         public List<LootData> Loot { get; set; } = new();
         public List<OfficerData> Officers { get; set; } = new();
         public List<NpcData> Npcs { get; set; } = new();
+        public List<WindowFace>? Windows { get; set; }
     }
 }

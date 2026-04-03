@@ -33,6 +33,7 @@ public static class LevelSerializer
         public List<LootData> Loot { get; set; } = new();
         public List<OfficerData> Officers { get; set; } = new();
         public List<NpcData> Npcs { get; set; } = new();
+        public List<WindowFace>? Windows { get; set; }
     }
 
     private class LevelDto
@@ -70,6 +71,7 @@ public static class LevelSerializer
                 Rooms = f.Rooms, Enemies = f.Enemies,
                 Consoles = f.Consoles, Loot = f.Loot,
                 Officers = f.Officers, Npcs = f.Npcs,
+                Windows = f.Windows.Count > 0 ? f.Windows : null,
             };
             // Convert 2D array to jagged (1-indexed rows 1..h, cols 1..w)
             fd.Map = new int[f.Height][];
@@ -115,6 +117,18 @@ public static class LevelSerializer
             for (int y = 0; y < fd.Height && y < fd.Map.Length; y++)
                 for (int x = 0; x < fd.Width && x < fd.Map[y].Length; x++)
                     f.Map[y + 1, x + 1] = fd.Map[y][x];
+            f.Windows = fd.Windows ?? new();
+            // Migrate old CellType.Window (value 2) to face-based windows
+            for (int y = 1; y <= f.Height; y++)
+                for (int x = 1; x <= f.Width; x++)
+                    if (f.Map[y, x] == 2)
+                    {
+                        f.Map[y, x] = (int)CellType.Wall;
+                        if (y > 1 && f.Map[y - 1, x] == 0) f.Windows.Add(new WindowFace { GX = x, GY = y, Dir = WallDir.North });
+                        if (y < f.Height && f.Map[y + 1, x] == 0) f.Windows.Add(new WindowFace { GX = x, GY = y, Dir = WallDir.South });
+                        if (x > 1 && f.Map[y, x - 1] == 0) f.Windows.Add(new WindowFace { GX = x, GY = y, Dir = WallDir.West });
+                        if (x < f.Width && f.Map[y, x + 1] == 0) f.Windows.Add(new WindowFace { GX = x, GY = y, Dir = WallDir.East });
+                    }
             level.Floors.Add(f);
         }
         return level;

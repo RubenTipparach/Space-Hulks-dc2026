@@ -4,14 +4,14 @@ public static class TextureCache
 {
     public static Bitmap? WallA { get; private set; }
     public static Bitmap? WallAWindow { get; private set; }
-    public static Bitmap? Floor { get; private set; }
-    public static Bitmap? Ceiling { get; private set; }
-    public static Bitmap? Stone { get; private set; }
     public static Bitmap? Bricks { get; private set; }
     public static Bitmap? ExteriorWall { get; private set; }
     public static Bitmap? ExteriorWindow { get; private set; }
     public static Bitmap? AlienExterior { get; private set; }
     public static Bitmap? AlienExteriorWindow { get; private set; }
+    public static Bitmap? HubFloor { get; private set; }
+    public static Bitmap? HubCeiling { get; private set; }
+    public static Bitmap? HubCorridor { get; private set; }
 
     private static bool _loaded;
 
@@ -23,16 +23,16 @@ public static class TextureCache
         string? basePath = FindAssetsPath();
         if (basePath == null) return;
 
-        WallA = LoadTex(basePath, "wall_a.png");
+        WallA = LoadTex(basePath, "wall_A.png");
         WallAWindow = LoadTex(basePath, "wall_A_window.png");
-        Floor = LoadTex(basePath, "tile.png");
-        Ceiling = LoadTex(basePath, "wood.png");
-        Stone = LoadTex(basePath, "stone.png");
-        Bricks = LoadTex(basePath, "bricks.png");
+        Bricks = LoadTex(basePath, "alien_exterior.png");  // reuse alien exterior for alien interior
         ExteriorWall = LoadTex(basePath, "exterior_ship_wall.png");
         ExteriorWindow = LoadTex(basePath, "exerior_window.png");
         AlienExterior = LoadTex(basePath, "alien_exterior.png");
         AlienExteriorWindow = LoadTex(basePath, "alien_exterior_window.png");
+        HubFloor = LoadTex(basePath, "hub_floor.png");
+        HubCeiling = LoadTex(basePath, "hub_ceiling.png");
+        HubCorridor = LoadTex(basePath, "hub_corridor_wall.png");
     }
 
     private static string? FindAssetsPath()
@@ -47,7 +47,7 @@ public static class TextureCache
             var dir = start;
             for (int i = 0; i < 10 && dir != null; i++)
             {
-                string candidate = Path.Combine(dir, "assets", "indexed");
+                string candidate = Path.Combine(dir, "assets", "textures");
                 if (Directory.Exists(candidate)) return candidate;
                 dir = Path.GetDirectoryName(dir);
             }

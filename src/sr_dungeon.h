@@ -394,7 +394,10 @@ typedef struct {
     float target_angle;
     int bounce_timer;    /* >0 = bouncing back from blocked tile */
     float bounce_mid_x, bounce_mid_z; /* midpoint to animate toward before snapping back */
+    double last_move_time; /* timestamp of last successful move (seconds) */
 } dng_player;
+
+static void (*dng_on_move_callback)(void) = NULL;
 
 static void dng_player_init(dng_player *p, int gx, int gy, int dir) {
     p->gx = gx; p->gy = gy; p->dir = dir;
@@ -408,8 +411,13 @@ static void dng_player_init(dng_player *p, int gx, int gy, int dir) {
     p->bounce_timer = 0;
 }
 
+#define DNG_MOVE_INTERVAL 0.2  /* seconds between moves (= 5 cells/sec) */
+
+static double dng_time = 0; /* global time accumulator, updated each frame */
+
 static void dng_player_try_move(dng_player *p, const sr_dungeon *d, int dir) {
     if (p->bounce_timer > 0) return; /* blocked during bounce-back */
+    if (dng_time - p->last_move_time < DNG_MOVE_INTERVAL) return; /* rate limited */
     int nx = p->gx + dng_dir_dx[dir];
     int ny = p->gy + dng_dir_dz[dir];
     if (dng_can_enter(d, p->gx, p->gy, nx, ny)) {
@@ -417,6 +425,8 @@ static void dng_player_try_move(dng_player *p, const sr_dungeon *d, int dir) {
         p->gy = ny;
         p->target_x = (p->gx - 0.5f) * DNG_CELL_SIZE;
         p->target_z = (p->gy - 0.5f) * DNG_CELL_SIZE;
+        p->last_move_time = dng_time;
+        if (dng_on_move_callback) dng_on_move_callback();
     }
 }
 

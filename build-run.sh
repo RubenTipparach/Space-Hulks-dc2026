@@ -20,9 +20,20 @@ if [[ "$OS" == "Darwin" ]]; then
     $CC -O2 \
         sr_main.o sr_raster.o sr_texture.o sr_gif.o \
         -o build/starraster \
-        -framework Cocoa -framework OpenGL -framework QuartzCore \
+        -framework Cocoa -framework OpenGL -framework QuartzCore -framework AudioToolbox \
         -lm
     rm -f sr_main.o sr_raster.o sr_texture.o sr_gif.o
+elif [[ "$OS" == MINGW* ]] || [[ "$OS" == MSYS* ]] || [[ "$OS" == CYGWIN* ]]; then
+    # Windows (MSYS2/MinGW)
+    $CC -O2 -std=c99 \
+        -I src \
+        -I third_party \
+        src/sr_main.c \
+        src/sr_raster.c \
+        src/sr_texture.c \
+        src/sr_gif.c \
+        -o build/starraster.exe \
+        -lgdi32 -luser32 -lshell32 -lole32 -lwinmm -lopengl32 -lm
 else
     # Linux: link GL, X11, Xi, Xcursor, dl, pthread
     $CC -O2 -std=c99 \
@@ -33,7 +44,7 @@ else
         src/sr_texture.c \
         src/sr_gif.c \
         -o build/starraster \
-        -lGL -lX11 -lXi -lXcursor -ldl -lpthread -lm
+        -lGL -lX11 -lXi -lXcursor -ldl -lpthread -lasound -lm
 fi
 
 if [ $? -ne 0 ]; then
@@ -46,4 +57,8 @@ echo "[RUN] Starting StarRaster..."
 echo
 
 cd "$(dirname "$0")"
-./build/starraster
+if [[ -f ./build/starraster.exe ]]; then
+    ./build/starraster.exe
+else
+    ./build/starraster
+fi

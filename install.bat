@@ -29,9 +29,10 @@ curl -sL -o "third_party\sokol\sokol_app.h"  "https://raw.githubusercontent.com/
 curl -sL -o "third_party\sokol\sokol_gfx.h"  "https://raw.githubusercontent.com/floooh/sokol/master/sokol_gfx.h"
 curl -sL -o "third_party\sokol\sokol_glue.h"  "https://raw.githubusercontent.com/floooh/sokol/master/sokol_glue.h"
 curl -sL -o "third_party\sokol\sokol_log.h"   "https://raw.githubusercontent.com/floooh/sokol/master/sokol_log.h"
+curl -sL -o "third_party\sokol\sokol_audio.h" "https://raw.githubusercontent.com/floooh/sokol/master/sokol_audio.h"
 
 :: Verify downloads
-for %%f in (sokol_app.h sokol_gfx.h sokol_glue.h sokol_log.h) do (
+for %%f in (sokol_app.h sokol_gfx.h sokol_glue.h sokol_log.h sokol_audio.h) do (
     if not exist "third_party\sokol\%%f" (
         echo [FAIL] Failed to download %%f
         exit /b 1
@@ -53,6 +54,20 @@ if not exist "third_party\stb\stb_image_write.h" (
     exit /b 1
 )
 echo [OK] stb headers downloaded
+
+:: Download minimp3
+echo.
+echo Downloading minimp3...
+if not exist "third_party\minimp3" mkdir "third_party\minimp3"
+curl -sL -o "third_party\minimp3\minimp3.h"    "https://raw.githubusercontent.com/lieff/minimp3/master/minimp3.h"
+curl -sL -o "third_party\minimp3\minimp3_ex.h" "https://raw.githubusercontent.com/lieff/minimp3/master/minimp3_ex.h"
+for %%f in (minimp3.h minimp3_ex.h) do (
+    if not exist "third_party\minimp3\%%f" (
+        echo [FAIL] Failed to download %%f
+        exit /b 1
+    )
+)
+echo [OK] minimp3 downloaded
 
 echo.
 echo ============================================

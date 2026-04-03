@@ -29,7 +29,9 @@ static sr_texture textures[TEX_COUNT];
 
 /* Indexed (palette) textures */
 enum {
-    ITEX_BRICK, ITEX_GRASS, ITEX_ROOF, ITEX_WOOD, ITEX_TILE, ITEX_STONE, ITEX_WALL_A, ITEX_COUNT
+    ITEX_BRICK, ITEX_GRASS, ITEX_ROOF, ITEX_WOOD, ITEX_TILE, ITEX_STONE, ITEX_WALL_A,
+    ITEX_HUB_FLOOR, ITEX_HUB_CEILING, ITEX_HUB_CORRIDOR,
+    ITEX_COUNT
 };
 static sr_indexed_texture itextures[ITEX_COUNT];
 

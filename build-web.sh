@@ -12,15 +12,18 @@ if ! command -v emcc &>/dev/null; then
 fi
 
 # Download dependencies if missing
-if [ ! -d "third_party/sokol" ] || [ ! -d "third_party/stb" ]; then
+if [ ! -d "third_party/sokol" ] || [ ! -d "third_party/stb" ] || [ ! -d "third_party/minimp3" ]; then
     echo "[INFO] Downloading dependencies..."
-    mkdir -p third_party/sokol third_party/stb
+    mkdir -p third_party/sokol third_party/stb third_party/minimp3
     curl -sL -o third_party/sokol/sokol_app.h  https://raw.githubusercontent.com/floooh/sokol/master/sokol_app.h
     curl -sL -o third_party/sokol/sokol_gfx.h  https://raw.githubusercontent.com/floooh/sokol/master/sokol_gfx.h
     curl -sL -o third_party/sokol/sokol_glue.h https://raw.githubusercontent.com/floooh/sokol/master/sokol_glue.h
     curl -sL -o third_party/sokol/sokol_log.h  https://raw.githubusercontent.com/floooh/sokol/master/sokol_log.h
+    curl -sL -o third_party/sokol/sokol_audio.h https://raw.githubusercontent.com/floooh/sokol/master/sokol_audio.h
     curl -sL -o third_party/stb/stb_image.h    https://raw.githubusercontent.com/nothings/stb/master/stb_image.h
     curl -sL -o third_party/stb/stb_image_write.h https://raw.githubusercontent.com/nothings/stb/master/stb_image_write.h
+    curl -sL -o third_party/minimp3/minimp3.h     https://raw.githubusercontent.com/lieff/minimp3/master/minimp3.h
+    curl -sL -o third_party/minimp3/minimp3_ex.h  https://raw.githubusercontent.com/lieff/minimp3/master/minimp3_ex.h
     echo "[OK] Dependencies downloaded."
 fi
 

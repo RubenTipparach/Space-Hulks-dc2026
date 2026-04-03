@@ -38,7 +38,7 @@ public class Preview3DPanel : Panel
     private float _yaw = 45f, _pitch = 55f, _dist = 30f;
     private float _tgtX, _tgtY, _tgtZ;
     private const float Cell = 2f, WallH = 2f;
-    private const float MinPitch = 10f, MaxPitch = 89f;
+    private const float MinPitch = -80f, MaxPitch = 80f;
     private const float MinDist = 5f, MaxDist = 120f;
 
     // Input
@@ -141,7 +141,9 @@ uniform int uUseTex;
 out vec4 oColor;
 void main(){
     vec4 t = uUseTex!=0 ? texture(uTex, vUV) : vec4(1.0);
-    oColor = t * vCol;
+    vec4 c = t * vCol;
+    if (c.a < 0.1) discard;
+    oColor = c;
 }";
 
     private void InitGL()
@@ -199,14 +201,14 @@ void main(){
             $"ExtWall={TextureCache.ExteriorWall?.Width}x{TextureCache.ExteriorWall?.Height}");
         _glTex["wall_a"] = UploadTex(TextureCache.WallA);
         _glTex["wall_a_win"] = UploadTex(TextureCache.WallAWindow);
-        _glTex["floor"] = UploadTex(TextureCache.Floor);
         _glTex["bricks"] = UploadTex(TextureCache.Bricks);
-        _glTex["stone"] = UploadTex(TextureCache.Stone);
         _glTex["ext_wall"] = UploadTex(TextureCache.ExteriorWall);
         _glTex["ext_win"] = UploadTex(TextureCache.ExteriorWindow);
         _glTex["alien_ext"] = UploadTex(TextureCache.AlienExterior);
         _glTex["alien_ext_win"] = UploadTex(TextureCache.AlienExteriorWindow);
-        _glTex["roof"] = UploadTex(TextureCache.Ceiling);
+        _glTex["hub_floor"] = UploadTex(TextureCache.HubFloor);
+        _glTex["hub_ceiling"] = UploadTex(TextureCache.HubCeiling);
+        _glTex["hub_corridor"] = UploadTex(TextureCache.HubCorridor);
     }
 
     private static int UploadTex(Bitmap? bmp)
@@ -256,7 +258,8 @@ void main(){
 
     // ── Geometry Building ───────────────────────────────────────
 
-    private static bool IsWallLike(int c) => c == (int)CellType.Wall || c == (int)CellType.Window;
+    private static bool IsWallLike(int c) => c == (int)CellType.Wall;
+    private HashSet<(int, int, WallDir)>? _winSet;
 
     private bool _emitToExt; // when true, quads go to _extBatches
 
@@ -365,15 +368,29 @@ void main(){
         }
 
         // Expand N layers of walls (one pass per layer, collect-then-mark)
+        // Window faces block expansion in their direction (hull flush at windows)
         for (int layer = 0; layer < (int)Math.Ceiling(State.HullPadding); layer++)
         {
             var toExpand = new List<(int y, int x)>();
             for (int gy = 1; gy <= h; gy++)
                 for (int gx = 1; gx <= w; gx++)
                     if (IsWallLike(fl.Map[gy, gx]) && !_hullInside[gy, gx])
-                        if ((gy > 1 && _hullInside[gy - 1, gx]) || (gy < h && _hullInside[gy + 1, gx]) ||
-                            (gx > 1 && _hullInside[gy, gx - 1]) || (gx < w && _hullInside[gy, gx + 1]))
-                            toExpand.Add((gy, gx));
+                    {
+                        bool reachable = false;
+                        if (gy > 1 && _hullInside[gy - 1, gx] &&
+                            (_winSet == null || !_winSet.Contains((gx, gy, WallDir.North))))
+                            reachable = true;
+                        if (gy < h && _hullInside[gy + 1, gx] &&
+                            (_winSet == null || !_winSet.Contains((gx, gy, WallDir.South))))
+                            reachable = true;
+                        if (gx > 1 && _hullInside[gy, gx - 1] &&
+                            (_winSet == null || !_winSet.Contains((gx, gy, WallDir.West))))
+                            reachable = true;
+                        if (gx < w && _hullInside[gy, gx + 1] &&
+                            (_winSet == null || !_winSet.Contains((gx, gy, WallDir.East))))
+                            reachable = true;
+                        if (reachable) toExpand.Add((gy, gx));
+                    }
             foreach (var (ey, ex) in toExpand)
                 _hullInside[ey, ex] = true;
         }
@@ -460,8 +477,8 @@ void main(){
     private void BuildGhostFloor(FloorData floor, bool alien, float alpha)
     {
         int w = floor.Width, h = floor.Height;
-        int floorTex = alien ? Tex("stone") : Tex("floor");
-        int wallTex = alien ? Tex("bricks") : Tex("wall_a");
+        int floorTex = alien ? Tex("bricks") : Tex("hub_floor");
+        int wallTex = alien ? Tex("bricks") : Tex("hub_corridor");
 
         for (int gy = 1; gy <= h; gy++)
         {
@@ -504,9 +521,17 @@ void main(){
     private void BuildFloorGeometry(FloorData floor, bool alien)
     {
         int w = floor.Width, h = floor.Height;
-        int wallTex = alien ? Tex("bricks") : Tex("wall_a");
+        int wallTex = alien ? Tex("bricks") : Tex("hub_corridor");
         int winTex = alien ? Tex("bricks") : Tex("wall_a_win");
-        int floorTex = alien ? Tex("stone") : Tex("floor");
+        int corrFloorTex = alien ? Tex("bricks") : Tex("hub_floor");
+        int corrCeilTex = alien ? Tex("bricks") : Tex("hub_ceiling");
+        int roomTex = alien ? Tex("bricks") : Tex("wall_a");
+
+        // Build window face lookup
+        _winSet = new HashSet<(int, int, WallDir)>();
+        if (floor.Windows != null)
+            foreach (var wf in floor.Windows)
+                _winSet.Add((wf.GX, wf.GY, wf.Dir));
 
         if (ShowExterior)
             ComputeHullMask(floor, w, h);
@@ -524,13 +549,8 @@ void main(){
 
                 if (IsWallLike(ct))
                 {
-                    bool isWin = ct == (int)CellType.Window;
-                    var room = floor.RoomAt(gx, gy);
                     Color wc = Color.FromArgb(160, 155, 165);
-                    if (room != null && RoomColors.ContainsKey(room.Type))
-                        wc = Lerp(wc, RoomColors[room.Type], 0.3f);
 
-                    int sideTex = isWin ? winTex : wallTex;
                     Color sc1 = Darken(wc, 0.6f), sc2 = Darken(wc, 0.75f);
 
                     bool n = gy > 1 && !IsWallLike(floor.Map[gy - 1, gx]);
@@ -546,18 +566,27 @@ void main(){
                         e = e && _hullInside[gy, gx + 1];
                     }
 
-                    if (n) WallQuad(sideTex, x0, yb, z0, x1, yb, z0, x1, yt, z0, x0, yt, z0, sc1);
-                    if (s) WallQuad(sideTex, x1, yb, z1, x0, yb, z1, x0, yt, z1, x1, yt, z1, sc1);
-                    if (we) WallQuad(sideTex, x0, yb, z1, x0, yb, z0, x0, yt, z0, x0, yt, z1, sc2);
-                    if (e) WallQuad(sideTex, x1, yb, z0, x1, yb, z1, x1, yt, z1, x1, yt, z0, sc2);
+                    // Pick wall texture per-face: room faces get wall_a, corridor faces get corridor tex
+                    int nTex = (n && floor.RoomAt(gx, gy - 1) != null) ? roomTex : wallTex;
+                    int sTex = (s && floor.RoomAt(gx, gy + 1) != null) ? roomTex : wallTex;
+                    int weTex = (we && floor.RoomAt(gx - 1, gy) != null) ? roomTex : wallTex;
+                    int eTex = (e && floor.RoomAt(gx + 1, gy) != null) ? roomTex : wallTex;
+
+                    if (n) WallQuad(_winSet.Contains((gx, gy, WallDir.North)) ? winTex : nTex, x0, yb, z0, x1, yb, z0, x1, yt, z0, x0, yt, z0, sc1);
+                    if (s) WallQuad(_winSet.Contains((gx, gy, WallDir.South)) ? winTex : sTex, x1, yb, z1, x0, yb, z1, x0, yt, z1, x1, yt, z1, sc1);
+                    if (we) WallQuad(_winSet.Contains((gx, gy, WallDir.West)) ? winTex : weTex, x0, yb, z1, x0, yb, z0, x0, yt, z0, x0, yt, z1, sc2);
+                    if (e) WallQuad(_winSet.Contains((gx, gy, WallDir.East)) ? winTex : eTex, x1, yb, z0, x1, yb, z1, x1, yt, z1, x1, yt, z0, sc2);
                 }
                 else
                 {
                     var room = floor.RoomAt(gx, gy);
+                    bool inRoom = room != null;
                     Color fc = Color.FromArgb(130, 130, 125);
-                    if (room != null && RoomColors.ContainsKey(room.Type))
+                    if (inRoom && RoomColors.ContainsKey(room.Type))
                         fc = Lerp(fc, RoomColors[room.Type], 0.25f);
-                    FlatQuad(floorTex, x0, yb, z0, x1, z1, fc);
+                    FlatQuad(corrFloorTex, x0, yb, z0, x1, z1, fc);
+                    Color cc = Darken(fc, 0.7f);
+                    FlatQuad(corrCeilTex, x0, yt, z1, x1, z0, cc);
                 }
             }
         }
@@ -595,8 +624,6 @@ void main(){
             {
                 if (!_hullInside[gy, gx]) continue;
 
-                bool isWin = floor.Map[gy, gx] == (int)CellType.Window;
-                int ft = isWin ? extWin : extW;
                 float x0 = (gx - 1) * Cell, x1 = gx * Cell;
                 float z0 = (gy - 1) * Cell, z1 = gy * Cell;
                 float yb = _yOff, yt = _yOff + ExtH;
@@ -612,9 +639,11 @@ void main(){
                 bool cSW = oS && oW && c > 0;
                 bool cSE = oS && oE && c > 0;
 
+                // Per-face window texture selection
                 // North wall (x0,z0) to (x1,z0) — trimmed at corners
                 if (oN)
                 {
+                    int ft = _winSet != null && _winSet.Contains((gx, gy, WallDir.North)) ? extWin : extW;
                     float nx0 = cNW ? x0 + c : x0;
                     float nx1 = cNE ? x1 - c : x1;
                     if (nx0 < nx1)
@@ -623,6 +652,7 @@ void main(){
                 // South wall (x1,z1) to (x0,z1)
                 if (oS)
                 {
+                    int ft = _winSet != null && _winSet.Contains((gx, gy, WallDir.South)) ? extWin : extW;
                     float sx0 = cSW ? x0 + c : x0;
                     float sx1 = cSE ? x1 - c : x1;
                     if (sx0 < sx1)
@@ -631,6 +661,7 @@ void main(){
                 // West wall (x0,z1) to (x0,z0)
                 if (oW)
                 {
+                    int ft = _winSet != null && _winSet.Contains((gx, gy, WallDir.West)) ? extWin : extW;
                     float wz0 = cNW ? z0 + c : z0;
                     float wz1 = cSW ? z1 - c : z1;
                     if (wz0 < wz1)
@@ -639,28 +670,29 @@ void main(){
                 // East wall (x1,z0) to (x1,z1)
                 if (oE)
                 {
+                    int ft = _winSet != null && _winSet.Contains((gx, gy, WallDir.East)) ? extWin : extW;
                     float ez0 = cNE ? z0 + c : z0;
                     float ez1 = cSE ? z1 - c : z1;
                     if (ez0 < ez1)
                         WallQuad(ft, x1, yb, ez0, x1, yb, ez1, x1, yt, ez1, x1, yt, ez0, sE);
                 }
 
-                // Diagonal chamfer walls at corners
+                // Diagonal chamfer walls at corners (always use base exterior texture)
                 if (cNW)
-                    WallQuad(ft, x0, yb, z0 + c, x0 + c, yb, z0, x0 + c, yt, z0, x0, yt, z0 + c, sD);
+                    WallQuad(extW, x0, yb, z0 + c, x0 + c, yb, z0, x0 + c, yt, z0, x0, yt, z0 + c, sD);
                 if (cNE)
-                    WallQuad(ft, x1 - c, yb, z0, x1, yb, z0 + c, x1, yt, z0 + c, x1 - c, yt, z0, sD);
+                    WallQuad(extW, x1 - c, yb, z0, x1, yb, z0 + c, x1, yt, z0 + c, x1 - c, yt, z0, sD);
                 if (cSW)
-                    WallQuad(ft, x0 + c, yb, z1, x0, yb, z1 - c, x0, yt, z1 - c, x0 + c, yt, z1, sD);
+                    WallQuad(extW, x0 + c, yb, z1, x0, yb, z1 - c, x0, yt, z1 - c, x0 + c, yt, z1, sD);
                 if (cSE)
-                    WallQuad(ft, x1, yb, z1 - c, x1 - c, yb, z1, x1 - c, yt, z1, x1, yt, z1 - c, sD);
+                    WallQuad(extW, x1, yb, z1 - c, x1 - c, yb, z1, x1 - c, yt, z1, x1, yt, z1 - c, sD);
             }
         }
 
         // Roof: cover inside cells where no floor exists above, with chamfered corners
         if (ShowRoof)
         {
-            int roofTex = Tex("roof");
+            int roofTex = alien ? Tex("bricks") : Tex("hub_ceiling");
             Color rc = Darken(ec, 0.85f);
             float roofY = _yOff + ExtH;
             for (int gy = 1; gy <= h; gy++)
@@ -674,7 +706,7 @@ void main(){
 
                     if (c <= 0)
                     {
-                        FlatQuad(roofTex, x0, roofY, z0, x1, z1, rc);
+                        FlatQuad(roofTex, x0, roofY, z1, x1, z0, rc);
                         continue;
                     }
 
@@ -709,8 +741,8 @@ void main(){
                         var b = pts[(i + 1) % pts.Count];
                         Tri(roofTex,
                             cx, roofY, cz, cu, cv,
-                            a.x, roofY, a.z, (a.x - x0) * invW, (a.z - z0) * invH,
                             b.x, roofY, b.z, (b.x - x0) * invW, (b.z - z0) * invH,
+                            a.x, roofY, a.z, (a.x - x0) * invW, (a.z - z0) * invH,
                             rc);
                     }
                 }
@@ -777,9 +809,12 @@ void main(){
         GL.BindVertexArray(_vao);
 
         // Pass 1: interior geometry
+        GL.Enable(EnableCap.Blend);
+        GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
         DrawBatches(_batches);
         // Pass 2: exterior geometry (filled)
         DrawBatches(_extBatches);
+        GL.Disable(EnableCap.Blend);
         // Pass 3: exterior wireframe overlay
         if (ShowExterior && ShowWireframe)
         {

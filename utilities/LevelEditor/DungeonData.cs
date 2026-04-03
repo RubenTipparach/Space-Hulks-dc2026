@@ -27,7 +27,15 @@ public enum CellType
 {
     Open = 0,
     Wall = 1,
-    Window = 2,
+}
+
+public enum WallDir { North, South, East, West }
+
+public class WindowFace
+{
+    public int GX { get; set; }
+    public int GY { get; set; }
+    public WallDir Dir { get; set; }
 }
 
 public enum ShipType
@@ -139,6 +147,19 @@ public class FloorData
     public List<LootData> Loot { get; set; } = new();
     public List<OfficerData> Officers { get; set; } = new();
     public List<NpcData> Npcs { get; set; } = new();
+    public List<WindowFace> Windows { get; set; } = new();
+
+    public bool HasWindow(int gx, int gy, WallDir dir) =>
+        Windows.Any(w => w.GX == gx && w.GY == gy && w.Dir == dir);
+
+    public void ToggleWindow(int gx, int gy, WallDir dir)
+    {
+        int idx = Windows.FindIndex(w => w.GX == gx && w.GY == gy && w.Dir == dir);
+        if (idx >= 0)
+            Windows.RemoveAt(idx);
+        else
+            Windows.Add(new WindowFace { GX = gx, GY = gy, Dir = dir });
+    }
 
     public FloorData()
     {
