@@ -229,7 +229,7 @@ static const int elem_icon_stex[] = {
 };
 
 /* Enemy intent types */
-enum { INTENT_ATTACK, INTENT_MOVE };
+enum { INTENT_ATTACK, INTENT_MOVE, INTENT_DEFEND, INTENT_BUFF };
 
 typedef struct {
     const char *name;
@@ -237,13 +237,15 @@ typedef struct {
     int damage;
     int attack_range;  /* distance at which this enemy attacks */
     int ranged;        /* 1 = ranged attack, 0 = melee */
+    int base_defense;  /* base defense (damage reduction per hit) */
+    const char *ability; /* short ability description */
 } enemy_template;
 
 static const enemy_template enemy_templates[] = {
-    [ENEMY_LURKER]    = { "LURKER",     8,  2, 2, 1 },  /* ranged: attacks at dist <= 2 */
-    [ENEMY_BRUTE]     = { "BRUTE",     18,  5, 1, 0 },  /* melee: attacks at dist <= 1 */
-    [ENEMY_SPITTER]   = { "SPITTER",   10,  3, 3, 1 },  /* ranged: attacks at dist <= 3 */
-    [ENEMY_HIVEGUARD] = { "HIVEGUARD", 24,  4, 2, 1 },  /* ranged: attacks at dist <= 2 */
+    [ENEMY_LURKER]    = { "LURKER",     8,  2, 2, 1, 0, "Evasive" },
+    [ENEMY_BRUTE]     = { "BRUTE",     18,  5, 1, 0, 2, "Rage" },
+    [ENEMY_SPITTER]   = { "SPITTER",   10,  3, 3, 1, 0, "Acid Spit" },
+    [ENEMY_HIVEGUARD] = { "HIVEGUARD", 24,  4, 2, 1, 1, "Shield Wall" },
 };
 
 /* ── Combat state ────────────────────────────────────────────────── */
@@ -260,14 +262,20 @@ typedef struct {
     int distance;      /* this enemy's distance from player (0=melee, max 5) */
     int damage;
     int ranged;
-    int intent;        /* INTENT_ATTACK or INTENT_MOVE */
+    int intent;        /* INTENT_ATTACK, INTENT_MOVE, INTENT_DEFEND, INTENT_BUFF */
     int flash_timer;   /* > 0 = flashing white */
     bool alive;
+    /* Defense & buffs (reset each turn) */
+    int shield;          /* damage absorbed before HP, expires next turn */
+    int atk_buff;        /* +damage this turn, expires next turn */
     /* Elemental status effects */
     int ice_turns;       /* > 0: frozen, skip move every other turn, reduced dmg */
     int acid_stacks;     /* > 0: take acid_stacks dmg each turn, stackable */
     int fire_turns;      /* > 0: burning, take fire dmg each turn, can spread */
     int lightning_stun;  /* > 0: stunned, can't move or attack */
+    /* Visual animation state */
+    float visual_scale;  /* current rendered scale (lerps toward target) */
+    float wobble_phase;  /* idle wobble sine phase (radians) */
 } combat_enemy;
 
 typedef struct {
@@ -327,11 +335,17 @@ typedef struct {
     float drag_x, drag_y;  /* current drag position (framebuffer coords) */
     float drag_start_x, drag_start_y;
 
+    /* Card animation state */
+    float card_offsets[COMBAT_HAND_MAX];  /* horizontal lerp offset per card */
+    float card_lifts[COMBAT_HAND_MAX];   /* vertical lerp offset per card */
+    int prev_cursor;                     /* previous cursor for detecting changes */
+    int frame_counter;                   /* global frame counter for animations */
+
     /* Elemental state */
     int fire_atk_bonus;  /* +1 per burning enemy, boosts player attack dmg */
     bool player_deflect; /* true = deflector active, reflects damage back */
 
-    /* Enemy info popup */
+    /* Enemy inspect popup */
     int info_popup_enemy;    /* -1 = none, else enemy index to show details for */
     int info_popup_timer;    /* auto-dismiss timer */
 
@@ -444,6 +458,23 @@ static void combat_generate_rewards(combat_state *cs) {
 
 static void combat_log(combat_state *cs, const char *fmt, ...); /* forward decl */
 
+/* Target scale for a given distance (6 distinct levels, 0-5) */
+static float combat_target_scale(int distance) {
+    switch (distance) {
+        case 0: return 4.0f;
+        case 1: return 3.5f;
+        case 2: return 3.0f;
+        case 3: return 2.5f;
+        case 4: return 2.0f;
+        default: return 1.5f; /* distance 5+ */
+    }
+}
+
+/* Lerp helper */
+static float combat_lerpf(float a, float b, float t) {
+    return a + (b - a) * t;
+}
+
 static void combat_init(combat_state *cs, int player_class, int floor, int cell_alien_type) {
     memset(cs, 0, sizeof(*cs));
     cs->player_class = player_class;
@@ -485,10 +516,19 @@ static void combat_init(combat_state *cs, int player_class, int floor, int cell_
         cs->enemies[i].intent = INTENT_MOVE;
         cs->enemies[i].flash_timer = 0;
         cs->enemies[i].alive = true;
+        /* Init visual animation */
+        cs->enemies[i].wobble_phase = i * 1.5f; /* stagger wobble */
+        cs->enemies[i].visual_scale = combat_target_scale(cs->enemies[i].distance);
     }
 
     cs->cursor = 0;
     cs->target = 0;
+    cs->prev_cursor = -1;
+    cs->frame_counter = 0;
+    for (int i = 0; i < COMBAT_HAND_MAX; i++) {
+        cs->card_offsets[i] = 0;
+        cs->card_lifts[i] = 0;
+    }
     cs->phase = CPHASE_DRAW;
     cs->turn = 1;
     cs->anim_timer = 30;
@@ -563,7 +603,19 @@ static void combat_roll_intents(combat_state *cs) {
             continue;
         }
         bool in_range = (e->distance <= e->attack_range);
-        e->intent = in_range ? INTENT_ATTACK : INTENT_MOVE;
+        if (!in_range) {
+            e->intent = INTENT_MOVE;
+            continue;
+        }
+        /* In range: usually attack, but sometimes defend or buff based on type */
+        int roll = dng_rng_int(100);
+        if (e->type == ENEMY_HIVEGUARD && roll < 25) {
+            e->intent = INTENT_DEFEND; /* 25% chance: shield wall */
+        } else if (e->type == ENEMY_BRUTE && roll < 20) {
+            e->intent = INTENT_BUFF;   /* 20% chance: rage (+atk) */
+        } else {
+            e->intent = INTENT_ATTACK;
+        }
     }
 }
 
@@ -581,11 +633,26 @@ static int combat_first_alive_enemy(combat_state *cs) {
 
 static void combat_deal_damage_enemy(combat_state *cs, int idx, int dmg) {
     if (idx < 0 || idx >= cs->enemy_count || !cs->enemies[idx].alive) return;
-    cs->enemies[idx].hp -= dmg;
-    cs->enemies[idx].flash_timer = 10;
-    if (cs->enemies[idx].hp <= 0) {
-        cs->enemies[idx].hp = 0;
-        cs->enemies[idx].alive = false;
+    combat_enemy *e = &cs->enemies[idx];
+    /* Base defense reduces damage */
+    int def = enemy_templates[e->type].base_defense;
+    dmg -= def;
+    if (dmg < 1) dmg = 1;
+    /* Shield absorbs before HP */
+    if (e->shield > 0) {
+        int absorbed = dmg < e->shield ? dmg : e->shield;
+        e->shield -= absorbed;
+        dmg -= absorbed;
+        if (absorbed > 0)
+            combat_log(cs, "  %s shield absorb %d", enemy_templates[e->type].name, absorbed);
+    }
+    if (dmg > 0) {
+        e->hp -= dmg;
+        e->flash_timer = 10;
+        if (e->hp <= 0) {
+            e->hp = 0;
+            e->alive = false;
+        }
     }
 }
 
@@ -996,6 +1063,10 @@ static void combat_tick_status_effects(combat_state *cs) {
         combat_enemy *e = &cs->enemies[i];
         if (!e->alive) continue;
 
+        /* Clear one-turn buffs from previous turn */
+        e->shield = 0;
+        e->atk_buff = 0;
+
         /* Acid: deal damage per stack each turn */
         if (e->acid_stacks > 0) {
             e->hp -= e->acid_stacks;
@@ -1091,6 +1162,22 @@ static void combat_begin_enemy_turn(combat_state *cs) {
         }
     }
 
+    /* Execute defend/buff intents (instant, before attacks) */
+    for (int i = 0; i < cs->enemy_count; i++) {
+        combat_enemy *e = &cs->enemies[i];
+        if (!e->alive) continue;
+        if (e->lightning_stun > 0 || e->flash_timer > 10) continue;
+        if (e->intent == INTENT_DEFEND) {
+            e->shield = 4 + enemy_templates[e->type].base_defense;
+            combat_log(cs, "%s raises shield (%d)",
+                       enemy_templates[e->type].name, e->shield);
+        } else if (e->intent == INTENT_BUFF) {
+            e->atk_buff = 3;
+            combat_log(cs, "%s enrages (+%d atk)",
+                       enemy_templates[e->type].name, e->atk_buff);
+        }
+    }
+
     cs->enemy_atk_idx = combat_next_attacker(cs, 0);
     if (cs->enemy_atk_idx < 0) {
         /* No enemies can attack — skip straight to next draw phase */
@@ -1105,6 +1192,8 @@ static void combat_begin_enemy_turn(combat_state *cs) {
 /* ── Update ──────────────────────────────────────────────────────── */
 
 static void combat_update(combat_state *cs) {
+    cs->frame_counter++;
+
     /* Decrement timers */
     if (cs->message_timer > 0) cs->message_timer--;
     if (cs->player_flash_timer > 0) cs->player_flash_timer--;
@@ -1115,6 +1204,41 @@ static void combat_update(combat_state *cs) {
     }
     for (int i = 0; i < cs->enemy_count; i++)
         if (cs->enemies[i].flash_timer > 0) cs->enemies[i].flash_timer--;
+
+    /* ── Animate enemies: lerp scale + wobble ──────────────────── */
+    for (int i = 0; i < cs->enemy_count; i++) {
+        combat_enemy *e = &cs->enemies[i];
+        if (!e->alive) continue;
+        /* Lerp visual scale toward target */
+        float target = combat_target_scale(e->distance);
+        e->visual_scale = combat_lerpf(e->visual_scale, target, 0.12f);
+        /* Idle wobble (sine wave on phase) */
+        e->wobble_phase += 0.04f;
+        if (e->wobble_phase > 6.283f) e->wobble_phase -= 6.283f;
+    }
+
+    /* ── Animate cards: lerp offsets and lifts ─────────────────── */
+    {
+        float lerp_speed = 0.18f;
+        int sel = (cs->phase == CPHASE_PLAYER_TURN) ? cs->cursor : -1;
+        for (int i = 0; i < cs->hand_count; i++) {
+            /* Target lift: selected card rises */
+            float target_lift = (i == sel) ? -20.0f : 0.0f;
+            cs->card_lifts[i] = combat_lerpf(cs->card_lifts[i], target_lift, lerp_speed);
+
+            /* Target offset: cards push apart from selected */
+            float target_off = 0.0f;
+            if (sel >= 0 && i != sel) {
+                target_off = (i < sel) ? -12.0f : 12.0f;
+            }
+            cs->card_offsets[i] = combat_lerpf(cs->card_offsets[i], target_off, lerp_speed);
+        }
+        /* Reset offsets for cards no longer in hand */
+        for (int i = cs->hand_count; i < COMBAT_HAND_MAX; i++) {
+            cs->card_offsets[i] = 0;
+            cs->card_lifts[i] = 0;
+        }
+    }
 
     if (cs->phase == CPHASE_DRAW) {
         if (cs->anim_timer > 0) {
@@ -1157,7 +1281,7 @@ static void combat_update(combat_state *cs) {
             combat_enemy *e = &cs->enemies[cs->enemy_atk_idx];
             char buf[64];
 
-            int dmg = e->damage;
+            int dmg = e->damage + e->atk_buff;
             if (e->ice_turns > 0) dmg = dmg / 2;
             if (dmg < 1) dmg = 1;
             combat_log(cs, "%s attacks for %d",
@@ -1274,10 +1398,10 @@ static void combat_action_move_back(combat_state *cs) {
 
 static uint32_t card_fan_buf[CARD_FAN_W * CARD_FAN_H];
 
-/* Compute fan position for card i. Returns bottom-center (cx, cy) and angle. */
+/* Compute fan position for card i. Returns bottom-center (cx, cy) and angle.
+   Incorporates lerped card_offsets and card_lifts for smooth animation. */
 static void combat_card_fan_pos(const combat_state *cs, int i,
                                 float *out_cx, float *out_cy, float *out_angle) {
-    bool is_sel = (i == cs->cursor && cs->phase == CPHASE_PLAYER_TURN);
     int n = cs->hand_count;
     float mid = (n > 1) ? (n - 1) * 0.5f : 0;
     float t = (n > 1) ? (i - mid) / mid : 0;  /* -1 to 1 */
@@ -1287,9 +1411,14 @@ static void combat_card_fan_pos(const combat_state *cs, int i,
     float total = (n - 1) * spacing;
     float cx = (FB_WIDTH - total) * 0.5f + i * spacing;
 
+    /* Apply lerped horizontal offset */
+    if (i < COMBAT_HAND_MAX) cx += cs->card_offsets[i];
+
     /* Vertical: bottom of card near screen bottom, edges dip lower */
     float cy = (float)FB_HEIGHT + 4.0f + t * t * 10.0f;
-    if (is_sel) cy -= 16;
+
+    /* Apply lerped vertical lift (replaces old instant is_sel offset) */
+    if (i < COMBAT_HAND_MAX) cy += cs->card_lifts[i];
 
     /* Fan angle: edge cards tilt outward */
     float angle = t * 0.10f;
@@ -1347,6 +1476,12 @@ static bool combat_point_in_fan_card(float px, float py,
 /* ── Touch drag input (Slay the Spire style) ─────────────────────── */
 
 static void combat_touch_began(combat_state *cs, float fx, float fy) {
+    /* Close inspect popup on any tap */
+    if (cs->info_popup_enemy >= 0) {
+        cs->info_popup_enemy = -1;
+        return;
+    }
+
     /* Pile viewer overlay blocks input (handled by draw via ui_button) */
     if (cs->deck_view_open || cs->discard_view_open) return;
 
@@ -1452,20 +1587,18 @@ static void combat_touch_began(combat_state *cs, float fx, float fy) {
         }
     }
 
-    /* Tap on enemy to target + show info popup */
+    /* Tap on enemy: first tap targets, second tap on same target opens inspect */
     if (cs->enemy_count > 0) {
         int spacing = FB_WIDTH / (cs->enemy_count + 1);
         for (int i = 0; i < cs->enemy_count; i++) {
             if (!cs->enemies[i].alive) continue;
             int ecx = spacing * (i + 1);
             if (fx >= ecx - 24 && fx <= ecx + 24 && fy >= 10 && fy <= 90) {
-                cs->target = i;
-                /* Toggle info popup: tap same enemy again to dismiss */
-                if (cs->info_popup_enemy == i) {
-                    cs->info_popup_enemy = -1;
+                if (cs->target == i) {
+                    cs->info_popup_enemy = i; /* already targeted, open details */
+                    cs->info_popup_timer = 180;
                 } else {
-                    cs->info_popup_enemy = i;
-                    cs->info_popup_timer = 180; /* auto-dismiss after ~3 seconds */
+                    cs->target = i;
                 }
                 return;
             }
@@ -1512,11 +1645,9 @@ static void combat_touch_ended(combat_state *cs, float fx, float fy) {
         for (int i = 0; i < cs->enemy_count; i++) {
             if (!cs->enemies[i].alive) continue;
             int ecx = spacing * (i + 1);
-            int escale = 3;
-            if (cs->enemies[i].distance >= 4) escale = 1;
-            else if (cs->enemies[i].distance >= 2) escale = 2;
-            int esz = 16 * escale;
-            int esy = 10 + cs->enemies[i].distance * 6;
+            float efs = cs->enemies[i].visual_scale;
+            int esz = (int)(16.0f * efs + 0.5f);
+            int esy = 10 + cs->enemies[i].distance * 8;
             if (fx >= ecx - esz && fx <= ecx + esz && fy < esy + esz + 40) {
                 hit_enemy = i;
                 break;
@@ -1940,30 +2071,31 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
             combat_enemy *e = &combat.enemies[i];
             int cx = spacing * (i + 1);
 
-            /* Scale sprite by distance: dist 0 = scale 3, dist 5 = scale 1 */
-            int scale = 3;
-            if (e->distance >= 4) scale = 1;
-            else if (e->distance >= 2) scale = 2;
-            int spr_sz = 16 * scale;
+            /* Use lerped float scale for smooth approach animation */
+            float fscale = e->visual_scale;
+            int spr_sz = (int)(16.0f * fscale + 0.5f);
             /* Position: farther enemies drawn higher (more distant) */
             int sprite_x = cx - spr_sz / 2;
-            int sprite_y = 10 + e->distance * 6;
+            int sprite_y = 10 + e->distance * 8;
+
+            /* Idle wobble: gentle sway left-right */
+            int wobble_x = (int)(sinf(e->wobble_phase) * (2.0f + fscale * 0.5f));
 
             if (e->alive) {
                 const uint32_t *sprite = spr_enemy_table[e->type];
 
-                /* Wiggle offset during this enemy's attack animation */
-                int wiggle_x = 0;
+                /* Attack wiggle overrides idle wobble */
+                int anim_x = wobble_x;
                 if (combat.phase == CPHASE_ENEMY_TURN &&
                     combat.enemy_atk_idx == i &&
                     combat.enemy_atk_timer > ENEMY_ATK_HIT_FRAME) {
-                    wiggle_x = ((combat.enemy_atk_timer % 4) < 2) ? 3 : -3;
+                    anim_x = ((combat.enemy_atk_timer % 4) < 2) ? 3 : -3;
                 }
 
                 if (e->flash_timer > 0 && (e->flash_timer & 2))
-                    spr_draw_flash(px, W, H, sprite, sprite_x + wiggle_x, sprite_y, scale);
+                    spr_draw_flash_f(px, W, H, sprite, sprite_x + anim_x, sprite_y, fscale);
                 else
-                    spr_draw(px, W, H, sprite, sprite_x + wiggle_x, sprite_y, scale);
+                    spr_draw_f(px, W, H, sprite, sprite_x + anim_x, sprite_y, fscale);
 
                 /* Target highlight (yellow border around selected enemy) */
                 if (i == combat.target && combat.phase == CPHASE_PLAYER_TURN) {
@@ -1980,8 +2112,14 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
                     } else if (e->intent == INTENT_MOVE) {
                         sr_draw_text_shadow(px, W, H, cx - 6, sprite_y - 10,
                                             ">>", 0xFFCC8844, shadow);
+                    } else if (e->intent == INTENT_DEFEND) {
+                        sr_draw_text_shadow(px, W, H, cx - 10, sprite_y - 10,
+                                            "DEF", 0xFFFFCC44, shadow);
+                    } else if (e->intent == INTENT_BUFF) {
+                        sr_draw_text_shadow(px, W, H, cx - 8, sprite_y - 10,
+                                            "BUFF", 0xFFFF8844, shadow);
                     } else if (e->intent == INTENT_ATTACK) {
-                        int dmg = e->damage / 2; if (dmg < 1) dmg = 1;
+                        int dmg = (e->damage + e->atk_buff) / 2; if (dmg < 1) dmg = 1;
                         if (e->ice_turns > 0) { dmg = dmg / 2; if (dmg < 1) dmg = 1; }
                         char intent_buf[16];
                         snprintf(intent_buf, sizeof(intent_buf), "%d", dmg);
@@ -1990,11 +2128,12 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
                     }
                 }
             } else {
-                int sprite_y_dead = 10 + e->distance * 6;
+                int sprite_y_dead = 10 + e->distance * 8;
+                (void)wobble_x; /* unused for dead enemies */
                 sr_draw_text_shadow(px, W, H, cx - 12, sprite_y_dead + 12, "DEAD", 0xFF444444, shadow);
             }
 
-            /* Info below sprite */
+            /* Info below sprite — tight, just 2px gap */
             int info_y = sprite_y + spr_sz + 2;
 
             /* Enemy name + weakness indicator */
@@ -2017,22 +2156,33 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
                 }
             }
 
-            /* HP bar + distance */
+            /* HP bar + attack indicator */
             if (e->alive) {
-                combat_draw_bar(px, W, H, cx - 18, info_y + 10, 36, 4,
+                combat_draw_bar(px, W, H, cx - 18, info_y + 8, 36, 3,
                                 e->hp, e->hp_max, 0xFF2222CC, 0xFF333333);
                 char hpbuf[16];
                 snprintf(hpbuf, sizeof(hpbuf), "%d/%d", e->hp, e->hp_max);
-                sr_draw_text_shadow(px, W, H, cx - 10, info_y + 16, hpbuf, gray, shadow);
+                sr_draw_text_shadow(px, W, H, cx - 10, info_y + 12, hpbuf, gray, shadow);
 
-                /* Distance + range indicator */
-                char distbuf[16];
-                snprintf(distbuf, sizeof(distbuf), "D:%d R:%d", e->distance, e->attack_range);
-                sr_draw_text_shadow(px, W, H, cx - 16, info_y + 26, distbuf, dim, shadow);
+                /* Attack damage indicator (red when in range) */
+                {
+                    int edmg = e->damage + e->atk_buff;
+                    if (e->ice_turns > 0) { edmg = edmg / 2; if (edmg < 1) edmg = 1; }
+                    bool in_range = (e->distance <= e->attack_range);
+                    uint32_t atk_color = in_range ? 0xFF4444FF : dim;
+                    char atkbuf[16];
+                    snprintf(atkbuf, sizeof(atkbuf), "x%d", edmg);
+                    sr_draw_text_shadow(px, W, H, cx - 16, info_y + 20, "/", atk_color, shadow);
+                    sr_draw_text_shadow(px, W, H, cx - 10, info_y + 20, atkbuf, atk_color, shadow);
+                    if (e->shield > 0) {
+                        char shbuf[8]; snprintf(shbuf, sizeof(shbuf), "[%d]", e->shield);
+                        sr_draw_text_shadow(px, W, H, cx + 6, info_y + 20, shbuf, 0xFFFFCC44, shadow);
+                    }
+                }
 
                 /* Status effect indicators */
                 int sx = cx - 18;
-                int sy = info_y + 36;
+                int sy = info_y + 28;
                 if (e->ice_turns > 0) {
                     char ibuf[8]; snprintf(ibuf, sizeof(ibuf), "I%d", e->ice_turns);
                     sr_draw_text_shadow(px, W, H, sx, sy, ibuf, 0xFFFFCC44, shadow);
@@ -2289,11 +2439,9 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
             for (int i = 0; i < combat.enemy_count; i++) {
                 if (!combat.enemies[i].alive) continue;
                 int ecx = espacing * (i + 1);
-                int escale = 3;
-                if (combat.enemies[i].distance >= 4) escale = 1;
-                else if (combat.enemies[i].distance >= 2) escale = 2;
-                int esz = 16 * escale;
-                int esy = 10 + combat.enemies[i].distance * 6;
+                float efs = combat.enemies[i].visual_scale;
+                int esz = (int)(16.0f * efs + 0.5f);
+                int esy = 10 + combat.enemies[i].distance * 8;
                 if (combat.drag_x >= ecx - esz && combat.drag_x <= ecx + esz && combat.drag_y < esy + esz + 40) {
                     /* Check weakness for elemental cards */
                     bool is_weak = (elem >= 0 && g_weakness.initialized &&
@@ -2319,62 +2467,7 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
         }
     }
 
-    /* ── Enemy info popup (weakness details) ──────────────────── */
-    if (combat.info_popup_enemy >= 0 && combat.info_popup_enemy < combat.enemy_count
-        && combat.enemies[combat.info_popup_enemy].alive) {
-        combat_enemy *pe = &combat.enemies[combat.info_popup_enemy];
-        int etype = pe->type;
-
-        /* Popup box */
-        int pw = 120, ph = 70;
-        int ppx = (W - pw) / 2;
-        int ppy = 100;
-
-        /* Dark background */
-        combat_draw_rect(px, W, H, ppx, ppy, pw, ph, 0xEE111122);
-        combat_draw_rect_outline(px, W, H, ppx, ppy, pw, ph, 0xFFCCCCCC);
-
-        /* Enemy name */
-        sr_draw_text_shadow(px, W, H, ppx + 4, ppy + 4,
-                            enemy_templates[etype].name, white, shadow);
-
-        /* Weakness info */
-        if (g_weakness.initialized && g_weakness.weakness_known[etype]) {
-            int wk = g_weakness.weakness[etype];
-            /* Draw element icon */
-            spr_draw_tex(px, W, H, &stextures[elem_icon_stex[wk]],
-                         ppx + pw - 20, ppy + 4, 1);
-            char wbuf[32];
-            snprintf(wbuf, sizeof(wbuf), "WEAK: %s", elem_names[wk]);
-            /* Draw twice offset for bold effect */
-            sr_draw_text_shadow(px, W, H, ppx + 4, ppy + 16, wbuf, elem_colors[wk], shadow);
-            sr_draw_text_shadow(px, W, H, ppx + 5, ppy + 16, wbuf, elem_colors[wk], shadow);
-            sr_draw_text_shadow(px, W, H, ppx + 4, ppy + 28,
-                                "2x DMG!", 0xFF00FFFF, shadow);
-        } else {
-            sr_draw_text_shadow(px, W, H, ppx + 4, ppy + 16,
-                                "WEAKNESS: ???", 0xFF888888, shadow);
-            sr_draw_text_shadow(px, W, H, ppx + 4, ppy + 28,
-                                "Use elemental", 0xFF666666, shadow);
-            sr_draw_text_shadow(px, W, H, ppx + 4, ppy + 38,
-                                "cards to find!", 0xFF666666, shadow);
-        }
-
-        /* Show which elements have been tested */
-        int tx = ppx + 4;
-        int ty = ppy + 52;
-        for (int el = 0; el < ELEM_COUNT; el++) {
-            const char *eshort[] = { "I", "A", "F", "L" };
-            if (g_weakness.discovered[etype][el]) {
-                bool is_weak = (g_weakness.weakness[etype] == el);
-                uint32_t c = is_weak ? elem_colors[el] : 0xFF555555;
-                sr_draw_text_shadow(px, W, H, tx, ty, eshort[el], c, shadow);
-            } else {
-                sr_draw_text_shadow(px, W, H, tx, ty, "?", 0xFF444444, shadow);
-            }
-            tx += 14;
-        }
-    }
+    /* (Enemy info popup consolidated into inspect popup below) */
 
     /* ── Turn info (top right) ────────────────────────────────── */
     {
@@ -2530,6 +2623,139 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
             snprintf(sbuf, sizeof(sbuf), "W/S SCROLL");
             sr_draw_text_shadow(px, W, H, lx + lw/2 - 25, ly + lh - 12, sbuf, dim, shadow);
         }
+    }
+
+    /* ── Enemy inspect popup ──────────────────────────────────── */
+    if (combat.info_popup_enemy >= 0 && combat.info_popup_enemy < combat.enemy_count) {
+        combat_enemy *ie = &combat.enemies[combat.info_popup_enemy];
+        const enemy_template *it = &enemy_templates[ie->type];
+        int etype = ie->type;
+
+        /* Darken background */
+        for (int i = 0; i < W * H; i++) {
+            uint32_t c = px[i];
+            px[i] = ((c >> 24) << 24) |
+                    ((((c>>16)&0xFF)/2)<<16) |
+                    ((((c>>8)&0xFF)/2)<<8) |
+                    (((c)&0xFF)/2);
+        }
+
+        /* Panel */
+        int px0 = 30, py0 = 14, pw = W - 60, ph = 180;
+        combat_draw_rect(px, W, H, px0, py0, pw, ph, 0xFF0A0A14);
+        combat_draw_rect_outline(px, W, H, px0, py0, pw, ph, 0xFF6666CC);
+        combat_draw_rect_outline(px, W, H, px0+1, py0+1, pw-2, ph-2, 0xFF333366);
+
+        int tx = px0 + 8, ty = py0 + 6;
+
+        /* Name */
+        sr_draw_text_shadow(px, W, H, tx, ty, it->name, yellow, shadow);
+        sr_draw_text_shadow(px, W, H, px0 + pw - 30, ty, "[X]", 0xFFCC4444, shadow);
+        ty += 14;
+
+        /* HP */
+        {
+            char hpb[32];
+            snprintf(hpb, sizeof(hpb), "HP: %d/%d", ie->hp, ie->hp_max);
+            sr_draw_text_shadow(px, W, H, tx, ty, hpb, ie->alive ? white : 0xFF444444, shadow);
+            combat_draw_bar(px, W, H, tx + 80, ty + 1, 60, 5,
+                            ie->hp, ie->hp_max, 0xFF2222CC, 0xFF333333);
+        }
+        ty += 12;
+
+        /* Attack */
+        {
+            int edmg = ie->damage + ie->atk_buff;
+            char atkb[32];
+            snprintf(atkb, sizeof(atkb), "ATK: %d%s  RNG: %d",
+                     edmg, ie->atk_buff > 0 ? "(+)" : "",
+                     ie->attack_range);
+            sr_draw_text_shadow(px, W, H, tx, ty, atkb, white, shadow);
+        }
+        ty += 12;
+
+        /* Defense */
+        {
+            char defb[32];
+            snprintf(defb, sizeof(defb), "DEF: %d  SHIELD: %d",
+                     it->base_defense, ie->shield);
+            sr_draw_text_shadow(px, W, H, tx, ty, defb, white, shadow);
+        }
+        ty += 12;
+
+        /* Ability + Type */
+        {
+            char abb[48];
+            snprintf(abb, sizeof(abb), "%s  (%s)",
+                     it->ability, ie->ranged ? "Ranged" : "Melee");
+            sr_draw_text_shadow(px, W, H, tx, ty, abb, 0xFFCCBB88, shadow);
+        }
+        ty += 12;
+
+        /* Weakness info (from elemental discovery system) */
+        if (g_weakness.initialized && g_weakness.weakness_known[etype]) {
+            int wk = g_weakness.weakness[etype];
+            spr_draw_tex(px, W, H, &stextures[elem_icon_stex[wk]],
+                         tx, ty, 1);
+            char wbuf[32];
+            snprintf(wbuf, sizeof(wbuf), "WEAK: %s (2x)", elem_names[wk]);
+            sr_draw_text_shadow(px, W, H, tx + 18, ty + 2, wbuf, elem_colors[wk], shadow);
+        } else {
+            sr_draw_text_shadow(px, W, H, tx, ty, "WEAK: ???", 0xFF888888, shadow);
+            /* Show discovered elements */
+            int ex = tx + 64;
+            for (int el = 0; el < ELEM_COUNT; el++) {
+                const char *eshort[] = { "I", "A", "F", "L" };
+                if (g_weakness.discovered[etype][el]) {
+                    uint32_t c = 0xFF555555;
+                    sr_draw_text_shadow(px, W, H, ex, ty, eshort[el], c, shadow);
+                } else {
+                    sr_draw_text_shadow(px, W, H, ex, ty, "?", 0xFF444444, shadow);
+                }
+                ex += 12;
+            }
+        }
+        ty += 14;
+
+        /* Status effects (debuffs) */
+        sr_draw_text_shadow(px, W, H, tx, ty, "STATUS:", dim, shadow);
+        {
+            int sx = tx + 48;
+            bool has_status = false;
+            if (ie->ice_turns > 0) {
+                char b[16]; snprintf(b, sizeof(b), "ICE(%d)", ie->ice_turns);
+                sr_draw_text_shadow(px, W, H, sx, ty, b, 0xFFFFCC44, shadow);
+                sx += 46; has_status = true;
+            }
+            if (ie->acid_stacks > 0) {
+                char b[16]; snprintf(b, sizeof(b), "ACID(%d)", ie->acid_stacks);
+                sr_draw_text_shadow(px, W, H, sx, ty, b, 0xFF22CCAA, shadow);
+                sx += 50; has_status = true;
+            }
+            if (ie->fire_turns > 0) {
+                char b[16]; snprintf(b, sizeof(b), "FIRE(%d)", ie->fire_turns);
+                sr_draw_text_shadow(px, W, H, sx, ty, b, 0xFF2244FF, shadow);
+                sx += 50; has_status = true;
+            }
+            if (ie->lightning_stun > 0) {
+                char b[16]; snprintf(b, sizeof(b), "STUN(%d)", ie->lightning_stun);
+                sr_draw_text_shadow(px, W, H, sx, ty, b, 0xFFEEEE44, shadow);
+                sx += 50; has_status = true;
+            }
+            if (ie->atk_buff > 0) {
+                char b[16]; snprintf(b, sizeof(b), "RAGE(+%d)", ie->atk_buff);
+                sr_draw_text_shadow(px, W, H, sx, ty, b, 0xFFFF8844, shadow);
+                sx += 56; has_status = true;
+            }
+            if (!has_status) {
+                sr_draw_text_shadow(px, W, H, sx, ty, "None", dim, shadow);
+            }
+        }
+        ty += 14;
+
+        /* Tap to close hint */
+        sr_draw_text_shadow(px, W, H, px0 + pw/2 - 30, py0 + ph - 12,
+                            "TAP TO CLOSE", dim, shadow);
     }
 
     /* ── Pile viewer overlays ────────────────────────────────── */
