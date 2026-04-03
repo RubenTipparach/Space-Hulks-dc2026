@@ -153,6 +153,9 @@ typedef struct {
     combat_state combat_snap;
     int          saved_combat_room;
     bool         saved_console_combat;
+
+    /* Weakness system */
+    weakness_table weakness;
 } save_header;
 
 /* Variables used by save/load — declared here so they're visible to game_save/game_load */
@@ -231,6 +234,7 @@ static void game_save(void) {
     hdr.combat_snap           = combat;
     hdr.saved_combat_room     = current_combat_room;
     hdr.saved_console_combat  = console_combat;
+    hdr.weakness              = g_weakness;
 
     FILE *f = fopen(SAVE_FILE, "wb");
     if (!f) return;
@@ -300,6 +304,9 @@ static bool game_load(void) {
     dng_player_init(&dng_state.player,
                     hdr.player_gx, hdr.player_gy, hdr.player_dir);
     dng_initialized = true;
+
+    /* Restore weakness table */
+    g_weakness = hdr.weakness;
 
     /* Restore combat if saved mid-fight */
     if (hdr.in_combat) {
@@ -1059,6 +1066,10 @@ static void init(void) {
     stextures[STEX_CREW_QUARTERMASTER] = sr_texture_load("assets/sprites/crew_quartermaster.png");
     stextures[STEX_CREW_PRIVATE]       = sr_texture_load("assets/sprites/crew_private.png");
     stextures[STEX_CREW_DOCTOR]        = sr_texture_load("assets/sprites/crew_doctor.png");
+    stextures[STEX_ICON_ICE]           = sr_texture_load("assets/sprites/icon_ice.png");
+    stextures[STEX_ICON_ACID]          = sr_texture_load("assets/sprites/icon_acid.png");
+    stextures[STEX_ICON_FIRE]          = sr_texture_load("assets/sprites/icon_fire.png");
+    stextures[STEX_ICON_LIGHTNING]     = sr_texture_load("assets/sprites/icon_lightning.png");
 
     /* Build console textures from embedded sprite data for 3D billboard rendering */
     for (int rt = 1; rt < CONSOLE_TEX_COUNT && rt < ROOM_TYPE_COUNT; rt++) {
@@ -1452,6 +1463,8 @@ static void handle_screen_tap(float sx, float sy) {
                 if (class_select_cursor == ci) {
                     selected_class = ci;
                     player_persist_init(selected_class);
+                    /* Randomize enemy weaknesses for this run */
+                    weakness_init((uint32_t)(time(NULL) ^ (selected_class * 31337)));
                     player_scrap = 30;
                     player_sector = 0;
                     hub_generate(&g_hub);
