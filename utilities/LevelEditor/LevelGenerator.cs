@@ -131,23 +131,23 @@ public static class LevelGenerator
             }
         }
 
-        // Windows: one per room on the outer wall facing away from corridor
+        // Windows: one per room on the outer wall, facing toward the room interior.
+        // Rooms above corridor: S-facing window on wall above (visible from inside looking N)
+        // Rooms below corridor: N-facing window on wall below (visible from inside looking S)
         foreach (var room in f.Rooms)
         {
             int cx = room.CenterX;
             if (room.Y + room.Height <= midY)
             {
-                // Room above corridor — N window on wall row above room
                 int wy = room.Y - 1;
                 if (wy >= 1 && wy <= h && cx >= 1 && cx <= w && f.Map[wy, cx] == 1)
-                    f.Windows.Add(new WindowFace { GX = cx, GY = wy, Dir = WallDir.North });
+                    f.Windows.Add(new WindowFace { GX = cx, GY = wy, Dir = WallDir.South });
             }
             else if (room.Y > midY + 1)
             {
-                // Room below corridor — S window on wall row below room
                 int wy = room.Y + room.Height;
                 if (wy >= 1 && wy <= h && cx >= 1 && cx <= w && f.Map[wy, cx] == 1)
-                    f.Windows.Add(new WindowFace { GX = cx, GY = wy, Dir = WallDir.South });
+                    f.Windows.Add(new WindowFace { GX = cx, GY = wy, Dir = WallDir.North });
             }
         }
 

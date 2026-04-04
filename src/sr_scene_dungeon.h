@@ -1213,17 +1213,17 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
                         float au = (pts_x[pi] - x0) * invCW, av = (pts_z[pi] - z0) * invCH;
                         float bu = (pts_x[ni] - x0) * invCW, bv = (pts_z[ni] - z0) * invCH;
 
-                        /* Roof (CW winding facing up) */
+                        /* Roof (facing up — reversed winding) */
                         dng_draw_tri(fb_ptr, &mvp,
                             centx, y_hi, centz, cu, cv,
-                            pts_x[ni], y_hi, pts_z[ni], bu, bv,
                             pts_x[pi], y_hi, pts_z[pi], au, av,
+                            pts_x[ni], y_hi, pts_z[ni], bu, bv,
                             roof_tex, 0, 1, 0);
-                        /* Bottom plate (CCW winding facing down) */
+                        /* Bottom plate (facing down — reversed winding) */
                         dng_draw_tri(fb_ptr, &mvp,
                             centx, y_lo, centz, cu, cv,
-                            pts_x[pi], y_lo, pts_z[pi], au, av,
                             pts_x[ni], y_lo, pts_z[ni], bu, bv,
+                            pts_x[pi], y_lo, pts_z[pi], au, av,
                             roof_tex, 0, -1, 0);
                     }
                 }

@@ -359,22 +359,23 @@ static void dng_generate_ex(sr_dungeon *d, int w, int h, bool has_down_stairs, b
         d->room_light_on[i] = true;  /* lights start on */
     }
 
-    /* Place one window per room on the outer wall facing away from corridor.
-     * Rooms above corridor (even index) get N window, rooms below get S window. */
+    /* Place one window per room on the outer wall, facing toward the room.
+     * Rooms above corridor: S-facing window on wall above (faces into room).
+     * Rooms below corridor: N-facing window on wall below (faces into room). */
     for (int i = 0; i < num_rooms; i++) {
         int rx = rooms[i].x, ry = rooms[i].y;
         int rw = rooms[i].w, rh = rooms[i].h;
         int cx = rx + rw / 2;
         if (ry + rh <= mid_y) {
-            /* Room above corridor — N window on wall row above room */
+            /* Room above corridor — S window on wall above (faces room) */
             int wy = ry - 1;
             if (wy >= 1 && wy <= h && cx >= 1 && cx <= w && d->map[wy][cx] == 1)
-                d->win_faces[wy][cx] |= DNG_WIN_N;
+                d->win_faces[wy][cx] |= DNG_WIN_S;
         } else if (ry > mid_y) {
-            /* Room below corridor — S window on wall row below room */
+            /* Room below corridor — N window on wall below (faces room) */
             int wy = ry + rh;
             if (wy >= 1 && wy <= h && cx >= 1 && cx <= w && d->map[wy][cx] == 1)
-                d->win_faces[wy][cx] |= DNG_WIN_S;
+                d->win_faces[wy][cx] |= DNG_WIN_N;
         }
     }
 
