@@ -726,11 +726,19 @@ void main(){
                 bool oW = !_hullInside[gy, gx - 1];
                 bool oE = !_hullInside[gy, gx + 1];
 
-                // Inset exposed faces by fractional padding remainder
-                float ex0 = oW ? x0 + f : x0;
-                float ex1 = oE ? x1 - f : x1;
-                float ez0 = oN ? z0 + f : z0;
-                float ez1 = oS ? z1 - f : z1;
+                // Per-face window detection — window faces are flush (no inset)
+                // Check both: this cell's own window pointing out, OR adjacent outside cell's window pointing in
+                bool wN = oN && _winSet != null && (_winSet.Contains((gx, gy, WallDir.North)) || _winSet.Contains((gx, gy - 1, WallDir.South)));
+                bool wS = oS && _winSet != null && (_winSet.Contains((gx, gy, WallDir.South)) || _winSet.Contains((gx, gy + 1, WallDir.North)));
+                bool wW = oW && _winSet != null && (_winSet.Contains((gx, gy, WallDir.West)) || _winSet.Contains((gx - 1, gy, WallDir.East)));
+                bool wE = oE && _winSet != null && (_winSet.Contains((gx, gy, WallDir.East)) || _winSet.Contains((gx + 1, gy, WallDir.West)));
+
+                // Inset exposed faces by fractional padding remainder (0 for windows)
+                float fN = wN ? 0 : f, fS = wS ? 0 : f, fW = wW ? 0 : f, fE = wE ? 0 : f;
+                float ex0 = oW ? x0 + fW : x0;
+                float ex1 = oE ? x1 - fE : x1;
+                float ez0 = oN ? z0 + fN : z0;
+                float ez1 = oS ? z1 - fS : z1;
 
                 // Detect convex corners
                 bool cNW = oN && oW && c > 0;
@@ -738,11 +746,11 @@ void main(){
                 bool cSW = oS && oW && c > 0;
                 bool cSE = oS && oE && c > 0;
 
-                // Per-face window texture selection
+                // Per-face wall rendering (window faces are flush, use window texture)
                 // North wall at ez0, spanning ex0 to ex1
                 if (oN)
                 {
-                    int ft = _winSet != null && _winSet.Contains((gx, gy, WallDir.North)) ? extWin : extW;
+                    int ft = wN ? extWin : extW;
                     float nx0 = cNW ? ex0 + c : ex0;
                     float nx1 = cNE ? ex1 - c : ex1;
                     if (nx0 < nx1)
@@ -751,7 +759,7 @@ void main(){
                 // South wall at ez1
                 if (oS)
                 {
-                    int ft = _winSet != null && _winSet.Contains((gx, gy, WallDir.South)) ? extWin : extW;
+                    int ft = wS ? extWin : extW;
                     float sx0 = cSW ? ex0 + c : ex0;
                     float sx1 = cSE ? ex1 - c : ex1;
                     if (sx0 < sx1)
@@ -760,7 +768,7 @@ void main(){
                 // West wall at ex0
                 if (oW)
                 {
-                    int ft = _winSet != null && _winSet.Contains((gx, gy, WallDir.West)) ? extWin : extW;
+                    int ft = wW ? extWin : extW;
                     float wz0 = cNW ? ez0 + c : ez0;
                     float wz1 = cSW ? ez1 - c : ez1;
                     if (wz0 < wz1)
@@ -769,7 +777,7 @@ void main(){
                 // East wall at ex1
                 if (oE)
                 {
-                    int ft = _winSet != null && _winSet.Contains((gx, gy, WallDir.East)) ? extWin : extW;
+                    int ft = wE ? extWin : extW;
                     float wz0e = cNE ? ez0 + c : ez0;
                     float wz1e = cSE ? ez1 - c : ez1;
                     if (wz0e < wz1e)
@@ -856,11 +864,21 @@ void main(){
                     bool oW = !_hullInside[gy, gx - 1];
                     bool oE = !_hullInside[gy, gx + 1];
 
-                    // Inset exposed faces by fractional padding remainder
-                    float rx0 = oW ? x0 + f : x0;
-                    float rx1 = oE ? x1 - f : x1;
-                    float rz0 = oN ? z0 + f : z0;
-                    float rz1 = oS ? z1 - f : z1;
+                    // Per-face window detection — window faces are flush (no inset)
+                    bool rwN = oN && _winSet != null && (_winSet.Contains((gx, gy, WallDir.North)) || _winSet.Contains((gx, gy - 1, WallDir.South)));
+                    bool rwS = oS && _winSet != null && (_winSet.Contains((gx, gy, WallDir.South)) || _winSet.Contains((gx, gy + 1, WallDir.North)));
+                    bool rwW = oW && _winSet != null && (_winSet.Contains((gx, gy, WallDir.West)) || _winSet.Contains((gx - 1, gy, WallDir.East)));
+                    bool rwE = oE && _winSet != null && (_winSet.Contains((gx, gy, WallDir.East)) || _winSet.Contains((gx + 1, gy, WallDir.West)));
+                    float rfN = rwN ? 0 : f;
+                    float rfS = rwS ? 0 : f;
+                    float rfW = rwW ? 0 : f;
+                    float rfE = rwE ? 0 : f;
+
+                    // Inset exposed faces by fractional padding remainder (0 for windows)
+                    float rx0 = oW ? x0 + rfW : x0;
+                    float rx1 = oE ? x1 - rfE : x1;
+                    float rz0 = oN ? z0 + rfN : z0;
+                    float rz1 = oS ? z1 - rfS : z1;
 
                     bool hasRoof = !HasFloorAbove(floor, gx, gy);
 
