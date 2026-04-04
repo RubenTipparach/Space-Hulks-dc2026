@@ -326,6 +326,7 @@ static bool game_load(void) {
     dng_player_init(&dng_state.player,
                     hdr.player_gx, hdr.player_gy, hdr.player_dir);
     dng_initialized = true;
+    dng_hull_computed = false;
 
     /* Restore weakness table */
     g_weakness = hdr.weakness;
@@ -1656,6 +1657,10 @@ static void init(void) {
     itextures[ITEX_HUB_FLOOR]    = sr_indexed_load("assets/indexed/hub_floor.idx");
     itextures[ITEX_HUB_CEILING]  = sr_indexed_load("assets/indexed/hub_ceiling.idx");
     itextures[ITEX_HUB_CORRIDOR] = sr_indexed_load("assets/indexed/hub_corridor_wall.idx");
+    itextures[ITEX_EXT_WALL]     = sr_indexed_load("assets/indexed/exterior_ship_wall.idx");
+    itextures[ITEX_EXT_WINDOW]   = sr_indexed_load("assets/indexed/exerior_window.idx");
+    itextures[ITEX_ALIEN_EXT]    = sr_indexed_load("assets/indexed/alien_exterior.idx");
+    itextures[ITEX_ALIEN_EXT_WIN]= sr_indexed_load("assets/indexed/alien_exterior_window.idx");
 
     stextures[STEX_LURKER]    = sr_texture_load("assets/sprites/lurker.png");
     stextures[STEX_BRUTE]     = sr_texture_load("assets/sprites/brute.png");
@@ -2301,6 +2306,7 @@ static void handle_screen_tap(float sx, float sy) {
                         dng_game_init_sized(&dng_state, sw, sh); }
                         game_init_ship();
                         dng_initialized = true;
+    dng_hull_computed = false;
                         last_player_gx = dng_state.player.gx;
                         last_player_gy = dng_state.player.gy;
                         g_hub.mission_available = false;
@@ -2392,6 +2398,7 @@ static void handle_screen_tap(float sx, float sy) {
                             dng_game_init_sized(&dng_state, sw, sh); }
                             game_init_ship();
                             dng_initialized = true;
+    dng_hull_computed = false;
                             last_player_gx = dng_state.player.gx;
                             last_player_gy = dng_state.player.gy;
                             g_hub.mission_available = false;
@@ -2827,6 +2834,7 @@ static void event(const sapp_event *ev) {
                                 dng_game_init_sized(&dng_state, sw, sh); }
                                 game_init_ship();
                                 dng_initialized = true;
+    dng_hull_computed = false;
                                 last_player_gx = dng_state.player.gx;
                                 last_player_gy = dng_state.player.gy;
                                 g_hub.mission_available = false;
@@ -2916,6 +2924,7 @@ static void event(const sapp_event *ev) {
                                 dng_game_init_sized(&dng_state, sw, sh); }
                                 game_init_ship();
                                 dng_initialized = true;
+    dng_hull_computed = false;
                                 last_player_gx = dng_state.player.gx;
                                 last_player_gy = dng_state.player.gy;
                                 g_hub.mission_available = false;

@@ -154,6 +154,25 @@ static bool lvl_load_floor(sr_dungeon *d, const sr_json *j, int floor_token) {
         }
     }
 
+    /* Windows */
+    static const char *lvl_dir_names[] = { "North", "South", "East", "West" };
+    static const uint8_t lvl_dir_bits[] = { DNG_WIN_N, DNG_WIN_S, DNG_WIN_E, DNG_WIN_W };
+    #define LVL_DIR_NAME_COUNT 4
+    int windows_arr = sr_json_find(j, floor_token, "windows");
+    if (windows_arr >= 0) {
+        int wcount = sr_json_array_len(j, windows_arr);
+        for (int i = 0; i < wcount; i++) {
+            int wt = sr_json_array_get(j, windows_arr, i);
+            if (wt < 0) continue;
+            int gx = sr_json_int(j, sr_json_find(j, wt, "gX"), 0);
+            int gy = sr_json_int(j, sr_json_find(j, wt, "gY"), 0);
+            if (gx < 1 || gx > d->w || gy < 1 || gy > d->h) continue;
+            int dir = sr_json_enum(j, sr_json_find(j, wt, "dir"), lvl_dir_names, LVL_DIR_NAME_COUNT, 0);
+            if (dir >= 0 && dir < LVL_DIR_NAME_COUNT)
+                d->win_faces[gy][gx] |= lvl_dir_bits[dir];
+        }
+    }
+
     return true;
 }
 

@@ -68,6 +68,12 @@ typedef struct {
     int room_w[DNG_MAX_ROOMS], room_h[DNG_MAX_ROOMS];
     int room_ship_idx[DNG_MAX_ROOMS];
     bool room_light_on[DNG_MAX_ROOMS];
+    /* Window faces: bitmask per wall cell (bit0=N, bit1=S, bit2=E, bit3=W) */
+    #define DNG_WIN_N 1
+    #define DNG_WIN_S 2
+    #define DNG_WIN_E 4
+    #define DNG_WIN_W 8
+    uint8_t win_faces[DNG_GRID_H + 1][DNG_GRID_W + 1];
 } sr_dungeon;
 
 /* ── Simple RNG for dungeon generation ───────────────────────────── */
@@ -351,6 +357,25 @@ static void dng_generate_ex(sr_dungeon *d, int w, int h, bool has_down_stairs, b
         d->room_h[i] = rooms[i].h;
         d->room_ship_idx[i] = -1;
         d->room_light_on[i] = true;  /* lights start on */
+    }
+
+    /* Place one window per room on the outer wall facing away from corridor.
+     * Rooms above corridor (even index) get N window, rooms below get S window. */
+    for (int i = 0; i < num_rooms; i++) {
+        int rx = rooms[i].x, ry = rooms[i].y;
+        int rw = rooms[i].w, rh = rooms[i].h;
+        int cx = rx + rw / 2;
+        if (ry + rh <= mid_y) {
+            /* Room above corridor — N window on wall row above room */
+            int wy = ry - 1;
+            if (wy >= 1 && wy <= h && cx >= 1 && cx <= w && d->map[wy][cx] == 1)
+                d->win_faces[wy][cx] |= DNG_WIN_N;
+        } else if (ry > mid_y) {
+            /* Room below corridor — S window on wall row below room */
+            int wy = ry + rh;
+            if (wy >= 1 && wy <= h && cx >= 1 && cx <= w && d->map[wy][cx] == 1)
+                d->win_faces[wy][cx] |= DNG_WIN_S;
+        }
     }
 
     /* Place alien entities (not spawn, not stairs) — ~half the rooms get aliens */

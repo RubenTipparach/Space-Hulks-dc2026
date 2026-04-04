@@ -1764,6 +1764,7 @@ static void hub_draw_scene(sr_framebuffer *fb_ptr) {
     dng_floor_texture = ITEX_HUB_FLOOR;
     dng_ceiling_texture = ITEX_HUB_CEILING;
     dng_skip_pillars = true;
+    dng_skip_exterior = true;
 
     sr_mat4 vp;
     draw_dungeon_scene(fb_ptr, &vp);
@@ -1780,6 +1781,7 @@ static void hub_draw_scene(sr_framebuffer *fb_ptr) {
     dng_floor_texture = -1;
     dng_ceiling_texture = -1;
     dng_skip_pillars = false;
+    dng_skip_exterior = false;
     dng_cfg.ambient_brightness = save_ambient;
     dng_cfg.light_brightness = save_torch;
     memcpy(dng_cfg.room_light_color, save_rl_color, sizeof(dng_cfg.room_light_color));

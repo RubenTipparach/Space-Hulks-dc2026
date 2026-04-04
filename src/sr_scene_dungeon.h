@@ -89,7 +89,106 @@ static int  dng_room_wall_texture = -1; /* -1 = same as wall_texture; wall faces
 static int  dng_floor_texture = -1;    /* -1 = default ITEX_TILE, else override */
 static int  dng_ceiling_texture = -1;  /* -1 = default ITEX_WOOD, else override */
 static bool dng_skip_pillars = false;  /* true = don't draw corner pillars */
+static bool dng_skip_exterior = false; /* true = don't draw exterior hull */
 static float (*dng_fog_fn)(float, float, float) = NULL; /* override for fog vertex intensity */
+
+/* ── Hull mask for exterior rendering ──────────────────────────── */
+
+static bool dng_hull_inside[DNG_GRID_H + 2][DNG_GRID_W + 2];
+static bool dng_hull_computed = false;
+
+static void dng_compute_hull_mask(sr_dungeon *d) {
+    int w = d->w, h = d->h;
+    memset(dng_hull_inside, 0, sizeof(dng_hull_inside));
+
+    /* BFS flood fill from spawn and room centers */
+    static int queue_y[DNG_GRID_W * DNG_GRID_H];
+    static int queue_x[DNG_GRID_W * DNG_GRID_H];
+    int qhead = 0, qtail = 0;
+
+    /* Seed: spawn point */
+    if (d->spawn_gx >= 1 && d->spawn_gx <= w && d->spawn_gy >= 1 && d->spawn_gy <= h
+        && d->map[d->spawn_gy][d->spawn_gx] == 0) {
+        dng_hull_inside[d->spawn_gy][d->spawn_gx] = true;
+        queue_y[qtail] = d->spawn_gy; queue_x[qtail] = d->spawn_gx; qtail++;
+    }
+    /* Seed: room centers */
+    for (int r = 0; r < d->room_count; r++) {
+        int cx = d->room_cx[r], cy = d->room_cy[r];
+        if (cx >= 1 && cx <= w && cy >= 1 && cy <= h
+            && !dng_hull_inside[cy][cx] && d->map[cy][cx] == 0) {
+            dng_hull_inside[cy][cx] = true;
+            queue_y[qtail] = cy; queue_x[qtail] = cx; qtail++;
+        }
+    }
+
+    static const int bfs_dx[4] = {0, 0, -1, 1};
+    static const int bfs_dy[4] = {-1, 1, 0, 0};
+    while (qhead < qtail) {
+        int cy = queue_y[qhead], cx = queue_x[qhead]; qhead++;
+        for (int dir = 0; dir < 4; dir++) {
+            int ny = cy + bfs_dy[dir], nx = cx + bfs_dx[dir];
+            if (ny < 1 || ny > h || nx < 1 || nx > w) continue;
+            if (dng_hull_inside[ny][nx]) continue;
+            if (d->map[ny][nx] != 0) continue;
+            dng_hull_inside[ny][nx] = true;
+            queue_y[qtail] = ny; queue_x[qtail] = nx; qtail++;
+        }
+    }
+
+    /* Expand 1 layer: include wall cells adjacent to interior (cardinal only).
+     * Window faces block expansion in their direction. */
+    static bool to_expand[DNG_GRID_H + 2][DNG_GRID_W + 2];
+    memset(to_expand, 0, sizeof(to_expand));
+    for (int gy = 1; gy <= h; gy++) {
+        for (int gx = 1; gx <= w; gx++) {
+            if (d->map[gy][gx] != 1 || dng_hull_inside[gy][gx]) continue;
+            bool reachable = false;
+            if (gy > 1 && dng_hull_inside[gy-1][gx] && !(d->win_faces[gy][gx] & DNG_WIN_N))
+                reachable = true;
+            if (gy < h && dng_hull_inside[gy+1][gx] && !(d->win_faces[gy][gx] & DNG_WIN_S))
+                reachable = true;
+            if (gx > 1 && dng_hull_inside[gy][gx-1] && !(d->win_faces[gy][gx] & DNG_WIN_W))
+                reachable = true;
+            if (gx < w && dng_hull_inside[gy][gx+1] && !(d->win_faces[gy][gx] & DNG_WIN_E))
+                reachable = true;
+            if (reachable) to_expand[gy][gx] = true;
+        }
+    }
+    for (int gy = 1; gy <= h; gy++)
+        for (int gx = 1; gx <= w; gx++)
+            if (to_expand[gy][gx]) dng_hull_inside[gy][gx] = true;
+
+    /* Diagonal corner fill */
+    memset(to_expand, 0, sizeof(to_expand));
+    for (int gy = 1; gy <= h; gy++) {
+        for (int gx = 1; gx <= w; gx++) {
+            if (d->map[gy][gx] != 1 || dng_hull_inside[gy][gx]) continue;
+            if (d->win_faces[gy][gx]) continue; /* skip cells with any window */
+            bool add = false;
+            if (gy > 1 && gx > 1 && dng_hull_inside[gy-1][gx] && dng_hull_inside[gy][gx-1]) add = true;
+            if (gy > 1 && gx < w && dng_hull_inside[gy-1][gx] && dng_hull_inside[gy][gx+1]) add = true;
+            if (gy < h && gx > 1 && dng_hull_inside[gy+1][gx] && dng_hull_inside[gy][gx-1]) add = true;
+            if (gy < h && gx < w && dng_hull_inside[gy+1][gx] && dng_hull_inside[gy][gx+1]) add = true;
+            if (add) to_expand[gy][gx] = true;
+        }
+    }
+    for (int gy = 1; gy <= h; gy++)
+        for (int gx = 1; gx <= w; gx++)
+            if (to_expand[gy][gx]) dng_hull_inside[gy][gx] = true;
+
+    dng_hull_computed = true;
+}
+
+static bool dng_is_win_cell(const sr_dungeon *d, int gx, int gy) {
+    if (gx < 1 || gx > d->w || gy < 1 || gy > d->h) return false;
+    return d->win_faces[gy][gx] != 0;
+}
+
+static bool dng_has_win_face(const sr_dungeon *d, int gx, int gy, uint8_t dir_bit) {
+    if (gx < 1 || gx > d->w || gy < 1 || gy > d->h) return false;
+    return (d->win_faces[gy][gx] & dir_bit) != 0;
+}
 
 /* ── Per-cell room light (set before drawing each cell) ─────────── */
 
@@ -373,30 +472,38 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
 
             if (d->map[gy][gx] == 1) {
                 /* Wall cell — draw faces toward open cells.
-                 * Pick texture per-face: room faces get room_wall_tex, corridor faces get wall_tex. */
+                 * Pick texture per-face: room faces get room_wall_tex, corridor faces get wall_tex.
+                 * Window faces get a window texture (wall_A_window). */
+                static const sr_indexed_texture *win_tex_ptr = NULL;
+                if (!win_tex_ptr) win_tex_ptr = &itextures[ITEX_EXT_WINDOW];
+                uint8_t wf = d->win_faces[gy][gx];
                 if (gy < d->h && d->map[gy+1][gx] != 1 && dng_vis[gy+1][gx]) {
-                    const sr_indexed_texture *ft = (dng_room_at(d, gx, gy+1) >= 0) ? room_wall_tex : wall_tex;
+                    const sr_indexed_texture *ft = (wf & DNG_WIN_S) ? win_tex_ptr
+                        : (dng_room_at(d, gx, gy+1) >= 0) ? room_wall_tex : wall_tex;
                     dng_draw_wall(fb_ptr, &mvp,
                         x0+WP, y_hi, z1,  x1-WP, y_hi, z1,
                         x1-WP, y_lo, z1,  x0+WP, y_lo, z1,
                         ft, 0, 0, 1);
                 }
                 if (gy > 1 && d->map[gy-1][gx] != 1 && dng_vis[gy-1][gx]) {
-                    const sr_indexed_texture *ft = (dng_room_at(d, gx, gy-1) >= 0) ? room_wall_tex : wall_tex;
+                    const sr_indexed_texture *ft = (wf & DNG_WIN_N) ? win_tex_ptr
+                        : (dng_room_at(d, gx, gy-1) >= 0) ? room_wall_tex : wall_tex;
                     dng_draw_wall(fb_ptr, &mvp,
                         x1-WP, y_hi, z0,  x0+WP, y_hi, z0,
                         x0+WP, y_lo, z0,  x1-WP, y_lo, z0,
                         ft, 0, 0, -1);
                 }
                 if (gx < d->w && d->map[gy][gx+1] != 1 && dng_vis[gy][gx+1]) {
-                    const sr_indexed_texture *ft = (dng_room_at(d, gx+1, gy) >= 0) ? room_wall_tex : wall_tex;
+                    const sr_indexed_texture *ft = (wf & DNG_WIN_E) ? win_tex_ptr
+                        : (dng_room_at(d, gx+1, gy) >= 0) ? room_wall_tex : wall_tex;
                     dng_draw_wall(fb_ptr, &mvp,
                         x1, y_hi, z1-WP,  x1, y_hi, z0+WP,
                         x1, y_lo, z0+WP,  x1, y_lo, z1-WP,
                         ft, 1, 0, 0);
                 }
                 if (gx > 1 && d->map[gy][gx-1] != 1 && dng_vis[gy][gx-1]) {
-                    const sr_indexed_texture *ft = (dng_room_at(d, gx-1, gy) >= 0) ? room_wall_tex : wall_tex;
+                    const sr_indexed_texture *ft = (wf & DNG_WIN_W) ? win_tex_ptr
+                        : (dng_room_at(d, gx-1, gy) >= 0) ? room_wall_tex : wall_tex;
                     dng_draw_wall(fb_ptr, &mvp,
                         x0, y_hi, z0+WP,  x0, y_hi, z1-WP,
                         x0, y_lo, z1-WP,  x0, y_lo, z0+WP,
@@ -713,6 +820,89 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
                     ctex, &mvp);
             }
         }
+    }
+
+    /* ── Exterior hull walls ──────────────────────────────────────── */
+    if (!dng_skip_exterior) {
+        if (!dng_hull_computed) dng_compute_hull_mask(d);
+
+        const sr_indexed_texture *ext_tex = &itextures[ITEX_EXT_WALL];
+        const sr_indexed_texture *ext_win_tex = &itextures[ITEX_EXT_WINDOW];
+
+        /* Disable pixel lighting for exterior (lit by ambient only) */
+        sr_set_pixel_light_fn(NULL);
+
+        for (int gy = gy0; gy <= gy1; gy++) {
+            for (int gx = gx0; gx <= gx1; gx++) {
+                if (!dng_hull_inside[gy][gx]) continue;
+
+                float x0 = (gx - 1) * DNG_CELL_SIZE;
+                float x1 = gx * DNG_CELL_SIZE;
+                float z0 = (gy - 1) * DNG_CELL_SIZE;
+                float z1 = gy * DNG_CELL_SIZE;
+
+                bool oN = gy <= 1 || !dng_hull_inside[gy-1][gx];
+                bool oS = gy >= d->h || !dng_hull_inside[gy+1][gx];
+                bool oW = gx <= 1 || !dng_hull_inside[gy][gx-1];
+                bool oE = gx >= d->w || !dng_hull_inside[gy][gx+1];
+
+                /* Check if adjacent outside cell is a window cell (for texture) */
+                bool winN = oN && gy > 1 && dng_has_win_face(d, gx, gy-1, DNG_WIN_S);
+                bool winS = oS && gy < d->h && dng_has_win_face(d, gx, gy+1, DNG_WIN_N);
+                bool winW = oW && gx > 1 && dng_has_win_face(d, gx-1, gy, DNG_WIN_E);
+                bool winE = oE && gx < d->w && dng_has_win_face(d, gx+1, gy, DNG_WIN_W);
+
+                /* North exterior wall */
+                if (oN) {
+                    const sr_indexed_texture *ft = winN ? ext_win_tex : ext_tex;
+                    dng_draw_wall(fb_ptr, &mvp,
+                        x0, y_hi, z0,  x1, y_hi, z0,
+                        x1, y_lo, z0,  x0, y_lo, z0,
+                        ft, 0, 0, -1);
+                }
+                /* South exterior wall */
+                if (oS) {
+                    const sr_indexed_texture *ft = winS ? ext_win_tex : ext_tex;
+                    dng_draw_wall(fb_ptr, &mvp,
+                        x1, y_hi, z1,  x0, y_hi, z1,
+                        x0, y_lo, z1,  x1, y_lo, z1,
+                        ft, 0, 0, 1);
+                }
+                /* West exterior wall */
+                if (oW) {
+                    const sr_indexed_texture *ft = winW ? ext_win_tex : ext_tex;
+                    dng_draw_wall(fb_ptr, &mvp,
+                        x0, y_hi, z0,  x0, y_hi, z1,
+                        x0, y_lo, z1,  x0, y_lo, z0,
+                        ft, -1, 0, 0);
+                }
+                /* East exterior wall */
+                if (oE) {
+                    const sr_indexed_texture *ft = winE ? ext_win_tex : ext_tex;
+                    dng_draw_wall(fb_ptr, &mvp,
+                        x1, y_hi, z1,  x1, y_hi, z0,
+                        x1, y_lo, z0,  x1, y_lo, z1,
+                        ft, 1, 0, 0);
+                }
+
+                /* Roof (top plate) for hull cells that aren't open floor */
+                if (d->map[gy][gx] == 1) {
+                    dng_draw_hquad(fb_ptr, &mvp,
+                        x0, y_hi, z1,  x1, y_hi, z1,
+                        x1, y_hi, z0,  x0, y_hi, z0,
+                        0, 1, 1, 0, ext_tex, 0, 1, 0);
+                    /* Bottom plate */
+                    dng_draw_hquad(fb_ptr, &mvp,
+                        x0, y_lo, z0,  x1, y_lo, z0,
+                        x1, y_lo, z1,  x0, y_lo, z1,
+                        0, 0, 1, 1, ext_tex, 0, -1, 0);
+                }
+            }
+        }
+
+        /* Restore lighting */
+        if (dng_light_mode == 0)
+            sr_set_pixel_light_fn(dng_torch_light);
     }
 }
 
