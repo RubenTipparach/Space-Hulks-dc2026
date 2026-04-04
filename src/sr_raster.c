@@ -427,6 +427,9 @@ static void rasterize_triangle_indexed(sr_framebuffer *fb,
             if (tex && tex->indices)
                 pal_idx = sr_indexed_sample(tex, u, v);
 
+            /* Alpha test — palette index PAL_TRANSPARENT is transparent */
+            if (pal_idx == PAL_TRANSPARENT) continue;
+
             /* Interpolate light intensity and map to dithered shade row */
             float li = (li0_w * w0 + li1_w * w1 + li2_w * w2) * inv_iw;
             float intensity = clampf(li, 0.0f, 255.0f) / 128.0f; /* 0..~2 */
@@ -572,6 +575,9 @@ static void rasterize_triangle_indexed_pixellit(sr_framebuffer *fb,
             uint8_t pal_idx = 0;
             if (tex && tex->indices)
                 pal_idx = sr_indexed_sample(tex, u, v);
+
+            /* Alpha test — palette index PAL_TRANSPARENT is transparent */
+            if (pal_idx == PAL_TRANSPARENT) continue;
 
             /* Interpolate world position and normal (perspective-correct) */
             float wpx = (wx0_w * w0 + wx1_w * w1 + wx2_w * w2) * inv_iw;
