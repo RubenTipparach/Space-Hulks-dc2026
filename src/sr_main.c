@@ -1725,8 +1725,8 @@ static void handle_screen_tap(float sx, float sy) {
             if (g_dialog.confirm_mode) {
                 /* Confirm dialog — check YES/NO button hits (tabs below box) */
                 int H = FB_HEIGHT;
-                int bx = 20, bw = FB_WIDTH - 40, bh = 44;
-                int by = H - 58;
+                int bx = 20, bw = FB_WIDTH - 40, bh = 52;
+                int by = H - 66;
                 int tab_y = by + bh;
                 /* YES button area */
                 if (fx >= bx + bw - 140 && fx < bx + bw - 80 &&

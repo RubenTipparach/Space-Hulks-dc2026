@@ -159,8 +159,8 @@ static void hub_touch_ended(float sx, float sy, double time) {
         /* Set click state for ui_button detection */
         handle_screen_tap(sx, sy);
 
-        /* Tap strafe — only if not on a button */
-        if (!in_button_zone) {
+        /* Tap strafe — only if not on a button and no dialog active */
+        if (!in_button_zone && !g_dialog.active) {
             float mid_x = sapp_widthf() * 0.5f;
             if (sx < mid_x) {
                 dng_player_try_move(&g_hub.player, &g_hub.dungeon,
@@ -170,8 +170,8 @@ static void hub_touch_ended(float sx, float sy, double time) {
                                     (g_hub.player.dir + 1) % 4);
             }
         }
-    } else if (dist >= TOUCH_SWIPE_MIN_DIST) {
-        /* Swipe — move or turn */
+    } else if (dist >= TOUCH_SWIPE_MIN_DIST && !g_dialog.active) {
+        /* Swipe — move or turn (blocked during dialog) */
         float adx = dx < 0 ? -dx : dx;
         float ady = dy < 0 ? -dy : dy;
 

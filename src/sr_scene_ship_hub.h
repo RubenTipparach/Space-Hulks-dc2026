@@ -628,7 +628,7 @@ static void draw_dialog(uint32_t *px, int W, int H) {
     uint32_t shadow = 0xFF000000;
 
     /* Dialog box — spans most of screen width */
-    int bx = 20, by = H - 58, bw = W - 40, bh = 44;
+    int bx = 20, by = H - 66, bw = W - 40, bh = 52;
     for (int ry = by; ry < by + bh && ry < H; ry++)
         for (int rx = bx; rx < bx + bw && rx < W; rx++) {
             if (rx < 0 || ry < 0) continue;
