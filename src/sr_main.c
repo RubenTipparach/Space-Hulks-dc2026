@@ -201,7 +201,21 @@ static void save_restore_wasm(void) {
         } catch(e) { console.warn('save_restore_wasm:', e); }
     });
 }
+static void save_clear_wasm(void) {
+    EM_ASM({
+        try { localStorage.removeItem('spacehulks_save'); } catch(e) {}
+    });
+}
 #endif /* __EMSCRIPTEN__ */
+
+/* Delete save file (game over) */
+static void game_delete_save(void) {
+    remove(SAVE_FILE);
+    save_exists = false;
+#if defined(__EMSCRIPTEN__)
+    save_clear_wasm();
+#endif
+}
 
 /* ── Save ────────────────────────────────────────────────────────── */
 
@@ -519,23 +533,23 @@ static void draw_epilogue_screen(sr_framebuffer *fb_ptr) {
         memcpy(partial, line, show);
         partial[show] = '\0';
 
-        sr_draw_text_shadow(px, W, H, 30, y, partial, text_col, shadow);
+        sr_draw_text_shadow(px, W, H, 16, y, partial, text_col, shadow);
         chars_left -= llen + 1;
         y += 10;
     }
 
     /* Blinking cursor */
     if (!intro_done && (intro_timer / 15) % 2 == 0) {
-        int cx = 30, cy = 20;
+        int cx = 16, cy = 20;
         int remain = intro_char_idx;
         for (int i = 0; i < line_count && remain > 0; i++) {
             const char *line = lines[i];
             int llen = (int)strlen(line);
             if (line[0] == '_' && llen == 1) { cy += 10; remain -= 2; continue; }
             int show = (remain >= llen) ? llen : remain;
-            cx = 30 + show * 6;
+            cx = 16 + show * 6;
             remain -= llen + 1;
-            if (remain >= 0) { cy += 10; cx = 30; }
+            if (remain >= 0) { cy += 10; cx = 16; }
         }
         sr_draw_text_shadow(px, W, H, cx, cy, "_", text_col, shadow);
     }
@@ -834,6 +848,17 @@ static void game_init_ship(void) {
                 }
             }
 
+            /* Remove stairs on last floor (no stairs if only 1 deck) */
+            for (int fl = 0; fl < current_ship.num_decks && fl < DNG_MAX_FLOORS; fl++) {
+                if (!dng_state.floor_generated[fl]) continue;
+                bool is_last = (fl >= current_ship.num_decks - 1);
+                if (is_last) {
+                    dng_state.floors[fl].has_up = false;
+                    dng_state.floors[fl].stairs_gx = -1;
+                    dng_state.floors[fl].stairs_gy = -1;
+                }
+            }
+
             printf("[game] Level loaded: %s (%d decks, %d rooms, %d officers)\n",
                    current_ship.name, current_ship.num_decks,
                    current_ship.room_count, current_ship.officer_count);
@@ -944,8 +969,8 @@ static void mission_complete_return_to_hub(int base_reward, const char *msg, boo
     player_scrap += scrap_reward;
     player_biomass += biomass_reward;
 
-    /* Auto-heal player on return to hub */
-    g_player.hp = g_player.hp_max;
+    /* No auto-heal — player must visit medbay */
+    medbay_used = false; /* allow one medbay heal between missions */
 
     /* Populate mission summary */
     memset(&g_summary, 0, sizeof(g_summary));
@@ -1008,8 +1033,9 @@ static void handle_combat_end(void) {
         console_combat = false;
 
         if (!combat.player_won) {
-            /* Player died — game over, show loss epilogue */
+            /* Player died — game over, delete save, show loss epilogue */
             current_ship.boarding_active = false;
+            game_delete_save();
             epilogue_is_win = false;
             intro_char_idx = 0;
             intro_timer = 0;
@@ -1018,16 +1044,7 @@ static void handle_combat_end(void) {
             return;
         }
 
-        if (current_ship.player_ship_destroyed) {
-            /* Player's ship destroyed — game over */
-            current_ship.boarding_active = false;
-            epilogue_is_win = false;
-            intro_char_idx = 0;
-            intro_timer = 0;
-            intro_done = false;
-            app_state = STATE_EPILOGUE;
-            return;
-        }
+        /* Player ship never takes damage — destroyed check removed */
 
         if (current_ship.enemy_ship_destroyed) {
             current_ship.boarding_active = false;
@@ -1095,8 +1112,7 @@ static void check_random_encounter(void) {
                 if (local_room >= 0 && local_room < dng_state.dungeon->room_count)
                     current_combat_room = dng_state.dungeon->room_ship_idx[local_room];
 
-                /* Tick ship turn on each combat */
-                ship_tick_turn(&current_ship);
+                /* ship_tick_turn(&current_ship); — ship simulation disabled */
             }
 
             combat_init(&combat, selected_class, dng_state.current_floor, alien);
@@ -1182,15 +1198,16 @@ static void check_random_encounter(void) {
                     /* Sentinel defense combat based on room type */
                     combat_init(&combat, selected_class, dng_state.current_floor, 0);
 
+                    /* Terminal sentinels — hiveguards serve as robotic defenders */
                     int num_drones = 1;
-                    int drone_type = ENEMY_LURKER;
+                    int drone_type = ENEMY_HIVEGUARD;
                     switch (rm->type) {
-                        case ROOM_BRIDGE:  num_drones = 2; drone_type = ENEMY_HIVEGUARD; break;
-                        case ROOM_REACTOR: num_drones = 2; drone_type = ENEMY_SPITTER; break;
-                        case ROOM_WEAPONS: num_drones = 1; drone_type = ENEMY_BRUTE; break;
-                        case ROOM_ENGINES: num_drones = 1; drone_type = ENEMY_SPITTER; break;
-                        case ROOM_SHIELDS: num_drones = 1; drone_type = ENEMY_BRUTE; break;
-                        case ROOM_CARGO:   num_drones = 1; drone_type = ENEMY_LURKER; break;
+                        case ROOM_BRIDGE:  num_drones = 2; break;
+                        case ROOM_REACTOR: num_drones = 2; break;
+                        case ROOM_WEAPONS: num_drones = 2; break;
+                        case ROOM_ENGINES: num_drones = 1; break;
+                        case ROOM_SHIELDS: num_drones = 1; break;
+                        case ROOM_CARGO:   num_drones = 1; break;
                         default: break;
                     }
 
@@ -1201,13 +1218,11 @@ static void check_random_encounter(void) {
                         combat.enemies[i].hp = tmpl->hp_max;
                         combat.enemies[i].hp_max = tmpl->hp_max;
                         combat.enemies[i].attack_range = tmpl->attack_range;
-                        combat.enemies[i].damage = tmpl->damage;
-                        combat.enemies[i].ranged = tmpl->ranged;
                         combat.enemies[i].flash_timer = 0;
                         combat.enemies[i].alive = true;
                     }
 
-                    ship_tick_turn(&current_ship);
+                    /* ship_tick_turn(&current_ship); — ship simulation disabled */
                     app_state = STATE_COMBAT;
                     game_save();
                 }
@@ -1292,8 +1307,17 @@ static void draw_class_select(sr_framebuffer *fb_ptr) {
                        "LASER/DEFLECT", "STUN GUN");
     }
 
-    sr_draw_text_shadow(px, W, H, W/2 - 55, H - 14,
-                        "TAP TO SELECT  TAP AGAIN=GO", gray, shadow);
+    /* Skip intro toggle */
+    {
+        int sx = W/2 - 40;
+        int sy = H - 28;
+        uint32_t box_col = skip_intro ? 0xFF44FF44 : 0xFF333333;
+        combat_draw_rect(px, W, H, sx, sy, 8, 8, box_col);
+        combat_draw_rect_outline(px, W, H, sx, sy, 8, 8, 0xFF888888);
+        sr_draw_text_shadow(px, W, H, sx + 12, sy, "SKIP INTRO",
+                            skip_intro ? 0xFF44FF44 : gray, shadow);
+    }
+
 }
 
 /* ── Shaders ─────────────────────────────────────────────────────── */
@@ -1696,12 +1720,13 @@ static void frame(void) {
         if (dng_play_state == DNG_STATE_PLAYING)
             check_random_encounter();
 
+        dng_enemies_lerp_update((float)dt);
         draw_dungeon_scene(&fb, &vp);
         draw_dungeon_minimap(&fb);
 
-        /* Ship HUD overlay */
+        /* Ship HUD overlay (ship simulation disabled) */
         if (current_ship.initialized && current_ship.boarding_active) {
-            draw_ship_hud(fb.color, fb.width, fb.height, &current_ship);
+            /* draw_ship_hud(fb.color, fb.width, fb.height, &current_ship); */
 
             /* Deck button (top-right, above minimap) */
             {
@@ -1815,13 +1840,53 @@ static void frame(void) {
                 }
             }
 
-            /* Deck indicator */
+            /* Floor/terminal/enemy info below minimap */
             {
-                char deckbuf[32];
-                snprintf(deckbuf, sizeof(deckbuf), "DECK %d/%d",
+                int map_scale = 2;
+                int map_bottom = 28 + dng_state.dungeon->h * map_scale + 4;
+                int hx = fb.width - dng_state.dungeon->w * map_scale + 2;
+                int hy = map_bottom;
+                uint32_t dim = 0xFF888888;
+                uint32_t shadow = 0xFF000000;
+
+                char floorbuf[32];
+                snprintf(floorbuf, sizeof(floorbuf), "FLOOR %d/%d",
                          dng_state.current_floor + 1, current_ship.num_decks);
                 sr_draw_text_shadow(fb.color, fb.width, fb.height,
-                                    fb.width - 60, 4, deckbuf, 0xFF888888, 0xFF000000);
+                                    hx, hy, floorbuf, dim, shadow);
+                hy += 10;
+
+                /* Count total terminals across all generated floors */
+                int total_terminals = 0;
+                for (int fl = 0; fl < current_ship.num_decks && fl < DNG_MAX_FLOORS; fl++) {
+                    if (!dng_state.floor_generated[fl]) continue;
+                    sr_dungeon *dd = &dng_state.floors[fl];
+                    for (int gy2 = 1; gy2 <= dd->h; gy2++)
+                        for (int gx2 = 1; gx2 <= dd->w; gx2++)
+                            if (dd->consoles[gy2][gx2] != 0) total_terminals++;
+                }
+                total_terminals += current_ship.terminals_destroyed; /* add already destroyed */
+
+                char termbuf[32];
+                snprintf(termbuf, sizeof(termbuf), "TERMINALS %d/%d",
+                         current_ship.terminals_destroyed, total_terminals);
+                sr_draw_text_shadow(fb.color, fb.width, fb.height,
+                                    hx, hy, termbuf, dim, shadow);
+                hy += 10;
+
+                /* Enemies remaining across all floors */
+                int enemies_alive = 0;
+                for (int fl = 0; fl < current_ship.num_decks && fl < DNG_MAX_FLOORS; fl++) {
+                    if (!dng_state.floor_generated[fl]) continue;
+                    sr_dungeon *dd = &dng_state.floors[fl];
+                    for (int gy2 = 1; gy2 <= dd->h; gy2++)
+                        for (int gx2 = 1; gx2 <= dd->w; gx2++)
+                            if (dd->aliens[gy2][gx2] != 0) enemies_alive++;
+                }
+                char enembuf[32];
+                snprintf(enembuf, sizeof(enembuf), "HOSTILES %d", enemies_alive);
+                sr_draw_text_shadow(fb.color, fb.width, fb.height,
+                                    hx, hy, enembuf, dim, shadow);
             }
         }
 
@@ -2001,6 +2066,15 @@ static void handle_screen_tap(float sx, float sy) {
     }
 
     if (app_state == STATE_CLASS_SELECT) {
+        /* Skip intro checkbox */
+        {
+            int sx = FB_WIDTH/2 - 40;
+            int sy = FB_HEIGHT - 28;
+            if (fx >= sx && fx <= sx + 80 && fy >= sy && fy <= sy + 10) {
+                skip_intro = !skip_intro;
+                return;
+            }
+        }
         int gap = (FB_WIDTH - CLASS_COUNT * CLASS_BOX_W) / (CLASS_COUNT + 1);
         int by = 40;
         for (int ci = 0; ci < CLASS_COUNT; ci++) {
@@ -2016,20 +2090,42 @@ static void handle_screen_tap(float sx, float sy) {
                     memset(player_consumables, 0, sizeof(player_consumables));
                     player_sector = 0;
                     /* Reset mission flow state for new game */
-                    mission_briefed = false;
-                    mission_medbay_done = false;
-                    mission_armory_done = false;
-                    mission_first_done = false;
                     captain_briefing_page = 0;
                     player_samples = 0;
                     player_starmap = 0;
                     current_map_boss_done = false;
                     current_mission_is_boss = false;
-                    /* Start intro teletype */
-                    intro_char_idx = 0;
-                    intro_timer = 0;
-                    intro_done = false;
-                    app_state = STATE_INTRO;
+
+                    if (skip_intro) {
+                        /* Skip intro: mark briefing/prep done, go straight to hub */
+                        mission_briefed = true;
+                        mission_medbay_done = true;
+                        mission_armory_done = true;
+                        mission_first_done = false;
+                        hub_generate(&g_hub);
+                        /* Show quick message to head to teleporter */
+                        memset(&g_dialog, 0, sizeof(g_dialog));
+                        snprintf(g_dialog.speaker, sizeof(g_dialog.speaker), "CPT HARDEN");
+                        snprintf(g_dialog.lines[0], DIALOG_LINE_LEN,
+                                 "GET TO THE TELEPORTER, SOLDIER.");
+                        snprintf(g_dialog.lines[1], DIALOG_LINE_LEN,
+                                 "WE HAVE A DERELICT TO BOARD.");
+                        g_dialog.line_count = 2;
+                        g_dialog.pending_action = DIALOG_ACTION_NONE;
+                        g_dialog.active = true;
+                        app_state = STATE_SHIP_HUB;
+                    } else {
+                        mission_briefed = false;
+                        mission_medbay_done = false;
+                        mission_armory_done = false;
+                        mission_first_done = false;
+                        medbay_used = false;
+                        /* Start intro teletype */
+                        intro_char_idx = 0;
+                        intro_timer = 0;
+                        intro_done = false;
+                        app_state = STATE_INTRO;
+                    }
                 } else {
                     class_select_cursor = ci;
                 }
@@ -2223,17 +2319,24 @@ static void handle_screen_tap(float sx, float sy) {
                             mission_medbay_done = true;
                             snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "VITALS LOGGED. YOU'RE CLEAR.");
                             g_hub.hud_msg_timer = 90;
-                        } else if (g_player.hp < g_player.hp_max && player_scrap >= 10) {
-                            player_scrap -= 10;
-                            g_player.hp = g_player.hp_max;
-                            snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "FULLY HEALED!");
+                        } else if (medbay_used) {
+                            snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "ALREADY TREATED. NEXT MISSION.");
                             g_hub.hud_msg_timer = 60;
                         } else if (g_player.hp >= g_player.hp_max) {
                             if (!mission_medbay_done && mission_briefed) mission_medbay_done = true;
                             snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "ALREADY AT FULL HP");
                             g_hub.hud_msg_timer = 60;
+                        } else if (player_biomass >= 10) {
+                            player_biomass -= 10;
+                            int heal = g_player.hp_max / 5; /* 20% of max HP */
+                            if (heal < 1) heal = 1;
+                            g_player.hp += heal;
+                            if (g_player.hp > g_player.hp_max) g_player.hp = g_player.hp_max;
+                            medbay_used = true;
+                            snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "HEALED +%d HP (-10 BIO)", heal);
+                            g_hub.hud_msg_timer = 60;
                         } else {
-                            snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "NOT ENOUGH SCRAP");
+                            snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "NOT ENOUGH BIOMASS (NEED 10)");
                             g_hub.hud_msg_timer = 60;
                         }
                         break;
@@ -2482,6 +2585,9 @@ static void event(const sapp_event *ev) {
             case SAPP_KEYCODE_D:
                 if (class_select_cursor < CLASS_COUNT - 1) class_select_cursor++;
                 break;
+            case SAPP_KEYCODE_TAB:
+                skip_intro = !skip_intro;
+                break;
             case SAPP_KEYCODE_ENTER:
             case SAPP_KEYCODE_KP_ENTER:
             case SAPP_KEYCODE_SPACE:
@@ -2490,19 +2596,38 @@ static void event(const sapp_event *ev) {
                 weakness_init((uint32_t)(time(NULL) ^ (selected_class * 31337)));
                 player_scrap = 30;
                 player_sector = 0;
-                mission_briefed = false;
-                mission_medbay_done = false;
-                mission_armory_done = false;
-                mission_first_done = false;
                 captain_briefing_page = 0;
                 player_samples = 0;
                 player_starmap = 0;
                 current_map_boss_done = false;
                 current_mission_is_boss = false;
-                intro_char_idx = 0;
-                intro_timer = 0;
-                intro_done = false;
-                app_state = STATE_INTRO;
+                if (skip_intro) {
+                    mission_briefed = true;
+                    mission_medbay_done = true;
+                    mission_armory_done = true;
+                    mission_first_done = false;
+                    hub_generate(&g_hub);
+                    memset(&g_dialog, 0, sizeof(g_dialog));
+                    snprintf(g_dialog.speaker, sizeof(g_dialog.speaker), "CPT HARDEN");
+                    snprintf(g_dialog.lines[0], DIALOG_LINE_LEN,
+                             "GET TO THE TELEPORTER, SOLDIER.");
+                    snprintf(g_dialog.lines[1], DIALOG_LINE_LEN,
+                             "WE HAVE A DERELICT TO BOARD.");
+                    g_dialog.line_count = 2;
+                    g_dialog.pending_action = DIALOG_ACTION_NONE;
+                    g_dialog.active = true;
+                    app_state = STATE_SHIP_HUB;
+                } else {
+                    mission_briefed = false;
+                    mission_medbay_done = false;
+                    mission_armory_done = false;
+                    mission_first_done = false;
+                    medbay_used = false;
+                    intro_char_idx = 0;
+                    intro_timer = 0;
+                    intro_done = false;
+                    app_state = STATE_INTRO;
+                }
                 break;
             default: break;
         }
@@ -2697,17 +2822,24 @@ static void event(const sapp_event *ev) {
                                 mission_medbay_done = true;
                                 snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "VITALS LOGGED. YOU'RE CLEAR.");
                                 g_hub.hud_msg_timer = 90;
-                            } else if (g_player.hp < g_player.hp_max && player_scrap >= 10) {
-                                player_scrap -= 10;
-                                g_player.hp = g_player.hp_max;
-                                snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "FULLY HEALED!");
+                            } else if (medbay_used) {
+                                snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "ALREADY TREATED. NEXT MISSION.");
                                 g_hub.hud_msg_timer = 60;
                             } else if (g_player.hp >= g_player.hp_max) {
                                 if (!mission_medbay_done && mission_briefed) mission_medbay_done = true;
                                 snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "ALREADY AT FULL HP");
                                 g_hub.hud_msg_timer = 60;
+                            } else if (player_biomass >= 10) {
+                                player_biomass -= 10;
+                                int heal = g_player.hp_max / 5;
+                                if (heal < 1) heal = 1;
+                                g_player.hp += heal;
+                                if (g_player.hp > g_player.hp_max) g_player.hp = g_player.hp_max;
+                                medbay_used = true;
+                                snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "HEALED +%d HP (-10 BIO)", heal);
+                                g_hub.hud_msg_timer = 60;
                             } else {
-                                snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "NOT ENOUGH SCRAP");
+                                snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "NOT ENOUGH BIOMASS (NEED 10)");
                                 g_hub.hud_msg_timer = 60;
                             }
                             break;

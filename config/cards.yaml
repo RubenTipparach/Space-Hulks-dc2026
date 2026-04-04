@@ -16,8 +16,8 @@ burst:
   description: "HITS ALL ENEMIES\nFOR REDUCED DAMAGE."
 
 move:
-  effect: "+2 MOVE"
-  description: "GRANTS MOVEMENT\nPOINTS TO REPOSITION\nIN COMBAT."
+  effect: "+2 MOVE\nEXHAUST"
+  description: "GRANTS MOVEMENT\nPOINTS TO REPOSITION.\nEXHAUSTED AFTER USE."
 
 melee:
   effect: "6 DMG MELEE"
@@ -72,12 +72,12 @@ shotgun:
   description: "SPREAD SHOT. MORE\nDAMAGE UP CLOSE.\n3 AT MELEE, 1 AT FAR."
 
 welder:
-  effect: "4 DMG\nMELEE"
-  description: "MELEE TOOL USED AS\nA WEAPON. MUST BE\nADJACENT."
+  effect: "4 DMG +2SH\nMELEE"
+  description: "MELEE WELD ATTACK.\nDAMAGE + SHIELD.\nMUST BE ADJACENT."
 
 chainsaw:
-  effect: "8 DMG\nMELEE"
-  description: "DEVASTATING MELEE\nDAMAGE BUT COSTS\n2 ENERGY."
+  effect: "8 DMG +3SH\nMELEE"
+  description: "DEVASTATING MELEE\nDAMAGE + SHIELD.\nMUST BE ADJACENT."
 
 laser:
   effect: "4 DMG\nPRECISION"

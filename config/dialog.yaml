@@ -100,7 +100,7 @@ captain:
     count: 2
   post_mission:
     line0: GOOD WORK OUT THERE. WE'VE GOT WHAT WE NEED.
-    line1: STAR MAP IS READY. PICK A TARGET.
+    line1: WE'RE READY FOR THE NEXT STAR SYSTEM. PLOT A COURSE.
     count: 2
   under_attack:
     line0: WE'RE UNDER ATTACK! BOARD THAT SHIP AND STRIP IT FOR

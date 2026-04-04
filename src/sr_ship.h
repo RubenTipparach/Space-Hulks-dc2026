@@ -445,11 +445,11 @@ static void ship_populate_deck(ship_state *ship, sr_dungeon *d,
 
 /* ── Ship damage / turn tick ────────────────────────────────────── */
 
+/* Ship simulation disabled — no hull damage over time */
 static void ship_tick_turn(ship_state *ship) {
     if (!ship->boarding_active) return;
     ship->turns_elapsed++;
-
-    /* Enemy weapons damage player ship if weapons subsystem is still up */
+    /* Rest of ship simulation commented out:
     bool weapons_active = false;
     for (int i = 0; i < ship->room_count; i++) {
         if (ship->rooms[i].type == ROOM_WEAPONS && ship->rooms[i].subsystem_hp > 0) {
@@ -457,10 +457,8 @@ static void ship_tick_turn(ship_state *ship) {
             break;
         }
     }
-
     if (weapons_active) {
         ship->player_hull_timer++;
-        /* Fire every 3 turns */
         if (ship->player_hull_timer >= 3) {
             ship->player_hull_timer = 0;
             ship->player_hull_hp -= ship->player_hull_tick;
@@ -470,8 +468,6 @@ static void ship_tick_turn(ship_state *ship) {
             }
         }
     }
-
-    /* Recalculate enemy hull from subsystem damage */
     int total_subsystem = 0;
     for (int i = 0; i < ship->room_count; i++)
         total_subsystem += ship->rooms[i].subsystem_hp;
@@ -480,6 +476,7 @@ static void ship_tick_turn(ship_state *ship) {
         ship->hull_hp = 0;
         ship->enemy_ship_destroyed = true;
     }
+    */
 }
 
 /* ── Subsystem damage (called after combat in a room) ───────────── */
@@ -495,11 +492,13 @@ static void ship_damage_subsystem(ship_state *ship, int room_idx, int dmg) {
 /* ── Check mission completion ───────────────────────────────────── */
 
 static void ship_check_missions(ship_state *ship) {
-    /* Primary: kill all enemies OR destroy enough terminals */
+    /* Primary: >50% terminals destroyed OR all aliens killed */
     if (ship->mission.type == MISSION_DESTROY_SHIP) {
-        /* Enough terminals destroyed? */
-        if (ship->terminals_destroyed >= ship->terminals_required)
+        /* More than half of terminals destroyed */
+        if (ship->terminals_required > 0 &&
+            ship->terminals_destroyed * 2 > ship->terminals_required)
             ship->mission.completed = true;
+        /* All aliens killed (checked via enemy_ship_destroyed or external flag) */
         if (ship->enemy_ship_destroyed)
             ship->mission.completed = true;
     }
@@ -655,7 +654,7 @@ static void draw_ship_hud(uint32_t *px, int W, int H, const ship_state *ship) {
     /* Floor info in top-right (above minimap) */
     {
         char dbuf[16];
-        snprintf(dbuf, sizeof(dbuf), "DECK %d/%d", dng_state.current_floor + 1, ship->num_decks);
+        snprintf(dbuf, sizeof(dbuf), "FLOOR %d/%d", dng_state.current_floor + 1, ship->num_decks);
         sr_draw_text_shadow(px, W, H, W - 50, 4, dbuf, gray, shadow);
     }
 }

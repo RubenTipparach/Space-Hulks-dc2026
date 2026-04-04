@@ -822,15 +822,15 @@ static bool card_is_elemental(int card_type) {
 static void shop_generate(shop_state *shop) {
     memset(shop, 0, sizeof(*shop));
 
-    int non_elem[] = { CARD_OVERCHARGE, CARD_REPAIR, CARD_STUN, CARD_FORTIFY,
+    int non_elem[] = { CARD_REPAIR, CARD_STUN, CARD_FORTIFY,
                        CARD_DOUBLE_SHOT, CARD_DASH };
-    int non_elem_count = 6;
+    int non_elem_count = 5;
 
     int idx = 0;
-    /* 3-5 normal cards */
+    /* 3-5 normal cards (3% chance each slot is overcharge) */
     int card_count = 3 + dng_rng_int(3);
     for (int i = 0; i < card_count && idx < SHOP_MAX_CARDS; i++, idx++) {
-        shop->cards[idx] = non_elem[dng_rng_int(non_elem_count)];
+        shop->cards[idx] = (dng_rng_int(100) < 3) ? CARD_OVERCHARGE : non_elem[dng_rng_int(non_elem_count)];
         shop->prices[idx] = 15 + card_energy_cost[shop->cards[idx]] * 10 + dng_rng_int(6);
         shop->is_bio[idx] = false;
     }
@@ -1106,6 +1106,7 @@ static void draw_shop(uint32_t *px, int W, int H) {
                     shop->detail_idx = -1;
                     if (shop->cursor >= shop->count && shop->count > 0)
                         shop->cursor = shop->count - 1;
+                    ui_mouse_clicked = false; /* consume click to prevent double-buy */
                 }
             }
 
@@ -1794,17 +1795,20 @@ static void hub_draw_hud(uint32_t *px, int W, int H) {
     sr_draw_text_shadow(px, W, H, 4, 4, "ISS ENDEAVOR", 0xFF22CCEE, shadow);
 
     /* Player HP */
-    char hp_buf[32];
-    snprintf(hp_buf, sizeof(hp_buf), "HP %d/%d", g_player.hp, g_player.hp_max);
-    sr_draw_text_shadow(px, W, H, 4, 14, hp_buf, 0xFF22CC22, shadow);
+    char hp_num[32];
+    snprintf(hp_num, sizeof(hp_num), "%d/%d", g_player.hp, g_player.hp_max);
+    sr_draw_text_shadow(px, W, H, 4, 14, "HP", 0xFFCCCCCC, shadow);
+    sr_draw_text_shadow(px, W, H, 4 + 3 * 6, 14, hp_num, 0xFF22CC22, shadow);
 
     /* Currency */
-    char scrap_buf[32];
-    snprintf(scrap_buf, sizeof(scrap_buf), "SCRAP %d", player_scrap);
-    sr_draw_text_shadow(px, W, H, 4, 24, scrap_buf, 0xFFEECC44, shadow);
-    char bio_buf[32];
-    snprintf(bio_buf, sizeof(bio_buf), "BIO %d", player_biomass);
-    sr_draw_text_shadow(px, W, H, 4, 34, bio_buf, 0xFF44CC88, shadow);
+    char scrap_num[32];
+    snprintf(scrap_num, sizeof(scrap_num), "%d", player_scrap);
+    sr_draw_text_shadow(px, W, H, 4, 24, "SCRAP", 0xFFCCCCCC, shadow);
+    sr_draw_text_shadow(px, W, H, 4 + 6 * 6, 24, scrap_num, 0xFFEECC44, shadow);
+    char bio_num[32];
+    snprintf(bio_num, sizeof(bio_num), "%d", player_biomass);
+    sr_draw_text_shadow(px, W, H, 4, 34, "BIO", 0xFFCCCCCC, shadow);
+    sr_draw_text_shadow(px, W, H, 4 + 4 * 6, 34, bio_num, 0xFF44CC88, shadow);
 
     /* Sector + Samples */
     char sec_buf[32];
@@ -1818,19 +1822,32 @@ static void hub_draw_hud(uint32_t *px, int W, int H) {
         sr_draw_text_shadow(px, W, H, W - 78, 14, samp_buf, samp_col, shadow);
     }
 
-    /* Mission objectives (only during initial prep flow) */
-    if (mission_briefed && !mission_first_done && g_dlgd.loaded) {
-        int oy = 40;
-        sr_draw_text_shadow(px, W, H, 4, oy, "OBJECTIVES:", 0xFFCC8822, shadow);
-        oy += 10;
-        bool obj_done[3] = { mission_medbay_done, mission_armory_done, false };
-        for (int i = 0; i < g_dlgd.objective_count && i < 3; i++) {
-            char obj_buf[DLGD_LINE_LEN + 8];
-            bool done = obj_done[i];
-            snprintf(obj_buf, sizeof(obj_buf), "[%c] %s", done ? 'X' : ' ', g_dlgd.objectives[i]);
-            uint32_t col = done ? 0xFF448844 : 0xFFCCCCCC;
-            sr_draw_text_shadow(px, W, H, 8, oy, obj_buf, col, shadow);
+    /* Mission objectives */
+    {
+        int oy = 50;
+        if (mission_briefed && !mission_first_done && g_dlgd.loaded) {
+            /* Initial prep flow: medbay, armory, board derelict */
+            sr_draw_text_shadow(px, W, H, 4, oy, "OBJECTIVES:", 0xFFCC8822, shadow);
             oy += 10;
+            bool obj_done[3] = { mission_medbay_done, mission_armory_done, false };
+            for (int i = 0; i < g_dlgd.objective_count && i < 3; i++) {
+                char obj_buf[DLGD_LINE_LEN + 8];
+                bool done = obj_done[i];
+                snprintf(obj_buf, sizeof(obj_buf), "[%c] %s", done ? 'X' : ' ', g_dlgd.objectives[i]);
+                uint32_t col = done ? 0xFF448844 : 0xFFCCCCCC;
+                sr_draw_text_shadow(px, W, H, 8, oy, obj_buf, col, shadow);
+                oy += 10;
+            }
+        } else if (mission_first_done && !g_hub.mission_available) {
+            /* Post-mission: head to warp */
+            sr_draw_text_shadow(px, W, H, 4, oy, "OBJECTIVES:", 0xFFCC8822, shadow);
+            oy += 10;
+            sr_draw_text_shadow(px, W, H, 8, oy, "[ ] GO TO WARP", 0xFFCCCCCC, shadow);
+        } else if (mission_first_done && g_hub.mission_available) {
+            /* Under attack: board the enemy ship */
+            sr_draw_text_shadow(px, W, H, 4, oy, "OBJECTIVES:", 0xFFCC8822, shadow);
+            oy += 10;
+            sr_draw_text_shadow(px, W, H, 8, oy, "[ ] BOARD ENEMY SHIP", 0xFFCCCCCC, shadow);
         }
     }
 

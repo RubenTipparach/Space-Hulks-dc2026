@@ -634,8 +634,16 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
                 const sr_texture *stex = &stextures[type_idx];
                 if (!stex->pixels) continue;
 
+                /* Use lerp position if available for smooth movement */
                 float cx = (bgx - 0.5f) * DNG_CELL_SIZE;
                 float cz = (bgy - 0.5f) * DNG_CELL_SIZE;
+                for (int ei = 0; ei < dng_enemy_count; ei++) {
+                    if (dng_enemies[ei].alive && dng_enemies[ei].gx == bgx && dng_enemies[ei].gy == bgy) {
+                        cx = dng_enemies[ei].lerp_x;
+                        cz = dng_enemies[ei].lerp_y;
+                        break;
+                    }
+                }
                 float bot_y = -DNG_HALF_CELL;
                 float top_y = bot_y + sprite_half * 2.0f;
 

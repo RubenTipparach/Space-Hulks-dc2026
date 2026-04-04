@@ -71,6 +71,7 @@ enum { STATE_TITLE, STATE_CLASS_SELECT, STATE_INTRO, STATE_RUNNING, STATE_COMBAT
 static int app_state = STATE_TITLE;
 static int selected_class = 0;  /* 0=scout, 1=marine */
 static int class_select_cursor = 0;
+static bool skip_intro = false;
 static int title_cursor = 0;
 static bool save_exists = false;
 
@@ -80,6 +81,7 @@ static bool mission_briefed = false;     /* talked to captain for briefing */
 static bool mission_medbay_done = false; /* cleared by Dr Vasquez */
 static bool mission_armory_done = false; /* visited Chen's armory */
 static bool mission_first_done = false;  /* completed first derelict mission */
+static bool medbay_used = false;         /* already healed once between missions */
 static int  captain_briefing_page = 0;   /* current page in multi-page briefing */
 
 /* Intro / epilogue teletype state */

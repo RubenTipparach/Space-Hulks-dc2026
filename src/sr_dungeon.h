@@ -353,9 +353,10 @@ static void dng_generate_ex(sr_dungeon *d, int w, int h, bool has_down_stairs, b
         d->room_light_on[i] = true;  /* lights start on */
     }
 
-    /* Place alien entities (not spawn, not stairs) */
+    /* Place alien entities (not spawn, not stairs) — ~half the rooms get aliens */
     for (int i = 0; i < num_rooms; i++) {
-        int aliens_in_room = 1 + dng_rng_int(2);
+        if (dng_rng_int(2) == 0) continue; /* skip ~half the rooms */
+        int aliens_in_room = 1;
         for (int a = 0; a < aliens_in_room; a++) {
             int ax = rooms[i].x + dng_rng_int(rooms[i].w);
             int ay = rooms[i].y + dng_rng_int(rooms[i].h);
@@ -572,8 +573,8 @@ static void dng_game_init_sized(dng_game *g, int gw, int gh) {
     g->grid_w = gw > 0 ? gw : 20;
     g->grid_h = gh > 0 ? gh : 20;
 
-    /* Generate floor 0 */
-    dng_generate(&g->floors[0], g->grid_w, g->grid_h, false, true,
+    /* Generate floor 0 (stairs added later by game_init_ship if needed) */
+    dng_generate(&g->floors[0], g->grid_w, g->grid_h, false, false,
                  g->seed_base, 0);
     g->floor_generated[0] = true;
     g->dungeon = &g->floors[0];
@@ -737,6 +738,7 @@ enum {
     DNG_AI_WANDER,    /* slowly moving to random spots within room */
     DNG_AI_CHASE,     /* pursuing the player (A*) */
     DNG_AI_PATROL,    /* hallway enemy walking between waypoints */
+    DNG_AI_RETURN,    /* lost sight of player, returning to spawn point */
 };
 
 typedef struct {
@@ -744,7 +746,11 @@ typedef struct {
     int  gx, gy;          /* grid position */
     uint8_t type;          /* alien type value (1-4, same as aliens[][]) */
     int  ai_state;         /* DNG_AI_* */
+    int  prev_ai_state;    /* state before chase (to restore after returning) */
     int  home_room;        /* room index this enemy belongs to (-1 = hallway) */
+    int  spawn_gx, spawn_gy; /* starting position (return here when losing player) */
+    /* Smooth movement lerp */
+    float lerp_x, lerp_y; /* visual position (world coords, lerps toward gx/gy) */
     /* Pathfinding */
     int  path[DNG_PATH_MAX * 2]; /* gx,gy pairs; path[0..1]=next step */
     int  path_len;         /* number of steps remaining */
@@ -884,6 +890,50 @@ static int dng_astar(const sr_dungeon *d, int sx, int sy, int tx, int ty,
     return 0; /* no path found */
 }
 
+/* ── Line-of-sight check (Bresenham) ───────────────────────────── */
+
+static bool dng_has_los(const sr_dungeon *d, int x0, int y0, int x1, int y1) {
+    int dx = x1 - x0; if (dx < 0) dx = -dx;
+    int dy = y1 - y0; if (dy < 0) dy = -dy;
+    int sx = x0 < x1 ? 1 : -1;
+    int sy = y0 < y1 ? 1 : -1;
+    int err = dx - dy;
+    int cx = x0, cy = y0;
+    while (cx != x1 || cy != y1) {
+        int e2 = 2 * err;
+        if (e2 > -dy) { err -= dy; cx += sx; }
+        if (e2 < dx)  { err += dx; cy += sy; }
+        /* Hit destination = can see */
+        if (cx == x1 && cy == y1) return true;
+        /* Hit wall = blocked */
+        if (dng_is_wall(d, cx, cy)) return false;
+    }
+    return true;
+}
+
+/* ── Update enemy lerp positions (call each frame) ─────────────── */
+
+static void dng_enemies_lerp_update(float dt) {
+    float speed = 8.0f; /* cells per second */
+    for (int i = 0; i < dng_enemy_count; i++) {
+        dng_enemy *e = &dng_enemies[i];
+        if (!e->alive) continue;
+        float tx = (e->gx - 0.5f) * DNG_CELL_SIZE;
+        float ty = (e->gy - 0.5f) * DNG_CELL_SIZE;
+        float dx = tx - e->lerp_x;
+        float dy = ty - e->lerp_y;
+        float dist = sqrtf(dx * dx + dy * dy);
+        float step = speed * DNG_CELL_SIZE * dt;
+        if (dist <= step) {
+            e->lerp_x = tx;
+            e->lerp_y = ty;
+        } else {
+            e->lerp_x += dx / dist * step;
+            e->lerp_y += dy / dist * step;
+        }
+    }
+}
+
 /* ── Initialize enemy entities from aliens[][] grid ─────────────── */
 
 static void dng_enemies_init(sr_dungeon *d) {
@@ -896,9 +946,14 @@ static void dng_enemies_init(sr_dungeon *d) {
             e->alive = true;
             e->gx = gx;
             e->gy = gy;
+            e->spawn_gx = gx;
+            e->spawn_gy = gy;
+            e->lerp_x = (gx - 0.5f) * DNG_CELL_SIZE;
+            e->lerp_y = (gy - 0.5f) * DNG_CELL_SIZE;
             e->type = d->aliens[gy][gx];
             e->home_room = dng_room_at(d, gx, gy);
             e->ai_state = (e->home_room >= 0) ? DNG_AI_WANDER : DNG_AI_PATROL;
+            e->prev_ai_state = e->ai_state;
             e->wander_cooldown = 2 + dng_rng_int(4); /* stagger initial wander */
             e->patrol_forward = true;
         }
@@ -932,8 +987,8 @@ static void dng_spawn_hallway_enemies(sr_dungeon *d, int floor_num) {
 
     if (corridor_count < 4) return; /* not enough corridor space */
 
-    /* Spawn 1-3 hallway enemies depending on corridor size */
-    int num_patrol = 1 + dng_rng_int(corridor_count > 20 ? 3 : 2);
+    /* Spawn 1-2 hallway patrol enemies */
+    int num_patrol = 1 + dng_rng_int(2);
     int max_type = (floor_num <= 1) ? 2 : (floor_num <= 3) ? 3 : 4;
 
     for (int p = 0; p < num_patrol && dng_enemy_count < DNG_MAX_ENEMIES; p++) {
@@ -955,9 +1010,14 @@ static void dng_spawn_hallway_enemies(sr_dungeon *d, int floor_num) {
         e->alive = true;
         e->gx = sgx;
         e->gy = sgy;
+        e->spawn_gx = sgx;
+        e->spawn_gy = sgy;
+        e->lerp_x = (sgx - 0.5f) * DNG_CELL_SIZE;
+        e->lerp_y = (sgy - 0.5f) * DNG_CELL_SIZE;
         e->type = etype;
         e->home_room = -1;
         e->ai_state = DNG_AI_PATROL;
+        e->prev_ai_state = DNG_AI_PATROL;
         e->patrol_forward = true;
         e->wander_cooldown = 0;
 
@@ -1041,17 +1101,31 @@ static void dng_enemies_tick(sr_dungeon *d, int player_gx, int player_gy) {
 
         int enemy_room = dng_room_at(d, e->gx, e->gy);
         int dist_to_player = dng_astar_h(e->gx, e->gy, player_gx, player_gy);
+        bool can_see_player = dist_to_player <= DNG_ALERT_RADIUS &&
+                              dng_has_los(d, e->gx, e->gy, player_gx, player_gy);
 
-        /* ── Room alert: player enters a room → all enemies in that room chase */
-        if (player_room >= 0 && enemy_room == player_room) {
-            e->ai_state = DNG_AI_CHASE;
+        /* ── Aggro: acquire player target ── */
+        if (e->ai_state != DNG_AI_CHASE && e->ai_state != DNG_AI_RETURN) {
+            bool aggro = false;
+            /* Room alert: player enters a room → all enemies in that room chase */
+            if (player_room >= 0 && enemy_room == player_room) aggro = true;
+            /* Hallway enemies lock on when they can see the player */
+            if (e->home_room < 0 && can_see_player) aggro = true;
+            /* Any enemy that sees player nearby */
+            if (can_see_player && dist_to_player <= 3) aggro = true;
+
+            if (aggro) {
+                e->prev_ai_state = e->ai_state;
+                e->ai_state = DNG_AI_CHASE;
+            }
         }
-        /* Hallway enemies lock on by distance */
-        if (e->home_room < 0 && dist_to_player <= DNG_ALERT_RADIUS) {
-            e->ai_state = DNG_AI_CHASE;
+
+        /* ── De-aggro: lost line of sight while chasing → return to spawn ── */
+        if (e->ai_state == DNG_AI_CHASE && !can_see_player) {
+            e->ai_state = DNG_AI_RETURN;
         }
-        /* Room enemies that see player nearby also chase */
-        if (e->ai_state != DNG_AI_CHASE && dist_to_player <= 3) {
+        /* Re-aggro during return if player comes back into view */
+        if (e->ai_state == DNG_AI_RETURN && can_see_player) {
             e->ai_state = DNG_AI_CHASE;
         }
 
@@ -1108,6 +1182,29 @@ static void dng_enemies_tick(sr_dungeon *d, int player_gx, int player_gy) {
                 dng_enemy_move_step(e, d);
             }
             /* If no path, stay put (blocked) */
+            break;
+        }
+
+        case DNG_AI_RETURN: {
+            /* Walk back to spawn point */
+            if (e->gx == e->spawn_gx && e->gy == e->spawn_gy) {
+                /* Arrived home — restore previous AI state */
+                e->ai_state = e->prev_ai_state;
+                e->wander_cooldown = 2 + dng_rng_int(4);
+                break;
+            }
+            int ret_buf[DNG_PATH_MAX * 2];
+            int ret_steps = dng_astar(d, e->gx, e->gy, e->spawn_gx, e->spawn_gy,
+                                      ret_buf, DNG_PATH_MAX);
+            if (ret_steps > 0) {
+                int rnx = ret_buf[0];
+                int rny = ret_buf[1];
+                if (rnx != player_gx || rny != player_gy) {
+                    e->path[0] = rnx; e->path[1] = rny;
+                    e->path_len = 1;
+                    dng_enemy_move_step(e, d);
+                }
+            }
             break;
         }
 
