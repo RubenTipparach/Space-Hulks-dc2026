@@ -367,10 +367,11 @@ void main(){
             }
         }
 
-        // Expand N layers of walls (one pass per layer, collect-then-mark)
+        // Expand N layers of walls (extrude along normals: cardinal + diagonal corner fill)
         // Window faces block expansion in their direction (hull flush at windows)
         for (int layer = 0; layer < (int)Math.Ceiling(State.HullPadding); layer++)
         {
+            // Cardinal expansion
             var toExpand = new List<(int y, int x)>();
             for (int gy = 1; gy <= h; gy++)
                 for (int gx = 1; gx <= w; gx++)
@@ -392,6 +393,23 @@ void main(){
                         if (reachable) toExpand.Add((gy, gx));
                     }
             foreach (var (ey, ex) in toExpand)
+                _hullInside[ey, ex] = true;
+
+            // Diagonal corner fill: if both perpendicular cardinal neighbors are inside,
+            // include the corner cell (averaged normal at 45 degrees)
+            var toDiag = new List<(int y, int x)>();
+            for (int gy = 1; gy <= h; gy++)
+                for (int gx = 1; gx <= w; gx++)
+                    if (IsWallLike(fl.Map[gy, gx]) && !_hullInside[gy, gx])
+                    {
+                        bool add = false;
+                        if (gy > 1 && gx > 1 && _hullInside[gy - 1, gx] && _hullInside[gy, gx - 1]) add = true;
+                        if (gy > 1 && gx < w && _hullInside[gy - 1, gx] && _hullInside[gy, gx + 1]) add = true;
+                        if (gy < h && gx > 1 && _hullInside[gy + 1, gx] && _hullInside[gy, gx - 1]) add = true;
+                        if (gy < h && gx < w && _hullInside[gy + 1, gx] && _hullInside[gy, gx + 1]) add = true;
+                        if (add) toDiag.Add((gy, gx));
+                    }
+            foreach (var (ey, ex) in toDiag)
                 _hullInside[ey, ex] = true;
         }
 

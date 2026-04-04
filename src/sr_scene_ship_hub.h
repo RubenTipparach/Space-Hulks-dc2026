@@ -649,36 +649,26 @@ static void hub_show_teleport_confirm(void) {
     g_dialog.active = true;
 }
 
-/* Advance teletype by one frame. Call once per frame before draw_dialog. */
+/* Count total chars across all dialog lines */
+static int dialog_total_chars(void) {
+    int total = 0;
+    for (int i = 0; i < g_dialog.line_count; i++)
+        total += (int)strlen(g_dialog.lines[i]);
+    return total;
+}
+
+/* Advance teletype by one frame. */
 static void dialog_teletype_tick(void) {
     if (!g_dialog.active || g_dialog.tt_all_done) return;
     g_dialog.tt_timer++;
-    int chars_to_show = g_dialog.tt_timer * 2; /* 2 chars per frame */
-    int line_len = (int)strlen(g_dialog.lines[g_dialog.tt_line]);
-    if (chars_to_show >= line_len) {
-        /* Current line fully revealed — but don't auto-advance */
-        g_dialog.tt_timer = line_len; /* clamp */
-    }
+    if (g_dialog.tt_timer * 2 >= dialog_total_chars())
+        g_dialog.tt_all_done = true;
 }
 
-/* Handle CONTINUE click for teletype dialog.
-   Returns true if dialog should be dismissed (all lines done). */
+/* Handle CONTINUE click — instantly reveal all, or dismiss if already done. */
 static bool dialog_teletype_advance(void) {
-    if (g_dialog.tt_all_done) return true; /* already done, dismiss */
-    int line_len = (int)strlen(g_dialog.lines[g_dialog.tt_line]);
-    int chars_shown = g_dialog.tt_timer * 2;
-    if (chars_shown < line_len) {
-        /* Still typing — complete the current line */
-        g_dialog.tt_timer = (line_len + 1) / 2 + 1;
-        return false;
-    }
-    /* Current line done — advance to next */
-    g_dialog.tt_line++;
-    g_dialog.tt_timer = 0;
-    if (g_dialog.tt_line >= g_dialog.line_count) {
-        g_dialog.tt_all_done = true;
-        g_dialog.tt_line = g_dialog.line_count - 1; /* keep on last */
-    }
+    if (g_dialog.tt_all_done) return true;
+    g_dialog.tt_all_done = true;
     return false;
 }
 
@@ -708,29 +698,25 @@ static void draw_dialog(uint32_t *px, int W, int H) {
     /* Speaker name */
     sr_draw_text_shadow(px, W, H, bx + 4, by + 4, g_dialog.speaker, 0xFF00DDDD, shadow);
 
-    /* Dialog lines with teletype effect */
-    for (int i = 0; i <= g_dialog.tt_line && i < g_dialog.line_count; i++) {
-        if (i < g_dialog.tt_line || g_dialog.tt_all_done) {
-            /* Fully revealed line */
-            sr_draw_text_shadow(px, W, H, bx + 4, by + 16 + i * 10,
-                                g_dialog.lines[i], 0xFFCCCCCC, shadow);
-        } else {
-            /* Currently typing line — show partial */
-            int show = g_dialog.tt_timer * 2;
+    /* Dialog lines with teletype effect — flows across all lines */
+    {
+        int chars_left = g_dialog.tt_all_done ? 99999 : g_dialog.tt_timer * 2;
+        int cursor_x = bx + 4, cursor_y = by + 16;
+        for (int i = 0; i < g_dialog.line_count && chars_left > 0; i++) {
             int llen = (int)strlen(g_dialog.lines[i]);
-            if (show > llen) show = llen;
+            int show = (chars_left >= llen) ? llen : chars_left;
             char partial[DIALOG_LINE_LEN];
             memcpy(partial, g_dialog.lines[i], show);
             partial[show] = '\0';
             sr_draw_text_shadow(px, W, H, bx + 4, by + 16 + i * 10,
                                 partial, 0xFFCCCCCC, shadow);
-            /* Blinking cursor */
-            if ((g_dialog.tt_timer / 8) % 2 == 0) {
-                int cx = bx + 4 + show * 6;
-                int cy = by + 16 + i * 10;
-                sr_draw_text_shadow(px, W, H, cx, cy, "_", 0xFFCCCCCC, shadow);
-            }
+            cursor_x = bx + 4 + show * 6;
+            cursor_y = by + 16 + i * 10;
+            chars_left -= llen;
         }
+        /* Blinking cursor while typing */
+        if (!g_dialog.tt_all_done && (g_dialog.tt_timer / 8) % 2 == 0)
+            sr_draw_text_shadow(px, W, H, cursor_x, cursor_y, "_", 0xFFCCCCCC, shadow);
     }
 
     /* Buttons — attached tab below the box, right side */
@@ -827,20 +813,36 @@ static bool card_is_elemental(int card_type) {
            card_type == CARD_FIRE || card_type == CARD_LIGHTNING;
 }
 
-/* Generate armory shop: non-elemental cards, costs scrap */
+/* Consumable item IDs stored in shop cards[] with flag to distinguish from card types */
+#define SHOP_CONSUMABLE_FLAG 0x1000
+#define SHOP_IS_CONSUMABLE(c) ((c) & SHOP_CONSUMABLE_FLAG)
+#define SHOP_CONSUMABLE_TYPE(c) ((c) & ~SHOP_CONSUMABLE_FLAG)
+
+/* Generate armory shop: non-elemental cards + grenades, costs scrap */
 static void shop_generate(shop_state *shop) {
     memset(shop, 0, sizeof(*shop));
-    shop->count = 4 + dng_rng_int(3); /* 4-6 cards */
-    if (shop->count > SHOP_MAX_CARDS) shop->count = SHOP_MAX_CARDS;
 
     int non_elem[] = { CARD_OVERCHARGE, CARD_REPAIR, CARD_STUN, CARD_FORTIFY,
                        CARD_DOUBLE_SHOT, CARD_DASH };
     int non_elem_count = 6;
-    for (int i = 0; i < shop->count; i++) {
-        shop->cards[i] = non_elem[dng_rng_int(non_elem_count)];
-        shop->prices[i] = 15 + card_energy_cost[shop->cards[i]] * 10 + dng_rng_int(6);
-        shop->is_bio[i] = false;
+
+    int idx = 0;
+    /* 3-5 normal cards */
+    int card_count = 3 + dng_rng_int(3);
+    for (int i = 0; i < card_count && idx < SHOP_MAX_CARDS; i++, idx++) {
+        shop->cards[idx] = non_elem[dng_rng_int(non_elem_count)];
+        shop->prices[idx] = 15 + card_energy_cost[shop->cards[idx]] * 10 + dng_rng_int(6);
+        shop->is_bio[idx] = false;
     }
+    /* 1-2 grenades */
+    int grenade_count = 1 + dng_rng_int(2);
+    for (int i = 0; i < grenade_count && idx < SHOP_MAX_CARDS; i++, idx++) {
+        shop->cards[idx] = SHOP_CONSUMABLE_FLAG | CONSUMABLE_GRENADE;
+        shop->prices[idx] = consumable_prices[CONSUMABLE_GRENADE];
+        shop->is_bio[idx] = false;
+    }
+
+    shop->count = idx;
     shop->cursor = 0;
     shop->mode = 0;
     shop->trash_cursor = 0;
@@ -849,24 +851,64 @@ static void shop_generate(shop_state *shop) {
     shop->active = true;
 }
 
-/* Generate medbay shop: elemental cards, costs biomass */
+/* Generate medbay shop: expensive elemental cards (biomass) + cheap consumables (scrap) */
 static void medbay_shop_generate(shop_state *shop) {
     memset(shop, 0, sizeof(*shop));
-    shop->count = 3 + dng_rng_int(2); /* 3-4 elemental cards */
-    if (shop->count > SHOP_MAX_CARDS) shop->count = SHOP_MAX_CARDS;
 
+    /* Shuffle elemental pool for variety */
     int elem[] = { CARD_ICE, CARD_ACID, CARD_FIRE, CARD_LIGHTNING };
-    for (int i = 0; i < shop->count; i++) {
-        shop->cards[i] = elem[dng_rng_int(4)];
-        shop->prices[i] = 10 + card_energy_cost[shop->cards[i]] * 8 + dng_rng_int(5);
-        shop->is_bio[i] = true;
+    for (int i = 3; i > 0; i--) {
+        int j = dng_rng_int(i + 1);
+        int tmp = elem[i]; elem[i] = elem[j]; elem[j] = tmp;
     }
+
+    int idx = 0;
+    /* 2 elemental cards — expensive, costs biomass */
+    for (int i = 0; i < 2 && idx < SHOP_MAX_CARDS; i++, idx++) {
+        shop->cards[idx] = elem[i];
+        shop->prices[idx] = 200;
+        shop->is_bio[idx] = true;
+    }
+    /* 2 health kits — cheap consumables, costs scrap */
+    for (int i = 0; i < 2 && idx < SHOP_MAX_CARDS; i++, idx++) {
+        shop->cards[idx] = SHOP_CONSUMABLE_FLAG | CONSUMABLE_HEALTH_KIT;
+        shop->prices[idx] = consumable_prices[CONSUMABLE_HEALTH_KIT];
+        shop->is_bio[idx] = false;
+    }
+
+    shop->count = idx;
     shop->cursor = 0;
     shop->mode = 0;
     shop->trash_cursor = 0;
     shop->detail_idx = -1;
     shop->detail_open = false;
     shop->active = true;
+}
+
+/* Draw a consumable item in a card-sized slot */
+static void draw_consumable_slot(uint32_t *px, int W, int H,
+                                 int cx, int cy, int cw, int ch,
+                                 int cons_type, bool selected, uint32_t shadow) {
+    uint32_t bg = selected ? 0xFF222233 : 0xFF111122;
+    combat_draw_rect(px, W, H, cx, cy, cw, ch, bg);
+    uint32_t border = selected ? 0xFF00DDDD :
+        (cons_type == CONSUMABLE_HEALTH_KIT ? 0xFF22CC44 : 0xFF4488EE);
+    combat_draw_rect_outline(px, W, H, cx, cy, cw, ch, border);
+    if (selected)
+        combat_draw_rect_outline(px, W, H, cx+1, cy+1, cw-2, ch-2, border);
+    /* Color stripe */
+    combat_draw_rect(px, W, H, cx+1, cy+1, cw-2, 3, border);
+    /* Name */
+    const char *name = (cons_type > 0 && cons_type < CONSUMABLE_TYPE_COUNT)
+        ? consumable_names[cons_type] : "???";
+    sr_draw_text_wrap(px, W, H, cx+3, cy+6, name, cw-6, 8, 0xFFFFFFFF, shadow);
+    /* Effect text */
+    const char *effect = "";
+    if (cons_type == CONSUMABLE_HEALTH_KIT) effect = "+10 HP\nUSE ANY\nTIME";
+    else if (cons_type == CONSUMABLE_GRENADE) effect = "4 DMG\nALL\nENEMIES";
+    sr_draw_text_wrap(px, W, H, cx+3, cy+24, effect, cw-6, 8, 0xFF888888, shadow);
+    /* "ITEM" label */
+    sr_draw_text_shadow(px, W, H, cx+3, cy+ch-10, "ITEM", 0xFF555555, shadow);
 }
 
 /* Get pointer to whichever shop is currently active */
@@ -924,9 +966,15 @@ static void draw_shop(uint32_t *px, int W, int H) {
 
                 /* Render card to temp buffer */
                 memset(card_fan_buf, 0, sizeof(card_fan_buf));
-                combat_draw_card_content(card_fan_buf, cw, ch,
-                                         0, 0, cw, ch,
-                                         card_type, sel, shadow, -1);
+                if (SHOP_IS_CONSUMABLE(card_type)) {
+                    draw_consumable_slot(card_fan_buf, cw, ch,
+                                        0, 0, cw, ch,
+                                        SHOP_CONSUMABLE_TYPE(card_type), sel, shadow);
+                } else {
+                    combat_draw_card_content(card_fan_buf, cw, ch,
+                                             0, 0, cw, ch,
+                                             card_type, sel, shadow, -1);
+                }
                 /* Blit to screen (no rotation) */
                 for (int ry = 0; ry < ch; ry++)
                     for (int rx = 0; rx < cw; rx++) {
@@ -961,7 +1009,11 @@ static void draw_shop(uint32_t *px, int W, int H) {
         if (shop->detail_open && shop->detail_idx >= 0 && shop->detail_idx < shop->count) {
             int idx = shop->detail_idx;
             int card_type = shop->cards[idx];
-            uint32_t ccol = card_colors[card_type];
+            bool is_cons_detail = SHOP_IS_CONSUMABLE(card_type);
+            int cons_type_detail = SHOP_CONSUMABLE_TYPE(card_type);
+            uint32_t ccol = is_cons_detail
+                ? (cons_type_detail == CONSUMABLE_HEALTH_KIT ? 0xFF22CC44 : 0xFF4488EE)
+                : card_colors[card_type];
 
             int pw = 250, ph = 150;
             int px2 = (W - pw) / 2;
@@ -972,45 +1024,57 @@ static void draw_shop(uint32_t *px, int W, int H) {
             combat_draw_rect_outline(px, W, H, px2, py, pw, ph, ccol);
             combat_draw_rect(px, W, H, px2 + 1, py + 1, pw - 2, 3, ccol);
 
-            /* Card art (right side) */
-            if (card_type < (int)(sizeof(spr_card_table)/sizeof(spr_card_table[0]))) {
-                spr_draw(px, W, H, spr_card_table[card_type], px2 + pw - 60, py + 20, 3);
+            if (is_cons_detail) {
+                /* Consumable detail */
+                const char *cname = consumable_names[cons_type_detail];
+                sr_draw_text_shadow(px, W, H, px2 + 8, py + 6, cname, 0xFFFFFFFF, shadow);
+                sr_draw_text_shadow(px, W, H, px2 + 8, py + 18, "CONSUMABLE ITEM", 0xFF888888, shadow);
+                const char *cdesc = "";
+                if (cons_type_detail == CONSUMABLE_HEALTH_KIT)
+                    cdesc = "RESTORES 10 HP.\nCAN BE USED ANY TIME\nDURING COMBAT.\nDOES NOT COST ENERGY.";
+                else if (cons_type_detail == CONSUMABLE_GRENADE)
+                    cdesc = "DEALS 4 DAMAGE TO\nALL ENEMIES.\nCAN BE USED ANY TIME\nDURING COMBAT.";
+                sr_draw_text_wrap(px, W, H, px2 + 8, py + 30, cdesc,
+                                  pw - 16, 8, ccol, shadow);
+            } else {
+                /* Card detail */
+                if (card_type < (int)(sizeof(spr_card_table)/sizeof(spr_card_table[0])))
+                    spr_draw(px, W, H, spr_card_table[card_type], px2 + pw - 60, py + 20, 3);
+                sr_draw_text_shadow(px, W, H, px2 + 8, py + 6, card_names[card_type],
+                                    0xFFFFFFFF, shadow);
+                char ebuf[8];
+                snprintf(ebuf, sizeof(ebuf), "%dE", card_energy_cost[card_type]);
+                sr_draw_text_shadow(px, W, H, px2 + pw - 76, py + 6, ebuf, 0xFF22CCEE, shadow);
+                const char *tgt = "";
+                int tt = card_targets[card_type];
+                if (tt == TARGET_SELF) tgt = "TARGET: SELF";
+                else if (tt == TARGET_ENEMY) tgt = "TARGET: 1 ENEMY";
+                else tgt = "TARGET: ALL";
+                sr_draw_text_shadow(px, W, H, px2 + 8, py + 18, tgt, 0xFF888888, shadow);
+                const char *effect = card_effect_text(card_type);
+                int ey = sr_draw_text_wrap(px, W, H, px2 + 8, py + 30, effect,
+                                           pw - 80, 8, ccol, shadow);
+                const char *desc = card_description_text(card_type);
+                sr_draw_text_wrap(px, W, H, px2 + 8, ey + 4, desc,
+                                  pw - 80, 8, 0xFF666666, shadow);
             }
-
-            /* Card name */
-            sr_draw_text_shadow(px, W, H, px2 + 8, py + 6, card_names[card_type],
-                                0xFFFFFFFF, shadow);
-            /* Energy cost */
-            char ebuf[8];
-            snprintf(ebuf, sizeof(ebuf), "%dE", card_energy_cost[card_type]);
-            sr_draw_text_shadow(px, W, H, px2 + pw - 76, py + 6, ebuf, 0xFF22CCEE, shadow);
-
-            /* Target type */
-            const char *tgt = "";
-            int tt = card_targets[card_type];
-            if (tt == TARGET_SELF) tgt = "TARGET: SELF";
-            else if (tt == TARGET_ENEMY) tgt = "TARGET: 1 ENEMY";
-            else tgt = "TARGET: ALL";
-            sr_draw_text_shadow(px, W, H, px2 + 8, py + 18, tgt, 0xFF888888, shadow);
-
-            /* Effect text */
-            const char *effect = card_effect_text(card_type);
-            int ey = sr_draw_text_wrap(px, W, H, px2 + 8, py + 30, effect,
-                                       pw - 80, 8, ccol, shadow);
-
-            /* Description */
-            const char *desc = card_description_text(card_type);
-            sr_draw_text_wrap(px, W, H, px2 + 8, ey + 4, desc,
-                              pw - 80, 8, 0xFF666666, shadow);
 
             /* Price */
             char price_buf[32];
             bool bio = shop->is_bio[idx];
+            bool is_cons = SHOP_IS_CONSUMABLE(shop->cards[idx]);
             int wallet = bio ? player_biomass : player_scrap;
             snprintf(price_buf, sizeof(price_buf), "PRICE: %d %s", shop->prices[idx],
                      bio ? "BIOMASS" : "SCRAP");
-            bool can_buy = wallet >= shop->prices[idx] &&
-                           g_player.persistent_deck_count < COMBAT_DECK_MAX;
+            bool has_space;
+            if (is_cons) {
+                has_space = false;
+                for (int s = 0; s < CONSUMABLE_SLOTS; s++)
+                    if (player_consumables[s] == CONSUMABLE_NONE) { has_space = true; break; }
+            } else {
+                has_space = g_player.persistent_deck_count < COMBAT_DECK_MAX;
+            }
+            bool can_buy = wallet >= shop->prices[idx] && has_space;
             uint32_t price_col = can_buy ? (bio ? 0xFF44CC88 : 0xFF22CC22) : 0xFF882222;
             sr_draw_text_shadow(px, W, H, px2 + 8, py + ph - 30,
                                 price_buf, price_col, shadow);
@@ -1021,7 +1085,17 @@ static void draw_shop(uint32_t *px, int W, int H) {
                               0xFF1A3311, 0xFF224422, 0xFF44CC44)) {
                     if (bio) player_biomass -= shop->prices[idx];
                     else     player_scrap -= shop->prices[idx];
-                    g_player.persistent_deck[g_player.persistent_deck_count++] = shop->cards[idx];
+                    if (is_cons) {
+                        int ctype = SHOP_CONSUMABLE_TYPE(shop->cards[idx]);
+                        for (int s = 0; s < CONSUMABLE_SLOTS; s++) {
+                            if (player_consumables[s] == CONSUMABLE_NONE) {
+                                player_consumables[s] = ctype;
+                                break;
+                            }
+                        }
+                    } else {
+                        g_player.persistent_deck[g_player.persistent_deck_count++] = shop->cards[idx];
+                    }
                     for (int j = idx; j < shop->count - 1; j++) {
                         shop->cards[j] = shop->cards[j + 1];
                         shop->prices[j] = shop->prices[j + 1];
@@ -1168,14 +1242,32 @@ static void shop_handle_key(int key_code) {
         }
         if (key_code == SAPP_KEYCODE_ENTER || key_code == SAPP_KEYCODE_SPACE) {
             int idx = shop->cursor;
-            bool bio = (idx >= 0 && idx < shop->count) ? shop->is_bio[idx] : false;
+            if (idx < 0 || idx >= shop->count) return;
+            bool bio = shop->is_bio[idx];
+            bool is_cons = SHOP_IS_CONSUMABLE(shop->cards[idx]);
             int wallet = bio ? player_biomass : player_scrap;
-            if (idx >= 0 && idx < shop->count &&
-                wallet >= shop->prices[idx] &&
-                g_player.persistent_deck_count < COMBAT_DECK_MAX) {
+            bool has_space;
+            if (is_cons) {
+                has_space = false;
+                for (int s = 0; s < CONSUMABLE_SLOTS; s++)
+                    if (player_consumables[s] == CONSUMABLE_NONE) { has_space = true; break; }
+            } else {
+                has_space = g_player.persistent_deck_count < COMBAT_DECK_MAX;
+            }
+            if (wallet >= shop->prices[idx] && has_space) {
                 if (bio) player_biomass -= shop->prices[idx];
                 else     player_scrap -= shop->prices[idx];
-                g_player.persistent_deck[g_player.persistent_deck_count++] = shop->cards[idx];
+                if (is_cons) {
+                    int ctype = SHOP_CONSUMABLE_TYPE(shop->cards[idx]);
+                    for (int s = 0; s < CONSUMABLE_SLOTS; s++) {
+                        if (player_consumables[s] == CONSUMABLE_NONE) {
+                            player_consumables[s] = ctype;
+                            break;
+                        }
+                    }
+                } else {
+                    g_player.persistent_deck[g_player.persistent_deck_count++] = shop->cards[idx];
+                }
                 /* Remove from shop */
                 for (int i = idx; i < shop->count - 1; i++) {
                     shop->cards[i] = shop->cards[i + 1];

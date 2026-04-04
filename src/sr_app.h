@@ -115,6 +115,21 @@ static int player_scrap = 0;       /* currency: buy normal cards, trash, heal */
 static int player_biomass = 0;     /* currency: buy elemental cards */
 static int player_sector = 0;      /* current sector (progression depth) */
 
+/* ── Consumables ──────────────────────────────────────────────── */
+
+enum {
+    CONSUMABLE_NONE,
+    CONSUMABLE_HEALTH_KIT,  /* heal 10 HP, usable any time in combat */
+    CONSUMABLE_GRENADE,     /* deal 4 damage to all enemies */
+    CONSUMABLE_TYPE_COUNT
+};
+
+static const char *consumable_names[] = { "", "HEALTH KIT", "GRENADE" };
+static const int consumable_prices[] = { 0, 20, 25 };  /* scrap cost */
+
+#define CONSUMABLE_SLOTS 2
+static int player_consumables[CONSUMABLE_SLOTS]; /* item type per slot, 0 = empty */
+
 /* ── Mission summary (shown after each mission) ───────────────── */
 
 typedef struct {

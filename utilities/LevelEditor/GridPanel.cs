@@ -323,9 +323,10 @@ public class GridPanel : Panel
             }
         }
 
-        // Expand N layers of walls
+        // Expand N layers of walls (extrude along normals: cardinal + diagonal corner fill)
         for (int layer = 0; layer < (int)Math.Ceiling(State.HullPadding); layer++)
         {
+            // Cardinal expansion
             var toExpand = new List<(int y, int x)>();
             for (int gy = 1; gy <= h; gy++)
                 for (int gx = 1; gx <= w; gx++)
@@ -334,6 +335,23 @@ public class GridPanel : Panel
                             (gx > 1 && inside[gy, gx - 1]) || (gx < w && inside[gy, gx + 1]))
                             toExpand.Add((gy, gx));
             foreach (var (ey, ex) in toExpand)
+                inside[ey, ex] = true;
+
+            // Diagonal corner fill: if both perpendicular cardinal neighbors are inside,
+            // include the corner cell (averaged normal at 45 degrees)
+            var toDiag = new List<(int y, int x)>();
+            for (int gy = 1; gy <= h; gy++)
+                for (int gx = 1; gx <= w; gx++)
+                    if (IsWallLike(Floor.Map[gy, gx]) && !inside[gy, gx])
+                    {
+                        bool add = false;
+                        if (gy > 1 && gx > 1 && inside[gy - 1, gx] && inside[gy, gx - 1]) add = true;
+                        if (gy > 1 && gx < w && inside[gy - 1, gx] && inside[gy, gx + 1]) add = true;
+                        if (gy < h && gx > 1 && inside[gy + 1, gx] && inside[gy, gx - 1]) add = true;
+                        if (gy < h && gx < w && inside[gy + 1, gx] && inside[gy, gx + 1]) add = true;
+                        if (add) toDiag.Add((gy, gx));
+                    }
+            foreach (var (ey, ex) in toDiag)
                 inside[ey, ex] = true;
         }
 

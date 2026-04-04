@@ -44,6 +44,16 @@ static sr_audio_clip audio_footsteps[6];
 static sr_audio_clip audio_drone;
 static sr_audio_clip audio_noise;
 
+/* Card / action SFX */
+static sr_audio_clip audio_sfx_teleporter;
+static sr_audio_clip audio_sfx_shoot;
+static sr_audio_clip audio_sfx_ice;
+static sr_audio_clip audio_sfx_acid;
+static sr_audio_clip audio_sfx_chainsaw;
+static sr_audio_clip audio_sfx_dblshot;
+static sr_audio_clip audio_sfx_dealcard;
+static sr_audio_clip audio_sfx_welder;
+
 static int   audio_drone_voice = -1;
 static int   audio_noise_voice = -1;
 static float audio_noise_timer = 0.0f;
@@ -144,6 +154,11 @@ static void sr_audio_play_footstep(void) {
     sr_audio_play(&audio_footsteps[idx], audio_vol.footstep, false);
 }
 
+static void sr_audio_play_sfx(const sr_audio_clip *clip) {
+    if (!audio_initialized || !clip || !clip->samples) return;
+    sr_audio_play(clip, 0.5f, false);
+}
+
 static void sr_audio_start_hub_ambient(void) {
     if (!audio_initialized || audio_hub_ambient_active) return;
     audio_drone_voice = sr_audio_play(&audio_drone, audio_vol.ambient, true);
@@ -191,6 +206,16 @@ static void sr_audio_init(void) {
     audio_drone = sr_audio_load_mp3("assets/audio/homeship_drone.mp3");
     audio_noise = sr_audio_load_mp3("assets/audio/homeship_noise.mp3");
 
+    /* Card / action SFX */
+    audio_sfx_teleporter = sr_audio_load_mp3("assets/audio/teleporter.mp3");
+    audio_sfx_shoot      = sr_audio_load_mp3("assets/audio/shoot.mp3");
+    audio_sfx_ice        = sr_audio_load_mp3("assets/audio/ice.mp3");
+    audio_sfx_acid       = sr_audio_load_mp3("assets/audio/acid.mp3");
+    audio_sfx_chainsaw   = sr_audio_load_mp3("assets/audio/chainsaw.mp3");
+    audio_sfx_dblshot    = sr_audio_load_mp3("assets/audio/dblshot.mp3");
+    audio_sfx_dealcard   = sr_audio_load_mp3("assets/audio/dealcard.mp3");
+    audio_sfx_welder     = sr_audio_load_mp3("assets/audio/welder.mp3");
+
     dng_on_move_callback = sr_audio_play_footstep;
     audio_initialized = true;
     printf("[Audio] Initialized (%d Hz, %d ch)\n", saudio_sample_rate(), saudio_channels());
@@ -204,6 +229,14 @@ static void sr_audio_shutdown(void) {
     for (int i = 0; i < 6; i++) sr_audio_clip_free(&audio_footsteps[i]);
     sr_audio_clip_free(&audio_drone);
     sr_audio_clip_free(&audio_noise);
+    sr_audio_clip_free(&audio_sfx_teleporter);
+    sr_audio_clip_free(&audio_sfx_shoot);
+    sr_audio_clip_free(&audio_sfx_ice);
+    sr_audio_clip_free(&audio_sfx_acid);
+    sr_audio_clip_free(&audio_sfx_chainsaw);
+    sr_audio_clip_free(&audio_sfx_dblshot);
+    sr_audio_clip_free(&audio_sfx_dealcard);
+    sr_audio_clip_free(&audio_sfx_welder);
 }
 
 #endif /* SR_AUDIO_H */

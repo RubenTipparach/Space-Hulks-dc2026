@@ -90,6 +90,9 @@ static void dlgd_load_block(const sr_config *cfg, const char *prefix, dlgd_block
     }
 }
 
+/* Forward declarations */
+static void dlgd_load_cards(void);
+
 /* ── Main loader ────────────────────────────────────────────────── */
 
 static void dlgd_load(void) {

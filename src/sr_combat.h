@@ -156,7 +156,15 @@ static const char_class char_classes[] = {
 
 /* ── Enemy types ─────────────────────────────────────────────────── */
 
-enum { ENEMY_LURKER, ENEMY_BRUTE, ENEMY_SPITTER, ENEMY_HIVEGUARD, ENEMY_TYPE_COUNT };
+enum { ENEMY_LURKER, ENEMY_BRUTE, ENEMY_SPITTER, ENEMY_HIVEGUARD,
+       ENEMY_BOSS_1, ENEMY_BOSS_2, ENEMY_BOSS_3,
+       ENEMY_TYPE_COUNT };
+
+/* Sprite size: 32 for bosses, 16 for normal enemies */
+static int spr_enemy_size(int enemy_type) {
+    if (enemy_type >= ENEMY_BOSS_1 && enemy_type <= ENEMY_BOSS_3) return 32;
+    return 16;
+}
 
 /* ── Element types (for weakness system) ─────────────────────────── */
 
@@ -246,6 +254,9 @@ static const enemy_template enemy_templates[] = {
     [ENEMY_BRUTE]     = { "BRUTE",     18,  5, 1, 0, 2, "Rage" },
     [ENEMY_SPITTER]   = { "SPITTER",   10,  3, 3, 1, 0, "Acid Spit" },
     [ENEMY_HIVEGUARD] = { "HIVEGUARD", 24,  4, 2, 1, 1, "Shield Wall" },
+    [ENEMY_BOSS_1]    = { "RAVAGER",   40,  6, 2, 0, 2, "Frenzy" },
+    [ENEMY_BOSS_2]    = { "VOID WYRM", 50,  7, 3, 1, 2, "Void Breath" },
+    [ENEMY_BOSS_3]    = { "HIVEMIND",  60,  8, 2, 1, 3, "Spawn Swarm" },
 };
 
 /* ── Combat state ────────────────────────────────────────────────── */
@@ -297,6 +308,7 @@ typedef struct {
     int hand_count;
 
     /* Reward selection */
+    int primary_enemy_type; /* strongest enemy type in this combat (for reward chances) */
     int reward_choices[3];
     int reward_cursor;
 
@@ -422,6 +434,7 @@ static void combat_build_deck(combat_state *cs) {
 }
 
 static void combat_draw_hand(combat_state *cs) {
+    sr_audio_play_sfx(&audio_sfx_dealcard);
     cs->hand_count = 0;
     for (int i = 0; i < COMBAT_HAND_MAX; i++) {
         if (cs->deck_count == 0) {
@@ -440,13 +453,28 @@ static void combat_draw_hand(combat_state *cs) {
 /* ── Combat initialization ───────────────────────────────────────── */
 
 static void combat_generate_rewards(combat_state *cs) {
-    /* Pick 3 unique droppable card types (CARD_OVERCHARGE through CARD_LIGHTNING) */
-    int droppable_start = CARD_OVERCHARGE;
-    int droppable_count = CARD_SNIPER - droppable_start; /* exclude class-specific cards */
+    int elems[] = { CARD_ICE, CARD_ACID, CARD_FIRE, CARD_LIGHTNING };
+    /* Non-elemental droppable pool */
+    int non_elem[] = { CARD_OVERCHARGE, CARD_REPAIR, CARD_STUN, CARD_FORTIFY,
+                       CARD_DOUBLE_SHOT, CARD_DASH };
+    int non_elem_count = 6;
+
+    /* Elemental chance based on enemy type */
+    int elem_pct; /* percentage chance per slot */
+    if (cs->primary_enemy_type >= ENEMY_BOSS_1)
+        elem_pct = 100;
+    else if (cs->primary_enemy_type == ENEMY_BRUTE || cs->primary_enemy_type == ENEMY_HIVEGUARD)
+        elem_pct = 5;
+    else
+        elem_pct = 1;
+
     for (int i = 0; i < 3; i++) {
         int attempts = 0;
         do {
-            cs->reward_choices[i] = droppable_start + dng_rng_int(droppable_count);
+            if (dng_rng_int(100) < elem_pct)
+                cs->reward_choices[i] = elems[dng_rng_int(4)];
+            else
+                cs->reward_choices[i] = non_elem[dng_rng_int(non_elem_count)];
             attempts++;
         } while (attempts < 20 && (
             (i > 0 && cs->reward_choices[i] == cs->reward_choices[0]) ||
@@ -489,6 +517,7 @@ static void combat_init(combat_state *cs, int player_class, int floor, int cell_
     /* Primary enemy is what was on the cell (1-indexed, so subtract 1) */
     int primary_type = (cell_alien_type > 0) ? (cell_alien_type - 1) : 0;
     if (primary_type >= ENEMY_TYPE_COUNT) primary_type = 0;
+    cs->primary_enemy_type = primary_type;
 
     /* Enemy count: 1-3, deeper floors = more */
     cs->enemy_count = 1 + dng_rng_int(2 + (floor > 1 ? 1 : 0));
@@ -698,6 +727,7 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
             break;
 
         case CARD_SHOOT: {
+            sr_audio_play_sfx(&audio_sfx_shoot);
             int t = cs->target;
             while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
             if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
@@ -770,6 +800,7 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
             break;
 
         case CARD_DOUBLE_SHOT: {
+            sr_audio_play_sfx(&audio_sfx_dblshot);
             int t = cs->target;
             while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
             if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
@@ -802,6 +833,7 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
 
         /* ── Elemental cards ─────────────────────────────────── */
         case CARD_ICE: {
+            sr_audio_play_sfx(&audio_sfx_ice);
             int t = cs->target;
             while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
             if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
@@ -826,6 +858,7 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
         }
 
         case CARD_ACID: {
+            sr_audio_play_sfx(&audio_sfx_acid);
             int t = cs->target;
             while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
             if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
@@ -935,6 +968,7 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
         }
 
         case CARD_WELDER: {
+            sr_audio_play_sfx(&audio_sfx_welder);
             int t = cs->target;
             while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
             if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
@@ -954,6 +988,7 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
         }
 
         case CARD_CHAINSAW: {
+            sr_audio_play_sfx(&audio_sfx_chainsaw);
             int t = cs->target;
             while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
             if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
@@ -1519,7 +1554,16 @@ static void combat_touch_began(combat_state *cs, float fx, float fy) {
                 cs->phase = CPHASE_RESULT;
                 cs->combat_over = true;
                 combat_set_message(cs, card_names[cs->reward_choices[i]]);
+                return;
             }
+        }
+        /* SKIP button */
+        int skip_x = (FB_WIDTH - 50) / 2;
+        int skip_y = rbase_y + rh + 24;
+        if (fx >= skip_x && fx < skip_x + 50 && fy >= skip_y && fy < skip_y + 14) {
+            cs->phase = CPHASE_RESULT;
+            cs->combat_over = true;
+            combat_set_message(cs, "SKIPPED");
         }
         return;
     }
@@ -1557,6 +1601,30 @@ static void combat_touch_began(combat_state *cs, float fx, float fy) {
             cs->drag_y = fy;
             cs->drag_start_x = fx;
             cs->drag_start_y = fy;
+            return;
+        }
+    }
+
+    /* Check consumable slot clicks */
+    for (int s = 0; s < CONSUMABLE_SLOTS; s++) {
+        int sx = 90 + s * 36, sy = 186;
+        if (fx >= sx && fx < sx + 32 && fy >= sy && fy < sy + 32 &&
+            player_consumables[s] != CONSUMABLE_NONE) {
+            int ctype = player_consumables[s];
+            if (ctype == CONSUMABLE_HEALTH_KIT) {
+                int heal = 10;
+                cs->player_hp += heal;
+                if (cs->player_hp > cs->player_hp_max) cs->player_hp = cs->player_hp_max;
+                g_player.hp = cs->player_hp;
+                combat_set_message(cs, "HEALTH KIT +10HP");
+            } else if (ctype == CONSUMABLE_GRENADE) {
+                for (int e = 0; e < cs->enemy_count; e++) {
+                    if (cs->enemies[e].alive)
+                        combat_deal_damage_enemy(cs, e, 4);
+                }
+                combat_set_message(cs, "GRENADE! 4 DMG ALL");
+            }
+            player_consumables[s] = CONSUMABLE_NONE;
             return;
         }
     }
@@ -2045,7 +2113,8 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
 
             /* Use lerped float scale for smooth approach animation */
             float fscale = e->visual_scale;
-            int spr_sz = (int)(16.0f * fscale + 0.5f);
+            int src_sz = spr_enemy_size(e->type);
+            int spr_sz = (int)(src_sz * fscale + 0.5f);
             /* Position: farther enemies drawn higher (more distant) */
             int sprite_x = cx - spr_sz / 2;
             int sprite_y = 10 + e->distance * 8;
@@ -2065,9 +2134,9 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
                 }
 
                 if (e->flash_timer > 0 && (e->flash_timer & 2))
-                    spr_draw_flash_f(px, W, H, sprite, sprite_x + anim_x, sprite_y, fscale);
+                    spr_draw_flash_nf(px, W, H, sprite, src_sz, src_sz, sprite_x + anim_x, sprite_y, fscale);
                 else
-                    spr_draw_f(px, W, H, sprite, sprite_x + anim_x, sprite_y, fscale);
+                    spr_draw_nf(px, W, H, sprite, src_sz, src_sz, sprite_x + anim_x, sprite_y, fscale);
 
                 /* Target highlight (yellow border around selected enemy) */
                 if (i == combat.target && combat.phase == CPHASE_PLAYER_TURN) {
@@ -2319,6 +2388,28 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
         }
     }
 
+    /* ── Consumable slots (right side, near player) ──────────── */
+    if (combat.phase == CPHASE_PLAYER_TURN || combat.phase == CPHASE_ENEMY_TURN) {
+        for (int s = 0; s < CONSUMABLE_SLOTS; s++) {
+            int sx = 90 + s * 36, sy = 186;
+            int sw = 32, sh = 32;
+            if (player_consumables[s] != CONSUMABLE_NONE) {
+                uint32_t slot_col = (player_consumables[s] == CONSUMABLE_HEALTH_KIT)
+                    ? 0xFF22AA44 : 0xFF4488CC;
+                combat_draw_rect(px, W, H, sx, sy, sw, sh, 0xFF111122);
+                combat_draw_rect_outline(px, W, H, sx, sy, sw, sh, slot_col);
+                const char *label = (player_consumables[s] == CONSUMABLE_HEALTH_KIT)
+                    ? "HP+" : "GRN";
+                sr_draw_text_shadow(px, W, H, sx + 3, sy + 4, label, slot_col, shadow);
+                sr_draw_text_shadow(px, W, H, sx + 3, sy + 16, "USE", 0xFF888888, shadow);
+            } else {
+                combat_draw_rect(px, W, H, sx, sy, sw, sh, 0xFF0A0A11);
+                combat_draw_rect_outline(px, W, H, sx, sy, sw, sh, 0xFF333333);
+                sr_draw_text_shadow(px, W, H, sx + 5, sy + 12, "--", 0xFF333333, shadow);
+            }
+        }
+    }
+
     /* ── Move buttons (when player has move points) ──────────── */
     if (combat.phase == CPHASE_PLAYER_TURN && combat.player_move_pts > 0) {
         int mb_y = 238;
@@ -2525,6 +2616,13 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
 
         sr_draw_text_shadow(px, W, H, W/2 - 35, rbase_y + rh + 10,
                             "TAP TO PICK", gray, shadow);
+
+        /* SKIP button */
+        int skip_x = (W - 50) / 2;
+        int skip_y = rbase_y + rh + 24;
+        combat_draw_rect(px, W, H, skip_x, skip_y, 50, 14, 0xFF222222);
+        combat_draw_rect_outline(px, W, H, skip_x, skip_y, 50, 14, 0xFF666666);
+        sr_draw_text_shadow(px, W, H, skip_x + 12, skip_y + 3, "SKIP", 0xFF888888, shadow);
     }
 
     /* ── Result screen (defeat) ──────────────────────────────── */

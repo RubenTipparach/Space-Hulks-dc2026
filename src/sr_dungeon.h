@@ -58,6 +58,8 @@ typedef struct {
     char alien_names[DNG_GRID_H + 1][DNG_GRID_W + 1][16]; /* individual name per alien */
     /* Console entities — interactable objects at room centers */
     uint8_t consoles[DNG_GRID_H + 1][DNG_GRID_W + 1]; /* 0=none, room_type (ROOM_BRIDGE etc) */
+    /* Chests — loot containers */
+    uint8_t chests[DNG_GRID_H + 1][DNG_GRID_W + 1]; /* 0=none, 1=chest present */
     /* Room info for ship system */
     #define DNG_MAX_ROOMS 24
     int room_count;
@@ -363,9 +365,31 @@ static void dng_generate_ex(sr_dungeon *d, int w, int h, bool has_down_stairs, b
             if (d->has_up && ax == d->stairs_gx && ay == d->stairs_gy) continue;
             if (d->has_down && ax == d->down_gx && ay == d->down_gy) continue;
             if (d->consoles[ay][ax] != 0) continue; /* don't place on consoles */
+            if (d->aliens[ay][ax] != 0) continue;  /* don't stack on existing alien */
             int max_type = (floor_num <= 1) ? 2 : (floor_num <= 3) ? 3 : 4;
             d->aliens[ay][ax] = 1 + (uint8_t)dng_rng_int(max_type);
             dng_gen_alien_name(d->alien_names[ay][ax], 16);
+        }
+    }
+
+    /* Place 1-2 chests per floor in random rooms */
+    {
+        int num_chests = 1 + dng_rng_int(2); /* 1-2 */
+        int placed = 0;
+        for (int attempt = 0; attempt < num_rooms * 3 && placed < num_chests; attempt++) {
+            int ri = dng_rng_int(num_rooms);
+            int cx = rooms[ri].x + dng_rng_int(rooms[ri].w);
+            int cy = rooms[ri].y + dng_rng_int(rooms[ri].h);
+            if (cx < 1 || cx > w || cy < 1 || cy > h) continue;
+            if (d->map[cy][cx] != 0) continue;
+            if (cx == d->spawn_gx && cy == d->spawn_gy) continue;
+            if (d->has_up && cx == d->stairs_gx && cy == d->stairs_gy) continue;
+            if (d->has_down && cx == d->down_gx && cy == d->down_gy) continue;
+            if (d->consoles[cy][cx] != 0) continue;
+            if (d->aliens[cy][cx] != 0) continue;
+            if (d->chests[cy][cx] != 0) continue;
+            d->chests[cy][cx] = 1;
+            placed++;
         }
     }
 }
@@ -696,6 +720,444 @@ static bool dng_update_climb(dng_game *g) {
         g->player.y = c->arrival_y * (1.0f - st);
     }
     return false;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+ *  Enemy AI system — wandering, chasing, A* pathfinding
+ * ══════════════════════════════════════════════════════════════════ */
+
+#define DNG_MAX_ENEMIES   64
+#define DNG_ASTAR_MAX     256   /* max open-set nodes for A* */
+#define DNG_PATH_MAX      32    /* max steps stored per enemy path */
+#define DNG_PATROL_MAX    4     /* max waypoints per patrol route */
+#define DNG_ALERT_RADIUS  12    /* chase lock-on distance for hallway enemies */
+
+enum {
+    DNG_AI_IDLE,      /* standing still in a room, hasn't seen player */
+    DNG_AI_WANDER,    /* slowly moving to random spots within room */
+    DNG_AI_CHASE,     /* pursuing the player (A*) */
+    DNG_AI_PATROL,    /* hallway enemy walking between waypoints */
+};
+
+typedef struct {
+    bool alive;
+    int  gx, gy;          /* grid position */
+    uint8_t type;          /* alien type value (1-4, same as aliens[][]) */
+    int  ai_state;         /* DNG_AI_* */
+    int  home_room;        /* room index this enemy belongs to (-1 = hallway) */
+    /* Pathfinding */
+    int  path[DNG_PATH_MAX * 2]; /* gx,gy pairs; path[0..1]=next step */
+    int  path_len;         /* number of steps remaining */
+    /* Wander */
+    int  wander_cooldown;  /* ticks until next wander step */
+    /* Patrol (hallway enemies) */
+    int  patrol_pts[DNG_PATROL_MAX * 2]; /* gx,gy waypoints */
+    int  patrol_count;     /* number of waypoints */
+    int  patrol_idx;       /* current target waypoint */
+    bool patrol_forward;   /* direction along patrol path */
+} dng_enemy;
+
+/* Enemy storage lives alongside the dungeon */
+static dng_enemy dng_enemies[DNG_MAX_ENEMIES];
+static int       dng_enemy_count = 0;
+
+/* ── A* pathfinding ─────────────────────────────────────────────── */
+
+typedef struct { int gx, gy, g, f, parent; } dng_astar_node;
+
+static bool dng_astar_blocked(const sr_dungeon *d, int gx, int gy,
+                               int ignore_gx, int ignore_gy) {
+    if (dng_is_wall(d, gx, gy)) return true;
+    if (d->consoles[gy][gx] != 0) return true;
+    /* Check for other enemies on this tile (but ignore our own position) */
+    if (gx == ignore_gx && gy == ignore_gy) return false;
+    if (d->aliens[gy][gx] != 0) return true;
+    return false;
+}
+
+/* Manhattan distance heuristic */
+static inline int dng_astar_h(int ax, int ay, int bx, int by) {
+    int dx = ax - bx; if (dx < 0) dx = -dx;
+    int dy = ay - by; if (dy < 0) dy = -dy;
+    return dx + dy;
+}
+
+/* A* from (sx,sy) to (tx,ty). Writes path into out_path (gx,gy pairs),
+ * returns number of steps (0 = no path). Path is from FIRST step to target. */
+static int dng_astar(const sr_dungeon *d, int sx, int sy, int tx, int ty,
+                     int *out_path, int max_steps) {
+    if (sx == tx && sy == ty) return 0;
+
+    static dng_astar_node open_list[DNG_ASTAR_MAX];
+    static dng_astar_node closed_list[DNG_ASTAR_MAX];
+    int open_count = 0, closed_count = 0;
+
+    /* Seed start node */
+    open_list[open_count++] = (dng_astar_node){
+        sx, sy, 0, dng_astar_h(sx, sy, tx, ty), -1
+    };
+
+    while (open_count > 0) {
+        /* Find lowest f in open list */
+        int best = 0;
+        for (int i = 1; i < open_count; i++)
+            if (open_list[i].f < open_list[best].f) best = i;
+
+        dng_astar_node cur = open_list[best];
+        /* Remove from open list */
+        open_list[best] = open_list[--open_count];
+
+        /* Check if reached goal */
+        if (cur.gx == tx && cur.gy == ty) {
+            /* Reconstruct path from closed list */
+            int trace[DNG_ASTAR_MAX * 2];
+            int trace_len = 0;
+            trace[trace_len * 2] = cur.gx;
+            trace[trace_len * 2 + 1] = cur.gy;
+            trace_len++;
+            int pi = cur.parent;
+            while (pi >= 0 && trace_len < DNG_ASTAR_MAX) {
+                trace[trace_len * 2] = closed_list[pi].gx;
+                trace[trace_len * 2 + 1] = closed_list[pi].gy;
+                trace_len++;
+                pi = closed_list[pi].parent;
+            }
+            /* Reverse (skip the start node) into out_path */
+            int steps = 0;
+            for (int i = trace_len - 2; i >= 0 && steps < max_steps; i--) {
+                out_path[steps * 2] = trace[i * 2];
+                out_path[steps * 2 + 1] = trace[i * 2 + 1];
+                steps++;
+            }
+            return steps;
+        }
+
+        /* Add to closed list */
+        if (closed_count >= DNG_ASTAR_MAX) break; /* out of space */
+        int closed_idx = closed_count;
+        closed_list[closed_count++] = cur;
+
+        /* Expand 4 neighbors */
+        for (int dir = 0; dir < 4; dir++) {
+            int nx = cur.gx + dng_dir_dx[dir];
+            int ny = cur.gy + dng_dir_dz[dir];
+
+            /* Allow stepping onto the target even if an enemy is there (player tile) */
+            bool blocked;
+            if (nx == tx && ny == ty) {
+                blocked = dng_is_wall(d, nx, ny); /* only walls block the target tile */
+            } else {
+                blocked = dng_astar_blocked(d, nx, ny, sx, sy);
+            }
+            if (blocked) continue;
+
+            /* Check if in closed list */
+            bool in_closed = false;
+            for (int c = 0; c < closed_count; c++)
+                if (closed_list[c].gx == nx && closed_list[c].gy == ny)
+                    { in_closed = true; break; }
+            if (in_closed) continue;
+
+            int ng = cur.g + 1;
+            int nf = ng + dng_astar_h(nx, ny, tx, ty);
+
+            /* Check if in open list with better g */
+            bool in_open = false;
+            for (int o = 0; o < open_count; o++) {
+                if (open_list[o].gx == nx && open_list[o].gy == ny) {
+                    in_open = true;
+                    if (ng < open_list[o].g) {
+                        open_list[o].g = ng;
+                        open_list[o].f = nf;
+                        open_list[o].parent = closed_idx;
+                    }
+                    break;
+                }
+            }
+            if (!in_open && open_count < DNG_ASTAR_MAX) {
+                open_list[open_count++] = (dng_astar_node){
+                    nx, ny, ng, nf, closed_idx
+                };
+            }
+        }
+    }
+    return 0; /* no path found */
+}
+
+/* ── Initialize enemy entities from aliens[][] grid ─────────────── */
+
+static void dng_enemies_init(sr_dungeon *d) {
+    dng_enemy_count = 0;
+    for (int gy = 1; gy <= d->h && dng_enemy_count < DNG_MAX_ENEMIES; gy++) {
+        for (int gx = 1; gx <= d->w && dng_enemy_count < DNG_MAX_ENEMIES; gx++) {
+            if (d->aliens[gy][gx] == 0) continue;
+            dng_enemy *e = &dng_enemies[dng_enemy_count++];
+            memset(e, 0, sizeof(*e));
+            e->alive = true;
+            e->gx = gx;
+            e->gy = gy;
+            e->type = d->aliens[gy][gx];
+            e->home_room = dng_room_at(d, gx, gy);
+            e->ai_state = (e->home_room >= 0) ? DNG_AI_WANDER : DNG_AI_PATROL;
+            e->wander_cooldown = 2 + dng_rng_int(4); /* stagger initial wander */
+            e->patrol_forward = true;
+        }
+    }
+}
+
+/* ── Spawn hallway patrol enemies ───────────────────────────────── */
+
+/* Find corridor tiles (open, not in any room, not on stairs/spawn) */
+static void dng_spawn_hallway_enemies(sr_dungeon *d, int floor_num) {
+    /* Collect corridor tiles */
+    int corridor_tiles[512 * 2]; /* gx, gy pairs */
+    int corridor_count = 0;
+
+    for (int gy = 1; gy <= d->h; gy++) {
+        for (int gx = 1; gx <= d->w; gx++) {
+            if (d->map[gy][gx] != 0) continue; /* wall */
+            if (dng_room_at(d, gx, gy) >= 0) continue; /* in a room */
+            if (gx == d->spawn_gx && gy == d->spawn_gy) continue;
+            if (d->has_up && gx == d->stairs_gx && gy == d->stairs_gy) continue;
+            if (d->has_down && gx == d->down_gx && gy == d->down_gy) continue;
+            if (d->aliens[gy][gx] != 0) continue;
+            if (d->consoles[gy][gx] != 0) continue;
+            if (corridor_count < 512) {
+                corridor_tiles[corridor_count * 2] = gx;
+                corridor_tiles[corridor_count * 2 + 1] = gy;
+                corridor_count++;
+            }
+        }
+    }
+
+    if (corridor_count < 4) return; /* not enough corridor space */
+
+    /* Spawn 1-3 hallway enemies depending on corridor size */
+    int num_patrol = 1 + dng_rng_int(corridor_count > 20 ? 3 : 2);
+    int max_type = (floor_num <= 1) ? 2 : (floor_num <= 3) ? 3 : 4;
+
+    for (int p = 0; p < num_patrol && dng_enemy_count < DNG_MAX_ENEMIES; p++) {
+        /* Pick a random corridor tile */
+        int ci = dng_rng_int(corridor_count);
+        int sgx = corridor_tiles[ci * 2];
+        int sgy = corridor_tiles[ci * 2 + 1];
+
+        /* Verify still empty */
+        if (d->aliens[sgy][sgx] != 0) continue;
+
+        uint8_t etype = 1 + (uint8_t)dng_rng_int(max_type);
+        d->aliens[sgy][sgx] = etype;
+        dng_gen_alien_name(d->alien_names[sgy][sgx], 16);
+
+        /* Create entity */
+        dng_enemy *e = &dng_enemies[dng_enemy_count++];
+        memset(e, 0, sizeof(*e));
+        e->alive = true;
+        e->gx = sgx;
+        e->gy = sgy;
+        e->type = etype;
+        e->home_room = -1;
+        e->ai_state = DNG_AI_PATROL;
+        e->patrol_forward = true;
+        e->wander_cooldown = 0;
+
+        /* Build patrol path: pick 2-3 nearby rooms as waypoints */
+        e->patrol_count = 0;
+        /* First waypoint = spawn position */
+        e->patrol_pts[0] = sgx;
+        e->patrol_pts[1] = sgy;
+        e->patrol_count = 1;
+
+        /* Find nearest rooms and use their doorway-adjacent corridor tiles */
+        for (int ri = 0; ri < d->room_count && e->patrol_count < DNG_PATROL_MAX; ri++) {
+            int rcx = d->room_cx[ri];
+            int rcy = d->room_cy[ri];
+            int dist = dng_astar_h(sgx, sgy, rcx, rcy);
+            if (dist < 15 && dist > 2) {
+                /* Use the corridor tile closest to this room's center
+                 * (the room connector is at room center x, on the corridor) */
+                int conn_x = d->room_x[ri] + d->room_w[ri] / 2;
+                /* Check which side the room is on relative to corridor */
+                int mid_y = d->h / 2;
+                int conn_y = mid_y; /* corridor y */
+                if (conn_x >= 1 && conn_x <= d->w && conn_y >= 1 && conn_y <= d->h
+                    && d->map[conn_y][conn_x] == 0) {
+                    e->patrol_pts[e->patrol_count * 2] = conn_x;
+                    e->patrol_pts[e->patrol_count * 2 + 1] = conn_y;
+                    e->patrol_count++;
+                }
+            }
+        }
+        e->patrol_idx = 0;
+    }
+}
+
+/* ── Move an enemy one step along its path ──────────────────────── */
+
+static void dng_enemy_move_step(dng_enemy *e, sr_dungeon *d) {
+    if (e->path_len <= 0) return;
+    int nx = e->path[0];
+    int ny = e->path[1];
+
+    /* Verify target is not blocked by wall, console, or another enemy */
+    if (dng_is_wall(d, nx, ny) || d->consoles[ny][nx] != 0 || d->aliens[ny][nx] != 0) {
+        e->path_len = 0; /* path invalidated, will recalc next tick */
+        return;
+    }
+
+    /* Save name before clearing old position */
+    char name_buf[16];
+    memcpy(name_buf, d->alien_names[e->gy][e->gx], 16);
+
+    /* Clear old position */
+    d->aliens[e->gy][e->gx] = 0;
+    memset(d->alien_names[e->gy][e->gx], 0, 16);
+
+    /* Move to new position */
+    e->gx = nx;
+    e->gy = ny;
+    d->aliens[ny][nx] = e->type;
+    memcpy(d->alien_names[ny][nx], name_buf, 16);
+
+    /* Shift path */
+    for (int i = 0; i < (e->path_len - 1) * 2; i++)
+        e->path[i] = e->path[i + 2];
+    e->path_len--;
+}
+
+/* ── Tick all enemies (call once per player move) ───────────────── */
+
+static void dng_enemies_tick(sr_dungeon *d, int player_gx, int player_gy) {
+    int player_room = dng_room_at(d, player_gx, player_gy);
+
+    for (int i = 0; i < dng_enemy_count; i++) {
+        dng_enemy *e = &dng_enemies[i];
+        if (!e->alive) continue;
+        /* Verify entity matches grid (may have been killed in combat) */
+        if (d->aliens[e->gy][e->gx] != e->type) {
+            e->alive = false;
+            continue;
+        }
+
+        int enemy_room = dng_room_at(d, e->gx, e->gy);
+        int dist_to_player = dng_astar_h(e->gx, e->gy, player_gx, player_gy);
+
+        /* ── Room alert: player enters a room → all enemies in that room chase */
+        if (player_room >= 0 && enemy_room == player_room) {
+            e->ai_state = DNG_AI_CHASE;
+        }
+        /* Hallway enemies lock on by distance */
+        if (e->home_room < 0 && dist_to_player <= DNG_ALERT_RADIUS) {
+            e->ai_state = DNG_AI_CHASE;
+        }
+        /* Room enemies that see player nearby also chase */
+        if (e->ai_state != DNG_AI_CHASE && dist_to_player <= 3) {
+            e->ai_state = DNG_AI_CHASE;
+        }
+
+        switch (e->ai_state) {
+        case DNG_AI_IDLE:
+            /* Do nothing */
+            break;
+
+        case DNG_AI_WANDER: {
+            if (e->wander_cooldown > 0) { e->wander_cooldown--; break; }
+            e->wander_cooldown = 2 + dng_rng_int(4); /* 2-5 ticks between moves */
+
+            /* Pick a random open neighbor within the room */
+            int dirs[4] = {0, 1, 2, 3};
+            /* Shuffle */
+            for (int s = 3; s > 0; s--) {
+                int j = dng_rng_int(s + 1);
+                int tmp = dirs[s]; dirs[s] = dirs[j]; dirs[j] = tmp;
+            }
+            for (int di = 0; di < 4; di++) {
+                int nx = e->gx + dng_dir_dx[dirs[di]];
+                int ny = e->gy + dng_dir_dz[dirs[di]];
+                if (dng_is_wall(d, nx, ny)) continue;
+                if (d->consoles[ny][nx] != 0) continue;
+                if (d->aliens[ny][nx] != 0) continue;
+                if (nx == player_gx && ny == player_gy) continue;
+                /* Stay within home room if we have one */
+                if (e->home_room >= 0 && dng_room_at(d, nx, ny) != e->home_room) continue;
+                /* Move directly (one step) */
+                e->path[0] = nx; e->path[1] = ny;
+                e->path_len = 1;
+                dng_enemy_move_step(e, d);
+                break;
+            }
+            break;
+        }
+
+        case DNG_AI_CHASE: {
+            /* Don't move if already adjacent to player (distance 1) */
+            if (dist_to_player <= 1) break;
+
+            /* Pathfind toward player */
+            int path_buf[DNG_PATH_MAX * 2];
+            int steps = dng_astar(d, e->gx, e->gy, player_gx, player_gy,
+                                  path_buf, DNG_PATH_MAX);
+            if (steps > 0) {
+                /* Take one step */
+                int nx = path_buf[0];
+                int ny = path_buf[1];
+                /* Don't step onto the player */
+                if (nx == player_gx && ny == player_gy) break;
+                e->path[0] = nx; e->path[1] = ny;
+                e->path_len = 1;
+                dng_enemy_move_step(e, d);
+            }
+            /* If no path, stay put (blocked) */
+            break;
+        }
+
+        case DNG_AI_PATROL: {
+            /* Check if should switch to chase (handled above) */
+            if (e->patrol_count < 2) {
+                /* Not enough waypoints, just wander */
+                e->ai_state = DNG_AI_WANDER;
+                break;
+            }
+
+            int tgx = e->patrol_pts[e->patrol_idx * 2];
+            int tgy = e->patrol_pts[e->patrol_idx * 2 + 1];
+
+            /* Reached waypoint? */
+            if (e->gx == tgx && e->gy == tgy) {
+                if (e->patrol_forward) {
+                    e->patrol_idx++;
+                    if (e->patrol_idx >= e->patrol_count) {
+                        e->patrol_idx = e->patrol_count - 2;
+                        e->patrol_forward = false;
+                    }
+                } else {
+                    e->patrol_idx--;
+                    if (e->patrol_idx < 0) {
+                        e->patrol_idx = 1;
+                        e->patrol_forward = true;
+                    }
+                }
+                tgx = e->patrol_pts[e->patrol_idx * 2];
+                tgy = e->patrol_pts[e->patrol_idx * 2 + 1];
+            }
+
+            /* Pathfind toward current waypoint */
+            int path_buf[DNG_PATH_MAX * 2];
+            int steps = dng_astar(d, e->gx, e->gy, tgx, tgy,
+                                  path_buf, DNG_PATH_MAX);
+            if (steps > 0) {
+                int nx = path_buf[0];
+                int ny = path_buf[1];
+                if (nx != player_gx || ny != player_gy) {
+                    e->path[0] = nx; e->path[1] = ny;
+                    e->path_len = 1;
+                    dng_enemy_move_step(e, d);
+                }
+            }
+            break;
+        }
+        }
+    }
 }
 
 #endif /* SR_DUNGEON_H */

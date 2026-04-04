@@ -118,7 +118,7 @@ static void game_ship_size(int sector, int *out_w, int *out_h) {
 
 /* ── Save / Load ─────────────────────────────────────────────────── */
 
-#define SAVE_VERSION 3
+#define SAVE_VERSION 5
 
 /*  Save header — fixed-size portion written first.
  *  After the header, each generated dungeon floor (sr_dungeon) is
@@ -134,6 +134,7 @@ typedef struct {
     int  player_scrap_saved;
     int  player_biomass_saved;
     int  player_sector_saved;
+    int  player_consumables_saved[CONSUMABLE_SLOTS];
 
     /* Persistent player */
     player_persist player;
@@ -217,6 +218,7 @@ static void game_save(void) {
     hdr.selected_class      = selected_class;
     hdr.player_scrap_saved  = player_scrap;
     hdr.player_biomass_saved = player_biomass;
+    memcpy(hdr.player_consumables_saved, player_consumables, sizeof(player_consumables));
     hdr.player_sector_saved = player_sector;
 
     hdr.player = g_player;
@@ -289,6 +291,7 @@ static bool game_load(void) {
     selected_class = hdr.selected_class;
     player_scrap   = hdr.player_scrap_saved;
     player_biomass = hdr.player_biomass_saved;
+    memcpy(player_consumables, hdr.player_consumables_saved, sizeof(player_consumables));
     player_sector  = hdr.player_sector_saved;
 
     /* Restore player */
@@ -554,6 +557,7 @@ static void draw_beam_effect(sr_framebuffer *fb_ptr) {
     uint32_t *px = fb_ptr->color;
 
     beam_timer++;
+    if (beam_timer == 1) sr_audio_play_sfx(&audio_sfx_teleporter);
     float t = (float)beam_timer / BEAM_DURATION; /* 0.0 to 1.0 */
     if (t > 1.0f) t = 1.0f;
 
@@ -681,7 +685,7 @@ static void draw_beam_effect(sr_framebuffer *fb_ptr) {
     uint32_t shadow = 0xFF000000;
     if (beam_timer > 10) {
         uint32_t text_col = ((beam_timer / 10) % 2 == 0) ? 0xFF44DDDD : 0xFF22AAAA;
-        sr_draw_text_centered(px, W, H, 0, H - 14, "ENERGIZING...", text_col, shadow);
+        sr_draw_text_centered(px, W, H, H - 14, "ENERGIZING...", text_col, shadow);
     }
 
     /* Auto-transition when done */
@@ -700,11 +704,11 @@ static void draw_mission_summary(sr_framebuffer *fb_ptr) {
     for (int i = 0; i < W * H; i++) px[i] = 0xFF0D0D11;
 
     /* Title */
-    sr_draw_text_centered(px, W, H, 0, 16, "MISSION COMPLETE", 0xFF44CC44, shadow);
+    sr_draw_text_centered(px, W, H, 16, "MISSION COMPLETE", 0xFF44CC44, shadow);
 
     /* Completion method */
     uint32_t method_col = g_summary.all_killed ? 0xFF44AACC : 0xFFCC8844;
-    sr_draw_text_centered(px, W, H, 0, 32, g_summary.completion_method, method_col, shadow);
+    sr_draw_text_centered(px, W, H, 32, g_summary.completion_method, method_col, shadow);
 
     /* Divider */
     for (int rx = 60; rx < W - 60; rx++)
@@ -768,7 +772,7 @@ static void draw_mission_summary(sr_framebuffer *fb_ptr) {
 
     /* Continue prompt */
     uint32_t blink = ((beam_timer++ / 30) % 2 == 0) ? 0xFFCCCCCC : 0xFF666666;
-    sr_draw_text_centered(px, W, H, 0, H - 20, "PRESS SPACE TO CONTINUE", blink, shadow);
+    sr_draw_text_centered(px, W, H, H - 20, "PRESS SPACE TO CONTINUE", blink, shadow);
 }
 
 /* ── Ship-mode game initialization ──────────────────────────────── */
@@ -777,6 +781,11 @@ static int last_player_gx = -1, last_player_gy = -1;
 /* current_combat_room and console_combat declared above save/load section */
 static char dng_hud_msg[64];         /* temporary HUD message for dungeon scene */
 static int  dng_hud_msg_timer = 0;   /* frames remaining to show message */
+
+/* Chest overlay state */
+static bool chest_overlay_active = false;
+static int  chest_choices[3];        /* 3 elemental card choices */
+static int  chest_gx, chest_gy;     /* position of opened chest */
 
 static void game_init_ship(void) {
     /* Try to load a hand-designed level file first */
@@ -828,6 +837,9 @@ static void game_init_ship(void) {
             printf("[game] Level loaded: %s (%d decks, %d rooms, %d officers)\n",
                    current_ship.name, current_ship.num_decks,
                    current_ship.room_count, current_ship.officer_count);
+            /* Initialize enemy AI entities for the starting floor */
+            dng_enemies_init(dng_state.dungeon);
+            dng_spawn_hallway_enemies(dng_state.dungeon, dng_state.current_floor);
             return;
         }
     }
@@ -895,6 +907,10 @@ static void game_init_ship(void) {
         /* Then populate aliens (officers + enemies) — they avoid consoles */
         ship_populate_deck(&current_ship, dd, deck, dd->room_count, rooms);
     }
+
+    /* Initialize enemy AI entities from the current floor's alien grid */
+    dng_enemies_init(dng_state.dungeon);
+    dng_spawn_hallway_enemies(dng_state.dungeon, dng_state.current_floor);
 }
 
 /* ── Mission completion with boss/sample tracking ──────────────── */
@@ -927,6 +943,9 @@ static void mission_complete_return_to_hub(int base_reward, const char *msg, boo
 
     player_scrap += scrap_reward;
     player_biomass += biomass_reward;
+
+    /* Auto-heal player on return to hub */
+    g_player.hp = g_player.hp_max;
 
     /* Populate mission summary */
     memset(&g_summary, 0, sizeof(g_summary));
@@ -1061,6 +1080,10 @@ static void check_random_encounter(void) {
         last_player_gy = p->gy;
         /* Auto-save on each step */
         game_save();
+
+        /* Tick enemy AI — enemies move when the player moves */
+        dng_enemies_tick(dng_state.dungeon, p->gx, p->gy);
+
         uint8_t alien = dng_state.dungeon->aliens[p->gy][p->gx];
         if (alien != 0) {
             dng_state.dungeon->aliens[p->gy][p->gx] = 0;
@@ -1079,6 +1102,21 @@ static void check_random_encounter(void) {
             combat_init(&combat, selected_class, dng_state.current_floor, alien);
             app_state = STATE_COMBAT;
             return;
+        }
+
+        /* Check for chest pickup */
+        if (dng_state.dungeon->chests[p->gy][p->gx] != 0 && !chest_overlay_active) {
+            chest_overlay_active = true;
+            chest_gx = p->gx;
+            chest_gy = p->gy;
+            /* Generate 3 unique elemental card choices */
+            int elems[] = { CARD_ICE, CARD_ACID, CARD_FIRE, CARD_LIGHTNING };
+            for (int i = 3; i > 0; i--) {
+                int j = dng_rng_int(i + 1);
+                int tmp = elems[i]; elems[i] = elems[j]; elems[j] = tmp;
+            }
+            for (int i = 0; i < 3; i++) chest_choices[i] = elems[i];
+            goto skip_console; /* block further interaction */
         }
 
         /* Check for console interaction — sentinel defense combat */
@@ -1631,6 +1669,9 @@ static void frame(void) {
         if (dng_play_state == DNG_STATE_CLIMBING) {
             if (dng_update_climb(&dng_state)) {
                 dng_play_state = DNG_STATE_PLAYING;
+                /* Re-init enemy entities for the new floor */
+                dng_enemies_init(dng_state.dungeon);
+                dng_spawn_hallway_enemies(dng_state.dungeon, dng_state.current_floor);
             }
         } else {
             sr_dungeon *dd = dng_state.dungeon;
@@ -1806,6 +1847,35 @@ static void frame(void) {
                                 3, 3, ibuf, 0xFFFFFFFF, 0xFF000000);
         }
 
+        /* Chest overlay */
+        if (chest_overlay_active) {
+            int W = fb.width, H = fb.height;
+            uint32_t *px = fb.color;
+            uint32_t shadow = 0xFF000000;
+            /* Darken */
+            for (int i = 0; i < W * H; i++) {
+                uint32_t c = px[i];
+                px[i] = 0xFF000000 | ((((c>>16)&0xFF)/3)<<16) |
+                        ((((c>>8)&0xFF)/3)<<8) | (((c)&0xFF)/3);
+            }
+            sr_draw_text_centered(px, W, H, 20, "CHEST FOUND!", 0xFF44CC44, shadow);
+            sr_draw_text_centered(px, W, H, 34, "PICK AN ELEMENTAL CARD", 0xFFCCCCCC, shadow);
+            /* 3 card choices */
+            int cw = 72, ch = 80, cgap = 12;
+            int ctotal = 3 * (cw + cgap) - cgap;
+            int cx0 = (W - ctotal) / 2, cy0 = 50;
+            for (int i = 0; i < 3; i++) {
+                int cx = cx0 + i * (cw + cgap);
+                combat_draw_card_content(px, W, H, cx, cy0, cw, ch,
+                                         chest_choices[i], false, shadow, -1);
+            }
+            /* SKIP button */
+            int skip_x = (W - 50) / 2, skip_y = cy0 + ch + 14;
+            combat_draw_rect(px, W, H, skip_x, skip_y, 50, 14, 0xFF222222);
+            combat_draw_rect_outline(px, W, H, skip_x, skip_y, 50, 14, 0xFF666666);
+            sr_draw_text_shadow(px, W, H, skip_x + 12, skip_y + 3, "SKIP", 0xFF888888, shadow);
+        }
+
         /* Deck viewer (dungeon) */
         if (deck_view_active)
             draw_deck_viewer(fb.color, fb.width, fb.height);
@@ -1943,6 +2013,7 @@ static void handle_screen_tap(float sx, float sy) {
                     weakness_init((uint32_t)(time(NULL) ^ (selected_class * 31337)));
                     player_scrap = 30;
                     player_biomass = 0;
+                    memset(player_consumables, 0, sizeof(player_consumables));
                     player_sector = 0;
                     /* Reset mission flow state for new game */
                     mission_briefed = false;
@@ -2111,7 +2182,7 @@ static void handle_screen_tap(float sx, float sy) {
                         app_state = STATE_SHOP;
                         break;
                     case DIALOG_ACTION_MEDBAY_SHOP:
-                        dng_rng_seed((uint32_t)(player_sector * 5555 + 456));
+                        dng_rng_seed((uint32_t)(player_sector * 5555 + 456 + player_biomass * 13));
                         medbay_shop_generate(&g_medbay_shop);
                         active_shop_type = 1;
                         app_state = STATE_SHOP;
@@ -2235,6 +2306,28 @@ static void event(const sapp_event *ev) {
 
     /* ── Mouse click / touch began → tap handling ────────────── */
     if (ev->type == SAPP_EVENTTYPE_MOUSE_DOWN && ev->mouse_button == SAPP_MOUSEBUTTON_LEFT) {
+        if (app_state == STATE_RUNNING && chest_overlay_active) {
+            float fx, fy; screen_to_fb(ev->mouse_x, ev->mouse_y, &fx, &fy);
+            int cw = 72, ch = 80, cgap = 12;
+            int ctotal = 3 * (cw + cgap) - cgap;
+            int cx0 = (FB_WIDTH - ctotal) / 2, cy0 = 50;
+            for (int i = 0; i < 3; i++) {
+                int cx = cx0 + i * (cw + cgap);
+                if (fx >= cx && fx < cx + cw && fy >= cy0 && fy < cy0 + ch) {
+                    if (g_player.persistent_deck_count < COMBAT_DECK_MAX)
+                        g_player.persistent_deck[g_player.persistent_deck_count++] = chest_choices[i];
+                    dng_state.dungeon->chests[chest_gy][chest_gx] = 0;
+                    chest_overlay_active = false;
+                    return;
+                }
+            }
+            int skip_x = (FB_WIDTH - 50) / 2, skip_y = cy0 + ch + 14;
+            if (fx >= skip_x && fx < skip_x + 50 && fy >= skip_y && fy < skip_y + 14) {
+                dng_state.dungeon->chests[chest_gy][chest_gx] = 0;
+                chest_overlay_active = false;
+            }
+            return;
+        }
         if (app_state == STATE_RUNNING || app_state == STATE_SHIP_HUB) {
             dng_touch_began(ev->mouse_x, ev->mouse_y, now_time);
         } else {
@@ -2244,6 +2337,28 @@ static void event(const sapp_event *ev) {
     }
     if (ev->type == SAPP_EVENTTYPE_TOUCHES_BEGAN && ev->num_touches > 0) {
         float sx = ev->touches[0].pos_x, sy = ev->touches[0].pos_y;
+        if (app_state == STATE_RUNNING && chest_overlay_active) {
+            float fx, fy; screen_to_fb(sx, sy, &fx, &fy);
+            int cw = 72, ch = 80, cgap = 12;
+            int ctotal = 3 * (cw + cgap) - cgap;
+            int cx0 = (FB_WIDTH - ctotal) / 2, cy0 = 50;
+            for (int i = 0; i < 3; i++) {
+                int cx = cx0 + i * (cw + cgap);
+                if (fx >= cx && fx < cx + cw && fy >= cy0 && fy < cy0 + ch) {
+                    if (g_player.persistent_deck_count < COMBAT_DECK_MAX)
+                        g_player.persistent_deck[g_player.persistent_deck_count++] = chest_choices[i];
+                    dng_state.dungeon->chests[chest_gy][chest_gx] = 0;
+                    chest_overlay_active = false;
+                    return;
+                }
+            }
+            int skip_x = (FB_WIDTH - 50) / 2, skip_y = cy0 + ch + 14;
+            if (fx >= skip_x && fx < skip_x + 50 && fy >= skip_y && fy < skip_y + 14) {
+                dng_state.dungeon->chests[chest_gy][chest_gx] = 0;
+                chest_overlay_active = false;
+            }
+            return;
+        }
         if (app_state == STATE_RUNNING || app_state == STATE_SHIP_HUB) {
             dng_touch_began(sx, sy, now_time);
         } else {
@@ -2544,7 +2659,7 @@ static void event(const sapp_event *ev) {
                             app_state = STATE_SHOP;
                             break;
                         case DIALOG_ACTION_MEDBAY_SHOP:
-                            dng_rng_seed((uint32_t)(player_sector * 5555 + 456));
+                            dng_rng_seed((uint32_t)(player_sector * 5555 + 456 + player_biomass * 13));
                             medbay_shop_generate(&g_medbay_shop);
                             active_shop_type = 1;
                             app_state = STATE_SHOP;
@@ -2737,6 +2852,15 @@ static void event(const sapp_event *ev) {
             return;
         }
         return; /* Consume all keys while map is open */
+    }
+
+    /* Chest overlay in dungeon */
+    if (chest_overlay_active) {
+        if (ev->key_code == SAPP_KEYCODE_ESCAPE) {
+            dng_state.dungeon->chests[chest_gy][chest_gx] = 0;
+            chest_overlay_active = false;
+        }
+        return; /* block all other input */
     }
 
     /* Deck viewer in dungeon */
