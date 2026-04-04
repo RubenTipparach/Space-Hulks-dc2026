@@ -758,11 +758,16 @@ void main(){
                 float ez0 = oN ? z0 + fN : z0;
                 float ez1 = oS ? z1 - fS : z1;
 
-                // Per-face window texture selection
+                // Per-face window texture: only when window points toward us
+                bool winTexN = oN && _winSet != null && _winSet.Contains((gx, gy - 1, WallDir.South));
+                bool winTexS = oS && _winSet != null && _winSet.Contains((gx, gy + 1, WallDir.North));
+                bool winTexW = oW && _winSet != null && _winSet.Contains((gx - 1, gy, WallDir.East));
+                bool winTexE = oE && _winSet != null && _winSet.Contains((gx + 1, gy, WallDir.West));
+
                 // North wall (x0,z0) to (x1,z0) — trimmed at corners
                 if (oN)
                 {
-                    int ft = wN ? extWin : extW;
+                    int ft = winTexN ? extWin : extW;
                     float nx0 = cNW ? ex0 + c : ex0;
                     float nx1 = cNE ? ex1 - c : ex1;
                     if (nx0 < nx1)
@@ -771,7 +776,7 @@ void main(){
                 // South wall (x1,z1) to (x0,z1)
                 if (oS)
                 {
-                    int ft = wS ? extWin : extW;
+                    int ft = winTexS ? extWin : extW;
                     float sx0 = cSW ? ex0 + c : ex0;
                     float sx1 = cSE ? ex1 - c : ex1;
                     if (sx0 < sx1)
@@ -780,7 +785,7 @@ void main(){
                 // West wall (x0,z1) to (x0,z0)
                 if (oW)
                 {
-                    int ft = wW ? extWin : extW;
+                    int ft = winTexW ? extWin : extW;
                     float wz0 = cNW ? ez0 + c : ez0;
                     float wz1 = cSW ? ez1 - c : ez1;
                     if (wz0 < wz1)
@@ -789,7 +794,7 @@ void main(){
                 // East wall (x1,z0) to (x1,z1)
                 if (oE)
                 {
-                    int ft = wE ? extWin : extW;
+                    int ft = winTexE ? extWin : extW;
                     float wz0e = cNE ? ez0 + c : ez0;
                     float wz1e = cSE ? ez1 - c : ez1;
                     if (wz0e < wz1e)
