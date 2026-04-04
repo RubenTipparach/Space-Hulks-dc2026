@@ -118,7 +118,7 @@ static void game_ship_size(int sector, int *out_w, int *out_h) {
 
 /* ── Save / Load ─────────────────────────────────────────────────── */
 
-#define SAVE_VERSION 2
+#define SAVE_VERSION 3
 
 /*  Save header — fixed-size portion written first.
  *  After the header, each generated dungeon floor (sr_dungeon) is
@@ -132,6 +132,7 @@ typedef struct {
     int  app_state_saved;          /* STATE_RUNNING or STATE_COMBAT */
     int  selected_class;
     int  player_scrap_saved;
+    int  player_biomass_saved;
     int  player_sector_saved;
 
     /* Persistent player */
@@ -215,6 +216,7 @@ static void game_save(void) {
     hdr.app_state_saved     = app_state;
     hdr.selected_class      = selected_class;
     hdr.player_scrap_saved  = player_scrap;
+    hdr.player_biomass_saved = player_biomass;
     hdr.player_sector_saved = player_sector;
 
     hdr.player = g_player;
@@ -286,6 +288,7 @@ static bool game_load(void) {
     /* Restore progression */
     selected_class = hdr.selected_class;
     player_scrap   = hdr.player_scrap_saved;
+    player_biomass = hdr.player_biomass_saved;
     player_sector  = hdr.player_sector_saved;
 
     /* Restore player */
@@ -381,8 +384,6 @@ static void draw_title_screen(sr_framebuffer *fb_ptr) {
         combat_draw_rect_outline(px, W, H, bx, by, bw, bh, sel ? yellow : gray);
         int tx = bx + (bw - sr_text_width("CONTINUE")) / 2;
         sr_draw_text_shadow(px, W, H, tx, by + 7, "CONTINUE", col, shadow);
-        if (!save_exists)
-            sr_draw_text_centered(px, W, H, by + bh + 4, "NO SAVE FOUND", 0xFF444444, shadow);
     }
 }
 
@@ -546,6 +547,230 @@ static void draw_epilogue_screen(sr_framebuffer *fb_ptr) {
     }
 }
 
+/* ── Beam teleport effect ──────────────────────────────────────── */
+
+static void draw_beam_effect(sr_framebuffer *fb_ptr) {
+    int W = fb_ptr->width, H = fb_ptr->height;
+    uint32_t *px = fb_ptr->color;
+
+    beam_timer++;
+    float t = (float)beam_timer / BEAM_DURATION; /* 0.0 to 1.0 */
+    if (t > 1.0f) t = 1.0f;
+
+    /* Dark background */
+    for (int i = 0; i < W * H; i++)
+        px[i] = 0xFF080810;
+
+    /* Beam column parameters */
+    int beam_cx = W / 2;       /* center X of beam */
+    int beam_w = 24;           /* beam width */
+    float beam_intensity;
+    if (t < 0.15f) beam_intensity = t / 0.15f;
+    else if (t > 0.85f) beam_intensity = (1.0f - t) / 0.15f;
+    else beam_intensity = 1.0f;
+
+    /* Draw main beam column */
+    int bx0 = beam_cx - beam_w / 2;
+    int bx1 = beam_cx + beam_w / 2;
+    for (int ry = 0; ry < H; ry++) {
+        for (int rx = bx0; rx < bx1 && rx < W; rx++) {
+            if (rx < 0) continue;
+            /* Distance from beam center for gradient */
+            float dx = (float)(rx - beam_cx) / (beam_w / 2.0f);
+            if (dx < 0) dx = -dx;
+            float fade = (1.0f - dx) * beam_intensity;
+            if (fade < 0) fade = 0;
+
+            /* Cyan-white beam color */
+            int br = (int)(100 * fade + 155 * fade * fade);
+            int bg = (int)(200 * fade + 55 * fade * fade);
+            int bb = (int)(255 * fade);
+            if (br > 255) br = 255;
+            if (bg > 255) bg = 255;
+            if (bb > 255) bb = 255;
+
+            /* Blend additively */
+            uint32_t existing = px[ry * W + rx];
+            int er = (existing >> 0) & 0xFF;
+            int eg = (existing >> 8) & 0xFF;
+            int eb = (existing >> 16) & 0xFF;
+            er += br; if (er > 255) er = 255;
+            eg += bg; if (eg > 255) eg = 255;
+            eb += bb; if (eb > 255) eb = 255;
+            px[ry * W + rx] = 0xFF000000 | (eb << 16) | (eg << 8) | er;
+        }
+    }
+
+    /* Scanning line effect — horizontal bright band sweeping down */
+    if (beam_intensity > 0.3f) {
+        int scan_y = (int)(((beam_timer * 3) % H));
+        for (int ry = scan_y; ry < scan_y + 3 && ry < H; ry++) {
+            for (int rx = bx0 - 4; rx < bx1 + 4 && rx < W; rx++) {
+                if (rx < 0 || ry < 0) continue;
+                uint32_t existing = px[ry * W + rx];
+                int er = (existing >> 0) & 0xFF;
+                int eg = (existing >> 8) & 0xFF;
+                int eb = (existing >> 16) & 0xFF;
+                int add = (int)(120 * beam_intensity);
+                er += add; if (er > 255) er = 255;
+                eg += add; if (eg > 255) eg = 255;
+                eb += add; if (eb > 255) eb = 255;
+                px[ry * W + rx] = 0xFF000000 | (eb << 16) | (eg << 8) | er;
+            }
+        }
+    }
+
+    /* Sparkle particles */
+    beam_rng_state = beam_timer * 7919 + 1;
+    int num_sparkles = (int)(40 * beam_intensity);
+    for (int s = 0; s < num_sparkles; s++) {
+        int sx = beam_cx - beam_w + beam_rng() % (beam_w * 2);
+        int sy = beam_rng() % H;
+        if (sx < 0 || sx >= W || sy < 0 || sy >= H) continue;
+
+        /* Sparkle brightness varies */
+        float sparkle_bright = (float)(beam_rng() % 100) / 100.0f;
+        sparkle_bright *= beam_intensity;
+
+        /* Small sparkle (1-2 pixels) */
+        int size = 1 + (beam_rng() % 2);
+        for (int dy = 0; dy < size; dy++) {
+            for (int dx = 0; dx < size; dx++) {
+                int px_x = sx + dx, px_y = sy + dy;
+                if (px_x >= W || px_y >= H) continue;
+                uint32_t existing = px[px_y * W + px_x];
+                int er = (existing >> 0) & 0xFF;
+                int eg = (existing >> 8) & 0xFF;
+                int eb = (existing >> 16) & 0xFF;
+                /* White-cyan sparkles */
+                int add_r = (int)(200 * sparkle_bright);
+                int add_g = (int)(240 * sparkle_bright);
+                int add_b = (int)(255 * sparkle_bright);
+                er += add_r; if (er > 255) er = 255;
+                eg += add_g; if (eg > 255) eg = 255;
+                eb += add_b; if (eb > 255) eb = 255;
+                px[px_y * W + px_x] = 0xFF000000 | (eb << 16) | (eg << 8) | er;
+            }
+        }
+    }
+
+    /* Rising particle trails along beam edges */
+    for (int p = 0; p < 12; p++) {
+        int edge = (p % 2 == 0) ? bx0 - 2 : bx1 + 1;
+        int py = H - ((beam_timer * 4 + p * 37) % H);
+        if (py < 0 || py >= H) continue;
+        float trail_fade = beam_intensity * ((float)(beam_rng() % 60 + 40) / 100.0f);
+        for (int dy = 0; dy < 4 && py + dy < H; dy++) {
+            float df = trail_fade * (1.0f - dy / 4.0f);
+            for (int dx = 0; dx < 2; dx++) {
+                int px_x = edge + dx, px_y = py + dy;
+                if (px_x < 0 || px_x >= W) continue;
+                uint32_t existing = px[px_y * W + px_x];
+                int er = (existing >> 0) & 0xFF;
+                int eg = (existing >> 8) & 0xFF;
+                int eb = (existing >> 16) & 0xFF;
+                er += (int)(100 * df); if (er > 255) er = 255;
+                eg += (int)(220 * df); if (eg > 255) eg = 255;
+                eb += (int)(255 * df); if (eb > 255) eb = 255;
+                px[px_y * W + px_x] = 0xFF000000 | (eb << 16) | (eg << 8) | er;
+            }
+        }
+    }
+
+    /* Text at top */
+    uint32_t shadow = 0xFF000000;
+    if (beam_timer > 10) {
+        uint32_t text_col = ((beam_timer / 10) % 2 == 0) ? 0xFF44DDDD : 0xFF22AAAA;
+        sr_draw_text_centered(px, W, H, 0, H - 14, "ENERGIZING...", text_col, shadow);
+    }
+
+    /* Auto-transition when done */
+    if (beam_timer >= BEAM_DURATION) {
+        app_state = STATE_RUNNING;
+    }
+}
+
+/* ── Mission summary screen ────────────────────────────────────── */
+
+static void draw_mission_summary(sr_framebuffer *fb_ptr) {
+    int W = fb_ptr->width, H = fb_ptr->height;
+    uint32_t *px = fb_ptr->color;
+    uint32_t shadow = 0xFF000000;
+
+    for (int i = 0; i < W * H; i++) px[i] = 0xFF0D0D11;
+
+    /* Title */
+    sr_draw_text_centered(px, W, H, 0, 16, "MISSION COMPLETE", 0xFF44CC44, shadow);
+
+    /* Completion method */
+    uint32_t method_col = g_summary.all_killed ? 0xFF44AACC : 0xFFCC8844;
+    sr_draw_text_centered(px, W, H, 0, 32, g_summary.completion_method, method_col, shadow);
+
+    /* Divider */
+    for (int rx = 60; rx < W - 60; rx++)
+        if (44 < H) px[44 * W + rx] = 0xFF333355;
+
+    /* Stats */
+    int y = 54;
+    char buf[64];
+
+    if (g_summary.all_killed) {
+        sr_draw_text_shadow(px, W, H, 40, y, "ALL CREATURES ELIMINATED", 0xFF44AACC, shadow);
+        y += 12;
+        sr_draw_text_shadow(px, W, H, 40, y, "MAXIMUM BIOMASS RECOVERED", 0xFF448844, shadow);
+    } else {
+        snprintf(buf, sizeof(buf), "TERMINALS DESTROYED: %d / %d",
+                 g_summary.terminals_destroyed, g_summary.terminals_total);
+        sr_draw_text_shadow(px, W, H, 40, y, buf, 0xFFCC8844, shadow);
+        y += 12;
+        sr_draw_text_shadow(px, W, H, 40, y, "SHIP SCAVENGED FOR PARTS", 0xFF888888, shadow);
+    }
+
+    /* Divider */
+    y += 16;
+    for (int rx = 60; rx < W - 60; rx++)
+        if (y < H) px[y * W + rx] = 0xFF333355;
+    y += 10;
+
+    /* Rewards */
+    sr_draw_text_shadow(px, W, H, 40, y, "REWARDS:", 0xFFCCCCCC, shadow);
+    y += 14;
+
+    /* Scrap */
+    snprintf(buf, sizeof(buf), "SCRAP: +%d", g_summary.scrap_earned);
+    uint32_t scrap_col = g_summary.all_killed ? 0xFF888888 : 0xFFEECC44;
+    sr_draw_text_shadow(px, W, H, 60, y, buf, scrap_col, shadow);
+    if (!g_summary.all_killed) {
+        sr_draw_text_shadow(px, W, H, W - 120, y, "(BONUS)", 0xFF666644, shadow);
+    }
+    y += 12;
+
+    /* Biomass */
+    snprintf(buf, sizeof(buf), "BIOMASS: +%d", g_summary.biomass_earned);
+    uint32_t bio_col = g_summary.all_killed ? 0xFF44CC88 : 0xFF888888;
+    sr_draw_text_shadow(px, W, H, 60, y, buf, bio_col, shadow);
+    if (g_summary.all_killed) {
+        sr_draw_text_shadow(px, W, H, W - 120, y, "(BONUS)", 0xFF226644, shadow);
+    }
+    y += 20;
+
+    /* Totals */
+    snprintf(buf, sizeof(buf), "TOTAL SCRAP: %d    TOTAL BIOMASS: %d",
+             player_scrap, player_biomass);
+    sr_draw_text_shadow(px, W, H, 40, y, buf, 0xFF888888, shadow);
+
+    /* Boss sample info */
+    if (g_summary.is_boss) {
+        y += 16;
+        snprintf(buf, sizeof(buf), "BIOMASS SAMPLE %d / %d SECURED!", player_samples, SAMPLES_REQUIRED);
+        sr_draw_text_shadow(px, W, H, 40, y, buf, 0xFF44CC44, shadow);
+    }
+
+    /* Continue prompt */
+    uint32_t blink = ((beam_timer++ / 30) % 2 == 0) ? 0xFFCCCCCC : 0xFF666666;
+    sr_draw_text_centered(px, W, H, 0, H - 20, "PRESS SPACE TO CONTINUE", blink, shadow);
+}
+
 /* ── Ship-mode game initialization ──────────────────────────────── */
 
 static int last_player_gx = -1, last_player_gy = -1;
@@ -608,7 +833,7 @@ static void game_init_ship(void) {
     }
 
     /* Fallback: procedural generation */
-    int difficulty = dng_state.current_floor;
+    int difficulty = player_sector;
     uint32_t ship_seed = dng_state.seed_base + 9999;
     ship_generate(&current_ship, difficulty, ship_seed);
     dng_state.max_floors = current_ship.num_decks;
@@ -674,8 +899,45 @@ static void game_init_ship(void) {
 
 /* ── Mission completion with boss/sample tracking ──────────────── */
 
-static void mission_complete_return_to_hub(int reward, const char *msg) {
-    player_scrap += reward;
+/* Count remaining aliens across all floors */
+static int count_remaining_aliens(void) {
+    int count = 0;
+    for (int fl = 0; fl < current_ship.num_decks && fl < DNG_MAX_FLOORS; fl++) {
+        if (!dng_state.floor_generated[fl]) continue;
+        sr_dungeon *dd = &dng_state.floors[fl];
+        for (int gy = 1; gy <= dd->h; gy++)
+            for (int gx = 1; gx <= dd->w; gx++)
+                if (dd->aliens[gy][gx] != 0) count++;
+    }
+    return count;
+}
+
+static void mission_complete_return_to_hub(int base_reward, const char *msg, bool all_killed) {
+    /* Calculate dual rewards based on completion method */
+    int scrap_reward, biomass_reward;
+    if (all_killed) {
+        /* Killed everything: more biomass, less scrap */
+        biomass_reward = base_reward;
+        scrap_reward = base_reward / 3;
+    } else {
+        /* Terminals destroyed: more scrap, less biomass */
+        scrap_reward = base_reward;
+        biomass_reward = base_reward / 3;
+    }
+
+    player_scrap += scrap_reward;
+    player_biomass += biomass_reward;
+
+    /* Populate mission summary */
+    memset(&g_summary, 0, sizeof(g_summary));
+    g_summary.terminals_destroyed = current_ship.terminals_destroyed;
+    g_summary.terminals_total = current_ship.terminals_required;
+    g_summary.scrap_earned = scrap_reward;
+    g_summary.biomass_earned = biomass_reward;
+    g_summary.all_killed = all_killed;
+    g_summary.is_boss = current_mission_is_boss;
+    snprintf(g_summary.completion_method, sizeof(g_summary.completion_method), "%s", msg);
+
     hub_generate(&g_hub);
     g_hub.mission_available = false;
     current_combat_room = -1;
@@ -695,18 +957,9 @@ static void mission_complete_return_to_hub(int reward, const char *msg) {
             app_state = STATE_EPILOGUE;
             return;
         }
-        /* Show sample collected message */
-        snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg),
-                 "SAMPLE %d/%d SECURED! +%d SCRAP",
-                 player_samples, SAMPLES_REQUIRED, reward);
-        g_hub.hud_msg_timer = 150;
-    } else {
-        char hud_buf[64];
-        snprintf(hud_buf, sizeof(hud_buf), "%s +%d SCRAP", msg, reward);
-        snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "%s", hud_buf);
-        g_hub.hud_msg_timer = 120;
     }
-    app_state = STATE_SHIP_HUB;
+
+    app_state = STATE_MISSION_SUMMARY;
 }
 
 /* ── Handle combat end (shared by tap and keyboard) ────────────── */
@@ -720,6 +973,7 @@ static void handle_combat_end(void) {
             if (console_combat) {
                 int sub_dmg = 10;
                 ship_damage_subsystem(&current_ship, current_combat_room, sub_dmg);
+                current_ship.terminals_destroyed++;
 
                 for (int o = 0; o < current_ship.officer_count; o++) {
                     if (current_ship.officers[o].room_idx == current_combat_room &&
@@ -728,8 +982,7 @@ static void handle_combat_end(void) {
                         current_ship.officers[o].captured = true;
                     }
                 }
-                /* Only check mission completion on console sabotage,
-                 * not on regular enemy kills */
+                /* Check mission completion on console sabotage */
                 ship_check_missions(&current_ship);
             }
         }
@@ -760,7 +1013,7 @@ static void handle_combat_end(void) {
         if (current_ship.enemy_ship_destroyed) {
             current_ship.boarding_active = false;
             int reward = 20 + player_sector * 10;
-            mission_complete_return_to_hub(reward, "MISSION COMPLETE!");
+            mission_complete_return_to_hub(reward, "SHIP DESTROYED!", false);
             return;
         }
 
@@ -777,18 +1030,18 @@ static void handle_combat_end(void) {
             if (!any_alive) {
                 current_ship.boarding_active = false;
                 int reward = 25 + player_sector * 10;
-                mission_complete_return_to_hub(reward, "ALL HOSTILES ELIMINATED!");
+                mission_complete_return_to_hub(reward, "ALL HOSTILES KILLED!", true);
                 return;
             }
         }
 
-        /* Check if primary mission is done (bridge captured via console) */
+        /* Check if primary mission is done (terminals destroyed) */
         if (current_ship.mission.completed && current_ship.boarding_active) {
             current_ship.boarding_active = false;
             int reward = 30 + player_sector * 10;
             for (int b = 0; b < current_ship.bonus_count; b++)
                 if (current_ship.bonus_missions[b].completed) reward += 15;
-            mission_complete_return_to_hub(reward, "MISSION COMPLETE!");
+            mission_complete_return_to_hub(reward, "TERMINALS DESTROYED!", false);
             return;
         }
 
@@ -1268,6 +1521,16 @@ static void init(void) {
     dng_load_config();
     hub_load_config();
     dlgd_load();
+
+    /* Load game config (debug mode etc.) */
+    {
+        sr_config gcfg = sr_config_load("config/game_config.yaml");
+        if (gcfg.count > 0) {
+            debug_mode = (int)sr_config_float(&gcfg, "debug.enabled", 0) != 0;
+            if (debug_mode) printf("[game] DEBUG MODE ENABLED\n");
+            sr_config_free(&gcfg);
+        }
+    }
     sr_audio_init();
 
 #ifdef _WIN32
@@ -1349,6 +1612,12 @@ static void frame(void) {
             draw_deck_viewer(fb.color, fb.width, fb.height);
         if (g_dialog.active)
             draw_dialog(fb.color, fb.width, fb.height);
+        if (g_kit.active)
+            draw_kit_display(fb.color, fb.width, fb.height);
+    } else if (app_state == STATE_BEAM) {
+        draw_beam_effect(&fb);
+    } else if (app_state == STATE_MISSION_SUMMARY) {
+        draw_mission_summary(&fb);
     } else if (app_state == STATE_SHOP) {
         draw_shop(fb.color, fb.width, fb.height);
     } else if (app_state == STATE_STARMAP) {
@@ -1637,6 +1906,11 @@ static void handle_screen_tap(float sx, float sy) {
     ui_mouse_x = fx;
     ui_mouse_y = fy;
 
+    if (app_state == STATE_MISSION_SUMMARY) {
+        app_state = STATE_SHIP_HUB;
+        return;
+    }
+
     if (app_state == STATE_TITLE) {
         /* New Game button */
         int bx = FB_WIDTH/2 - 50, bw = 100, bh = 22;
@@ -1668,6 +1942,7 @@ static void handle_screen_tap(float sx, float sy) {
                     /* Randomize enemy weaknesses for this run */
                     weakness_init((uint32_t)(time(NULL) ^ (selected_class * 31337)));
                     player_scrap = 30;
+                    player_biomass = 0;
                     player_sector = 0;
                     /* Reset mission flow state for new game */
                     mission_briefed = false;
@@ -1721,9 +1996,41 @@ static void handle_screen_tap(float sx, float sy) {
             /* Close button handled by ui_button in draw_deck_viewer via ui_mouse_clicked */
             return;
         }
+        if (g_kit.active) {
+            /* Kit display overlay — handle card clicks and close */
+            int kit_bx = 10, kit_by = 10;
+            int cw = 50, ch = 66, pad = 6;
+            int cols = 7;
+            if (g_kit.detail_idx >= 0) {
+                /* Detail view — click anywhere to close detail */
+                g_kit.detail_idx = -1;
+            } else {
+                /* Check CLOSE button */
+                int close_bx = FB_WIDTH - 60, close_by = FB_HEIGHT - 18;
+                if (fx >= close_bx && fx < close_bx + 50 && fy >= close_by && fy < close_by + 14) {
+                    g_kit.active = false;
+                } else {
+                    /* Check card clicks */
+                    for (int i = 0; i < g_kit.card_count; i++) {
+                        int col = i % cols, row = i / cols;
+                        int cx = kit_bx + col * (cw + pad);
+                        int cy = kit_by + 14 + row * (ch + pad);
+                        if (fx >= cx && fx < cx + cw && fy >= cy && fy < cy + ch) {
+                            g_kit.detail_idx = i;
+                            break;
+                        }
+                    }
+                }
+            }
+            return;
+        }
         if (g_dialog.active) {
             if (g_dialog.confirm_mode) {
-                /* Confirm dialog — check YES/NO button hits (tabs below box) */
+                /* Confirm dialog — advance teletype first, then show YES/NO */
+                if (!g_dialog.tt_all_done) {
+                    dialog_teletype_advance();
+                    return;
+                }
                 int H = FB_HEIGHT;
                 int bx = 20, bw = FB_WIDTH - 40, bh = 52;
                 int by = H - 66;
@@ -1742,7 +2049,8 @@ static void handle_screen_tap(float sx, float sy) {
                         last_player_gx = dng_state.player.gx;
                         last_player_gy = dng_state.player.gy;
                         g_hub.mission_available = false;
-                        app_state = STATE_RUNNING;
+                        beam_timer = 0;
+                        app_state = STATE_BEAM;
                     }
                 }
                 /* NO button area */
@@ -1753,7 +2061,11 @@ static void handle_screen_tap(float sx, float sy) {
                 }
                 return;
             }
-            /* Normal dialog — tap anywhere dismisses + triggers action */
+            /* Normal dialog — advance teletype, then dismiss */
+            if (!dialog_teletype_advance()) {
+                /* Teletype still going — don't dismiss yet */
+                return;
+            }
             int action = g_dialog.pending_action;
             g_dialog.active = false;
             if (action != DIALOG_ACTION_NONE) {
@@ -1795,8 +2107,26 @@ static void handle_screen_tap(float sx, float sy) {
                         dng_rng_seed((uint32_t)(player_sector * 7777 + 123));
                         shop_generate(&g_shop);
                         if (!mission_armory_done) mission_armory_done = true;
+                        active_shop_type = 0;
                         app_state = STATE_SHOP;
                         break;
+                    case DIALOG_ACTION_MEDBAY_SHOP:
+                        dng_rng_seed((uint32_t)(player_sector * 5555 + 456));
+                        medbay_shop_generate(&g_medbay_shop);
+                        active_shop_type = 1;
+                        app_state = STATE_SHOP;
+                        break;
+                    case DIALOG_ACTION_SHOW_KIT: {
+                        /* Show starting deck cards as kit display */
+                        memset(&g_kit, 0, sizeof(g_kit));
+                        g_kit.card_count = g_player.persistent_deck_count;
+                        for (int i = 0; i < g_kit.card_count; i++)
+                            g_kit.cards[i] = g_player.persistent_deck[i];
+                        g_kit.detail_idx = -1;
+                        g_kit.active = true;
+                        if (!mission_armory_done) mission_armory_done = true;
+                        break;
+                    }
                     case DIALOG_ACTION_TELEPORT:
                         if (g_hub.mission_available)
                             hub_show_teleport_confirm();
@@ -1811,7 +2141,8 @@ static void handle_screen_tap(float sx, float sy) {
                             last_player_gy = dng_state.player.gy;
                             g_hub.mission_available = false;
                             if (!mission_first_done) mission_first_done = true;
-                            app_state = STATE_RUNNING;
+                            beam_timer = 0;
+                            app_state = STATE_BEAM;
                         }
                         break;
                     case DIALOG_ACTION_HEAL:
@@ -1989,6 +2320,15 @@ static void event(const sapp_event *ev) {
         return;
     }
 
+    /* ── Mission summary screen ─────────────────────────────── */
+    if (app_state == STATE_MISSION_SUMMARY) {
+        if (ev->key_code == SAPP_KEYCODE_SPACE || ev->key_code == SAPP_KEYCODE_ENTER ||
+            ev->key_code == SAPP_KEYCODE_F) {
+            app_state = STATE_SHIP_HUB;
+        }
+        return;
+    }
+
     /* ── Title screen ────────────────────────────────────────── */
     if (app_state == STATE_TITLE) {
         switch (ev->key_code) {
@@ -2106,8 +2446,25 @@ static void event(const sapp_event *ev) {
             deck_view_active = true;
             return;
         }
+        if (g_kit.active) {
+            if (ev->key_code == SAPP_KEYCODE_ESCAPE || ev->key_code == SAPP_KEYCODE_F ||
+                ev->key_code == SAPP_KEYCODE_SPACE || ev->key_code == SAPP_KEYCODE_ENTER) {
+                if (g_kit.detail_idx >= 0)
+                    g_kit.detail_idx = -1;
+                else
+                    g_kit.active = false;
+            }
+            return;
+        }
         if (g_dialog.active) {
             if (g_dialog.confirm_mode) {
+                if (!g_dialog.tt_all_done) {
+                    /* Advance teletype before showing YES/NO */
+                    if (ev->key_code == SAPP_KEYCODE_F || ev->key_code == SAPP_KEYCODE_ENTER ||
+                        ev->key_code == SAPP_KEYCODE_SPACE)
+                        dialog_teletype_advance();
+                    return;
+                }
                 /* YES/NO confirm dialog */
                 bool yes = (ev->key_code == SAPP_KEYCODE_Y || ev->key_code == SAPP_KEYCODE_ENTER ||
                             ev->key_code == SAPP_KEYCODE_SPACE);
@@ -2138,6 +2495,10 @@ static void event(const sapp_event *ev) {
                 }
             } else if (ev->key_code == SAPP_KEYCODE_F || ev->key_code == SAPP_KEYCODE_ENTER ||
                 ev->key_code == SAPP_KEYCODE_SPACE || ev->key_code == SAPP_KEYCODE_ESCAPE) {
+                /* Advance teletype first (ESC skips to dismiss) */
+                if (ev->key_code != SAPP_KEYCODE_ESCAPE && !dialog_teletype_advance()) {
+                    return; /* still advancing text */
+                }
                 int action = g_dialog.pending_action;
                 g_dialog.active = false;
                 /* Trigger pending action on dismiss (not on ESC) */
@@ -2179,8 +2540,25 @@ static void event(const sapp_event *ev) {
                             dng_rng_seed((uint32_t)(player_sector * 7777 + 123));
                             shop_generate(&g_shop);
                             if (!mission_armory_done) mission_armory_done = true;
+                            active_shop_type = 0;
                             app_state = STATE_SHOP;
                             break;
+                        case DIALOG_ACTION_MEDBAY_SHOP:
+                            dng_rng_seed((uint32_t)(player_sector * 5555 + 456));
+                            medbay_shop_generate(&g_medbay_shop);
+                            active_shop_type = 1;
+                            app_state = STATE_SHOP;
+                            break;
+                        case DIALOG_ACTION_SHOW_KIT: {
+                            memset(&g_kit, 0, sizeof(g_kit));
+                            g_kit.card_count = g_player.persistent_deck_count;
+                            for (int i = 0; i < g_kit.card_count; i++)
+                                g_kit.cards[i] = g_player.persistent_deck[i];
+                            g_kit.detail_idx = -1;
+                            g_kit.active = true;
+                            if (!mission_armory_done) mission_armory_done = true;
+                            break;
+                        }
                         case DIALOG_ACTION_TELEPORT:
                             if (g_hub.mission_available)
                                 hub_show_teleport_confirm();
@@ -2306,7 +2684,7 @@ static void event(const sapp_event *ev) {
     /* ── Shop state ──────────────────────────────────────────── */
     if (app_state == STATE_SHOP) {
         if (ev->key_code == SAPP_KEYCODE_ESCAPE) {
-            g_shop.active = false;
+            active_shop()->active = false;
             app_state = STATE_SHIP_HUB;
         } else {
             shop_handle_key(ev->key_code);

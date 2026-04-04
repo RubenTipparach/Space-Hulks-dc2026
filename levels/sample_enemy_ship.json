@@ -8,7 +8,7 @@
     {
       "type": "DestroyShip",
       "targetOfficer": -1,
-      "description": "Destroy the enemy ship by sabotaging subsystems"
+      "description": "Kill all enemies or destroy the terminals"
     }
   ],
   "floors": [

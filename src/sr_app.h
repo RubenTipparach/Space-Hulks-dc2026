@@ -59,10 +59,15 @@ static int    fps_display;
 static double gif_capture_timer;
 static int    screenshot_counter;
 
+/* ── Debug mode (loaded from config/game_config.yaml) ──────────── */
+
+static bool debug_mode = false;
+
 /* ── App state ─────────────────────────────────────────────────── */
 
 enum { STATE_TITLE, STATE_CLASS_SELECT, STATE_INTRO, STATE_RUNNING, STATE_COMBAT,
-       STATE_SHIP_HUB, STATE_SHOP, STATE_DIALOG, STATE_STARMAP, STATE_EPILOGUE };
+       STATE_SHIP_HUB, STATE_SHOP, STATE_DIALOG, STATE_STARMAP, STATE_EPILOGUE,
+       STATE_BEAM, STATE_MISSION_SUMMARY };
 static int app_state = STATE_TITLE;
 static int selected_class = 0;  /* 0=scout, 1=marine */
 static int class_select_cursor = 0;
@@ -82,6 +87,18 @@ static int  intro_char_idx = 0;   /* total chars revealed so far */
 static int  intro_timer = 0;      /* frame counter for typing speed */
 static bool intro_done = false;   /* all text revealed */
 
+/* ── Beam teleport effect ──────────────────────────────────────── */
+
+static int  beam_timer = 0;       /* frame counter for beam animation */
+#define BEAM_DURATION 90          /* total frames for beam effect */
+
+/* Simple RNG for beam sparkle particles */
+static uint32_t beam_rng_state = 12345;
+static int beam_rng(void) {
+    beam_rng_state = beam_rng_state * 1103515245 + 12345;
+    return (beam_rng_state >> 16) & 0x7FFF;
+}
+
 /* ── Boss / sample progression ─────────────────────────────────── */
 
 #define SAMPLES_REQUIRED 3
@@ -94,8 +111,24 @@ static bool epilogue_is_win = false; /* true = victory, false = game over */
 
 /* ── Player progression / currency ─────────────────────────────── */
 
-static int player_scrap = 0;       /* currency earned from missions */
+static int player_scrap = 0;       /* currency: buy normal cards, trash, heal */
+static int player_biomass = 0;     /* currency: buy elemental cards */
 static int player_sector = 0;      /* current sector (progression depth) */
+
+/* ── Mission summary (shown after each mission) ───────────────── */
+
+typedef struct {
+    int enemies_killed;
+    int terminals_destroyed;
+    int terminals_total;
+    int scrap_earned;
+    int biomass_earned;
+    bool all_killed;         /* true = killed all enemies */
+    bool is_boss;
+    char completion_method[32]; /* "ALL HOSTILES ELIMINATED" etc. */
+} mission_summary;
+
+static mission_summary g_summary;
 
 #define SAVE_FILE "spacehulks.sav"
 #define SAVE_MAGIC 0x534B4C48  /* "HLKS" */

@@ -63,7 +63,7 @@ static const char *officer_first_names[] = {
 /* ── Mission types ──────────────────────────────────────────────── */
 
 enum {
-    MISSION_DESTROY_SHIP,     /* destroy or capture the ship (take bridge) */
+    MISSION_DESTROY_SHIP,     /* find and collect rare parasite sample (take bridge) */
     MISSION_CAPTURE_OFFICER,  /* capture a specific officer alive */
     MISSION_STEAL_ARTIFACT,   /* retrieve artifact from cargo */
     MISSION_DISABLE_ENGINES,  /* disable engines and escape */
@@ -71,11 +71,11 @@ enum {
 };
 
 static const char *mission_type_names[] = {
-    "DESTROY SHIP", "CAPTURE OFFICER", "STEAL ARTIFACT", "DISABLE ENGINES"
+    "COLLECT BIOMASS", "CAPTURE OFFICER", "STEAL ARTIFACT", "DISABLE ENGINES"
 };
 
 static const char *mission_descriptions[] = {
-    "TAKE THE BRIDGE OR\nDESTROY THE SHIP",
+    "KILL ALL ENEMIES OR\nDESTROY THE TERMINALS",
     "CAPTURE THE TARGET\nOFFICER ALIVE",
     "FIND THE ARTIFACT\nIN THE CARGO HOLD",
     "DISABLE THE ENGINES\nAND ESCAPE",
@@ -150,6 +150,10 @@ typedef struct {
     int player_hull_timer;  /* frames until next hull damage tick */
     int player_hull_tick;   /* damage per tick from enemy weapons */
 
+    /* Terminals */
+    int terminals_destroyed;  /* consoles sabotaged so far */
+    int terminals_required;   /* how many needed to blow up ship (scales with size) */
+
     /* Timing */
     int turns_elapsed;   /* combat rounds across the whole boarding */
     int turns_until_destruction; /* 0 = no timer, >0 = ship fires on you */
@@ -188,9 +192,13 @@ static void ship_generate(ship_state *ship, int difficulty, uint32_t seed) {
     snprintf(ship->name, sizeof(ship->name), "%s %s",
              ship_prefixes[pf], ship_suffixes[sf]);
 
-    /* Decks: 1 at low difficulty, 2-3 at higher */
-    ship->num_decks = 1 + (difficulty > 1 ? 1 : 0) + (difficulty > 3 ? 1 : 0);
+    /* Decks: small ships 1 floor, medium 2, large 3 (matches sector clusters) */
+    ship->num_decks = 1 + (difficulty >= 3 ? 1 : 0) + (difficulty >= 6 ? 1 : 0);
     if (ship->num_decks > SHIP_MAX_DECKS) ship->num_decks = SHIP_MAX_DECKS;
+
+    /* Terminals required to destroy ship scales with size */
+    ship->terminals_required = 1 + ship->num_decks; /* small=2, medium=3, large=4 */
+    ship->terminals_destroyed = 0;
 
     /* Generate rooms per deck */
     ship->room_count = 0;
@@ -487,14 +495,11 @@ static void ship_damage_subsystem(ship_state *ship, int room_idx, int dmg) {
 /* ── Check mission completion ───────────────────────────────────── */
 
 static void ship_check_missions(ship_state *ship) {
-    /* Primary: DESTROY_SHIP = bridge control or hull at 0 */
+    /* Primary: kill all enemies OR destroy enough terminals */
     if (ship->mission.type == MISSION_DESTROY_SHIP) {
-        /* Bridge captured? */
-        for (int i = 0; i < ship->room_count; i++) {
-            if (ship->rooms[i].type == ROOM_BRIDGE && ship->rooms[i].cleared) {
-                ship->mission.completed = true;
-            }
-        }
+        /* Enough terminals destroyed? */
+        if (ship->terminals_destroyed >= ship->terminals_required)
+            ship->mission.completed = true;
         if (ship->enemy_ship_destroyed)
             ship->mission.completed = true;
     }

@@ -1,0 +1,100 @@
+# Card text configuration for Space Hulks
+# effect: short text shown on card face (max ~12 chars per line, 2 lines)
+# description: longer text shown in detail view (max ~20 chars per line, 3 lines)
+# Lines separated by \n in the text.
+
+shield:
+  effect: "+3 SHIELD"
+  description: "ADDS SHIELD POINTS\nTHAT ABSORB DAMAGE\nBEFORE HP."
+
+shoot:
+  effect: "3 DMG"
+  description: "BASIC RANGED ATTACK.\nWORKS AT ANY DISTANCE."
+
+burst:
+  effect: "2 DMG ALL"
+  description: "HITS ALL ENEMIES\nFOR REDUCED DAMAGE."
+
+move:
+  effect: "+2 MOVE"
+  description: "GRANTS MOVEMENT\nPOINTS TO REPOSITION\nIN COMBAT."
+
+melee:
+  effect: "6 DMG MELEE"
+  description: "POWERFUL CLOSE RANGE\nATTACK. MUST BE\nADJACENT TO TARGET."
+
+overcharge:
+  effect: "+2 ENERGY"
+  description: "GAIN EXTRA ENERGY\nTHIS TURN. COSTS\nNOTHING TO PLAY."
+
+repair:
+  effect: "+4 HP"
+  description: "RESTORE HIT POINTS.\nHEALING PERSISTS\nBETWEEN COMBATS."
+
+stun:
+  effect: "SKIP ENEMY\nATTACKS"
+  description: "ALL ENEMIES SKIP\nTHEIR NEXT ATTACK\nPHASE."
+
+fortify:
+  effect: "+6 SHIELD"
+  description: "HEAVY SHIELD BOOST.\nGREAT FOR BRACING\nAGAINST BIG HITS."
+
+double_shot:
+  effect: "5 DMG"
+  description: "TWO SHOTS AT ONE\nTARGET FOR HIGH\nSINGLE-TARGET DMG."
+
+dash:
+  effect: "+3 MOVE\n4 DMG"
+  description: "MOVE AND STRIKE.\nGAIN MOVEMENT THEN\nDEAL DAMAGE."
+
+ice:
+  effect: "FREEZE 3T\nSLOW+DMG"
+  description: "FREEZES TARGET FOR\n3 TURNS. SLOWED AND\nTAKES DAMAGE OVER TIME."
+
+acid:
+  effect: "STACK DOT\n1/STACK"
+  description: "STACKING POISON.\nEACH STACK ADDS +1\nDMG PER TURN."
+
+fire:
+  effect: "BURN 3T\nSPREADS"
+  description: "BURNING DAMAGE THAT\nSPREADS TO ADJACENT\nENEMIES."
+
+lightning:
+  effect: "STUN 1-2T\n2 DMG"
+  description: "CHANCE TO STUN FOR\n1-2 TURNS PLUS\nDIRECT DAMAGE."
+
+sniper:
+  effect: "5 DMG\nDIST 2+"
+  description: "HIGH DAMAGE BUT\nREQUIRES DISTANCE OF\n2 OR MORE."
+
+shotgun:
+  effect: "1-3 DMG\nANY RANGE"
+  description: "SPREAD SHOT. MORE\nDAMAGE UP CLOSE.\n3 AT MELEE, 1 AT FAR."
+
+welder:
+  effect: "4 DMG\nMELEE"
+  description: "MELEE TOOL USED AS\nA WEAPON. MUST BE\nADJACENT."
+
+chainsaw:
+  effect: "8 DMG\nMELEE"
+  description: "DEVASTATING MELEE\nDAMAGE BUT COSTS\n2 ENERGY."
+
+laser:
+  effect: "4 DMG\nPRECISION"
+  description: "PRECISION ENERGY\nWEAPON. IGNORES\nSHIELD."
+
+deflector:
+  effect: "+4 SHIELD\nREFLECT DMG"
+  description: "SHIELD THAT REFLECTS\n1 DAMAGE BACK AT\nATTACKERS."
+
+stun_gun:
+  effect: "STUN 1T\n1 DMG"
+  description: "STUNS ONE ENEMY FOR\n1 TURN AND DEALS\nMINOR DAMAGE."
+
+microwave:
+  effect: "5 DMG\n*3 DMG ALL"
+  description: "DEALS 5 DAMAGE. IF\nTHE TARGET DIES, ALL\nOTHER ENEMIES TAKE 3."
+
+quickstep:
+  effect: "+1 MOVE\nTO DISC"
+  description: "GENERATES A MOVE\nCARD INTO YOUR\nDISCARD PILE."

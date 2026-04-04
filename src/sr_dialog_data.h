@@ -12,7 +12,7 @@
 #define DLGD_MAX_DIALOG_LINES  4
 #define DLGD_MAX_PAGES         4
 #define DLGD_MAX_OBJECTIVES    4
-#define DLGD_LINE_LEN         48
+#define DLGD_LINE_LEN         72
 
 /* ── Data structures ────────────────────────────────────────────── */
 
@@ -60,6 +60,13 @@ typedef struct {
 
     /* Captain sample dialogs (between star maps) */
     dlgd_block captain_sample[3]; /* after boss 1, 2, 3 */
+
+    /* Card text (loaded from config/cards.yaml) */
+    #define DLGD_CARD_TEXT_LEN 64
+    #define DLGD_MAX_CARDS 24
+    char card_effect[DLGD_MAX_CARDS][DLGD_CARD_TEXT_LEN];   /* short effect text */
+    char card_desc[DLGD_MAX_CARDS][DLGD_CARD_TEXT_LEN];     /* detail description */
+    bool cards_loaded;
 
     bool loaded;
 } dlgd_data;
@@ -183,6 +190,74 @@ static void dlgd_load(void) {
     sr_config_free(&cfg);
     printf("[dlgd] Loaded dialog data: %d intro, %d loss, %d win lines\n",
            g_dlgd.intro_count, g_dlgd.epilogue_loss_count, g_dlgd.epilogue_win_count);
+
+    /* Load card text from cards.yaml */
+    dlgd_load_cards();
+}
+
+/* Card key names mapping card type index → YAML key prefix */
+static const char *dlgd_card_keys[] = {
+    "shield", "shoot", "burst", "move", "melee",
+    "overcharge", "repair", "stun", "fortify", "double_shot", "dash",
+    "ice", "acid", "fire", "lightning",
+    "sniper", "shotgun", "welder", "chainsaw", "laser", "deflector", "stun_gun", "microwave",
+    "quickstep"
+};
+
+/* Convert escaped \n sequences in YAML strings to actual newlines */
+static void dlgd_unescape_newlines(char *str) {
+    char *r = str, *w = str;
+    while (*r) {
+        if (r[0] == '\\' && r[1] == 'n') {
+            *w++ = '\n';
+            r += 2;
+        } else {
+            *w++ = *r++;
+        }
+    }
+    *w = '\0';
+}
+
+static void dlgd_load_cards(void) {
+    sr_config cfg = sr_config_load("config/cards.yaml");
+    if (cfg.count == 0) {
+        fprintf(stderr, "[dlgd] Failed to load config/cards.yaml\n");
+        return;
+    }
+
+    int num_keys = (int)(sizeof(dlgd_card_keys) / sizeof(dlgd_card_keys[0]));
+    if (num_keys > DLGD_MAX_CARDS) num_keys = DLGD_MAX_CARDS;
+
+    for (int i = 0; i < num_keys; i++) {
+        char key[64];
+        snprintf(key, sizeof(key), "%s.effect", dlgd_card_keys[i]);
+        const char *v = sr_config_get(&cfg, key);
+        if (v) {
+            strncpy(g_dlgd.card_effect[i], v, DLGD_CARD_TEXT_LEN - 1);
+            g_dlgd.card_effect[i][DLGD_CARD_TEXT_LEN - 1] = '\0';
+            dlgd_unescape_newlines(g_dlgd.card_effect[i]);
+        }
+
+        snprintf(key, sizeof(key), "%s.description", dlgd_card_keys[i]);
+        v = sr_config_get(&cfg, key);
+        if (v) {
+            strncpy(g_dlgd.card_desc[i], v, DLGD_CARD_TEXT_LEN - 1);
+            g_dlgd.card_desc[i][DLGD_CARD_TEXT_LEN - 1] = '\0';
+            dlgd_unescape_newlines(g_dlgd.card_desc[i]);
+        }
+    }
+
+    /* Wire up the pointer arrays used by sr_combat.h */
+    for (int i = 0; i < num_keys; i++) {
+        if (g_dlgd.card_effect[i][0] != '\0')
+            card_yaml_effect[i] = g_dlgd.card_effect[i];
+        if (g_dlgd.card_desc[i][0] != '\0')
+            card_yaml_desc[i] = g_dlgd.card_desc[i];
+    }
+
+    g_dlgd.cards_loaded = true;
+    sr_config_free(&cfg);
+    printf("[dlgd] Loaded %d card text entries\n", num_keys);
 }
 
 #endif /* SR_DIALOG_DATA_H */

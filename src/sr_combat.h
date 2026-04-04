@@ -28,7 +28,7 @@ enum {
     CARD_LIGHTNING,  /* lightning: stun 1-2 turns, 2 dmg, cost 2 */
     /* Class-specific cards */
     CARD_SNIPER,     /* sniper: 5 dmg single, requires dist>=2, cost 1 */
-    CARD_SHOTGUN,    /* shotgun: 4 dmg single, requires dist<=1, cost 1 */
+    CARD_SHOTGUN,    /* shotgun: 1-3 dmg based on range, any distance, cost 1 */
     CARD_WELDER,     /* welder: 4 dmg melee, cost 1 */
     CARD_CHAINSAW,   /* chainsaw: 8 dmg melee, cost 2 */
     CARD_LASER,      /* laser: 4 dmg precision single, cost 1 */
@@ -922,17 +922,14 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
             int t = cs->target;
             while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
             if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
-            if (t >= 0 && cs->enemies[t].distance <= 1) {
-                int dmg = 4 + cs->fire_atk_bonus;
+            if (t >= 0) {
+                /* Damage based on distance: 3 at dist 0, 2 at dist 1, 1 at dist 2+ */
+                int dist = cs->enemies[t].distance;
+                int base_dmg = (dist <= 0) ? 3 : (dist <= 1) ? 2 : 1;
+                int dmg = base_dmg + cs->fire_atk_bonus;
                 combat_deal_damage_enemy(cs, t, dmg);
                 snprintf(buf, sizeof(buf), "SHOTGUN %s -%dHP!", enemy_templates[cs->enemies[t].type].name, dmg);
                 combat_set_message(cs, buf);
-            } else {
-                int d = (t >= 0) ? cs->enemies[t].distance : 0;
-                snprintf(buf, sizeof(buf), "TOO FAR! DIST: %d (NEED 1-)", d);
-                combat_set_message(cs, buf);
-                cs->energy += cost;
-                return;
             }
             break;
         }
@@ -1198,10 +1195,7 @@ static void combat_update(combat_state *cs) {
     if (cs->message_timer > 0) cs->message_timer--;
     if (cs->player_flash_timer > 0) cs->player_flash_timer--;
     if (cs->player_shield_flash_timer > 0) cs->player_shield_flash_timer--;
-    if (cs->info_popup_timer > 0) {
-        cs->info_popup_timer--;
-        if (cs->info_popup_timer == 0) cs->info_popup_enemy = -1;
-    }
+    /* info_popup_timer no longer auto-dismisses — closed by tap/key only */
     for (int i = 0; i < cs->enemy_count; i++)
         if (cs->enemies[i].flash_timer > 0) cs->enemies[i].flash_timer--;
 
@@ -1676,6 +1670,11 @@ static bool combat_handle_tap(combat_state *cs, float fx, float fy) {
 /* ── Keyboard input ──────────────────────────────────────────────── */
 
 static void combat_handle_key(combat_state *cs, int key) {
+    /* Close enemy info popup on any key */
+    if (cs->info_popup_enemy >= 0) {
+        cs->info_popup_enemy = -1;
+        return;
+    }
     /* Close pile viewer on Escape */
     if (cs->deck_view_open || cs->discard_view_open) {
         if (key == SAPP_KEYCODE_ESCAPE) {
@@ -1784,9 +1783,18 @@ static void combat_draw_bar(uint32_t *px, int W, int H,
     }
 }
 
+/* ── Card text from YAML (set by dlgd_load_cards after startup) ── */
+
+static const char *card_yaml_effect[24];  /* populated from cards.yaml */
+static const char *card_yaml_desc[24];    /* populated from cards.yaml */
+
 /* ── Card effect text (used by combat and deck viewer) ──────────── */
 
 static const char *card_effect_text(int card_type) {
+    /* Use YAML-loaded text if available */
+    if (card_type >= 0 && card_type < 24 && card_yaml_effect[card_type])
+        return card_yaml_effect[card_type];
+    /* Fallback */
     switch (card_type) {
         case CARD_SHIELD:      return "+3 SHIELD";
         case CARD_SHOOT:       return "3 DMG";
@@ -1804,7 +1812,7 @@ static const char *card_effect_text(int card_type) {
         case CARD_FIRE:        return "BURN 3T\nSPREADS";
         case CARD_LIGHTNING:   return "STUN 1-2T\n2 DMG";
         case CARD_SNIPER:      return "5 DMG\nDIST 2+";
-        case CARD_SHOTGUN:     return "4 DMG\nDIST 0-1";
+        case CARD_SHOTGUN:     return "1-3 DMG\nANY RANGE";
         case CARD_WELDER:      return "4 DMG\nMELEE";
         case CARD_CHAINSAW:    return "8 DMG\nMELEE";
         case CARD_LASER:       return "4 DMG\nPRECISION";
@@ -1817,6 +1825,10 @@ static const char *card_effect_text(int card_type) {
 }
 
 static const char *card_description_text(int card_type) {
+    /* Use YAML-loaded text if available */
+    if (card_type >= 0 && card_type < 24 && card_yaml_desc[card_type])
+        return card_yaml_desc[card_type];
+    /* Fallback */
     switch (card_type) {
         case CARD_SHIELD:      return "ADDS SHIELD POINTS\nTHAT ABSORB DAMAGE\nBEFORE HP.";
         case CARD_SHOOT:       return "BASIC RANGED ATTACK.\nWORKS AT ANY DISTANCE.";
@@ -1834,7 +1846,7 @@ static const char *card_description_text(int card_type) {
         case CARD_FIRE:        return "BURNING DAMAGE THAT\nSPREADS TO ADJACENT\nENEMIES.";
         case CARD_LIGHTNING:   return "CHANCE TO STUN FOR\n1-2 TURNS PLUS\nDIRECT DAMAGE.";
         case CARD_SNIPER:      return "HIGH DAMAGE BUT\nREQUIRES DISTANCE OF\n2 OR MORE.";
-        case CARD_SHOTGUN:     return "CLOSE RANGE BLAST.\nONLY WORKS WITHIN\nDISTANCE 0-1.";
+        case CARD_SHOTGUN:     return "SPREAD SHOT. MORE\nDAMAGE UP CLOSE.\n3 AT MELEE, 1 AT FAR.";
         case CARD_WELDER:      return "MELEE TOOL USED AS\nA WEAPON. MUST BE\nADJACENT.";
         case CARD_CHAINSAW:    return "DEVASTATING MELEE\nDAMAGE BUT COSTS\n2 ENERGY.";
         case CARD_LASER:       return "PRECISION ENERGY\nWEAPON. IGNORES\nSHIELD.";
@@ -1938,48 +1950,25 @@ static void combat_draw_pile_viewer(uint32_t *px, int W, int H,
     /* Title */
     char tbuf[32];
     snprintf(tbuf, sizeof(tbuf), "%s (%d)", title, pile_count);
-    sr_draw_text_shadow(px, W, H, W/2 - 40, 8, tbuf, 0xFF00DDDD, shadow);
+    sr_draw_text_shadow(px, W, H, 10, 4, tbuf, 0xFF00DDDD, shadow);
 
     if (pile_count == 0) {
         sr_draw_text_shadow(px, W, H, W/2 - 20, H/2, "EMPTY", 0xFF555555, shadow);
     } else {
-        /* Grid: 5 columns */
-        int cols = 5;
-        int cw = 80, ch = 28;
-        int pad = 4;
-        int gridW = cols * (cw + pad) - pad;
-        int startX = (W - gridW) / 2;
-        int startY = 24;
+        /* Card grid using full card rendering */
+        int cw = 50, ch = 66, pad = 6;
+        int cols = 7;
 
         for (int i = 0; i < pile_count; i++) {
             int col = i % cols;
             int row = i / cols;
-            int cx = startX + col * (cw + pad);
-            int cy = startY + row * (ch + pad);
-            if (cy > H - 40) break;  /* don't draw off screen */
+            int cx = 10 + col * (cw + pad);
+            int cy = 14 + row * (ch + pad);
+            if (cy + ch > H - 20) break;
 
-            int card_type = pile[i];
             bool sel = (i == combat.pile_view_selected);
-            uint32_t ccol = card_colors[card_type];
-            uint32_t bg = sel ? 0xFF222244 : 0xFF111122;
-
-            /* Background */
-            combat_draw_rect(px, W, H, cx, cy, cw, ch, bg);
-            /* Border */
-            combat_draw_rect_outline(px, W, H, cx, cy, cw, ch, sel ? 0xFF00DDDD : ccol);
-            /* Color stripe */
-            combat_draw_rect(px, W, H, cx + 1, cy + 1, cw - 2, 2, ccol);
-
-            /* Card name */
-            sr_draw_text_shadow(px, W, H, cx + 3, cy + 4, card_names[card_type],
-                                0xFFFFFFFF, shadow);
-            /* Effect */
-            const char *eff = card_effect_text(card_type);
-            sr_draw_text_shadow(px, W, H, cx + 3, cy + 14, eff, 0xFF888888, shadow);
-            /* Energy cost */
-            char ebuf[4];
-            snprintf(ebuf, sizeof(ebuf), "%d", card_energy_cost[card_type]);
-            sr_draw_text_shadow(px, W, H, cx + cw - 10, cy + 4, ebuf, 0xFF22CCEE, shadow);
+            combat_draw_card_content(px, W, H, cx, cy, cw, ch,
+                                     pile[i], sel, shadow, -1);
 
             /* Click detection */
             if (ui_mouse_clicked &&
@@ -1990,43 +1979,26 @@ static void combat_draw_pile_viewer(uint32_t *px, int W, int H,
         }
     }
 
-    /* Detail panel for selected card */
+    /* Detail overlay for selected card */
     if (combat.pile_view_selected >= 0 && combat.pile_view_selected < pile_count) {
         int card_type = pile[combat.pile_view_selected];
-        uint32_t ccol = card_colors[card_type];
 
-        int pw = 200, ph = 80;
-        int px2 = (W - pw) / 2;
-        int py = H - 20 - ph;
-
-        combat_draw_rect(px, W, H, px2, py, pw, ph, 0xFF0A0A18);
-        combat_draw_rect_outline(px, W, H, px2, py, pw, ph, ccol);
-        combat_draw_rect(px, W, H, px2 + 1, py + 1, pw - 2, 2, ccol);
-
-        sr_draw_text_shadow(px, W, H, px2 + 6, py + 5, card_names[card_type],
-                            0xFFFFFFFF, shadow);
-        char ebuf[8];
-        snprintf(ebuf, sizeof(ebuf), "%dE", card_energy_cost[card_type]);
-        sr_draw_text_shadow(px, W, H, px2 + pw - 20, py + 5, ebuf, 0xFF22CCEE, shadow);
-
-        const char *tgt = "";
-        int tt = card_targets[card_type];
-        if (tt == TARGET_SELF) tgt = "TARGET: SELF";
-        else if (tt == TARGET_ENEMY) tgt = "TARGET: 1 ENEMY";
-        else tgt = "TARGET: ALL";
-        sr_draw_text_shadow(px, W, H, px2 + 6, py + 15, tgt, 0xFF888888, shadow);
-
-        const char *effect = card_effect_text(card_type);
-        int ey = sr_draw_text_wrap(px, W, H, px2 + 6, py + 27, effect,
-                                   pw - 12, 8, ccol, shadow);
-
+        /* Centered large card */
+        int dw = 100, dh = 140;
+        int dx = (W - dw) / 2, dy = (H - dh) / 2 - 10;
+        for (int ry = dy - 4; ry < dy + dh + 24 && ry < H; ry++)
+            for (int rx = dx - 4; rx < dx + dw + 4 && rx < W; rx++)
+                if (rx >= 0 && ry >= 0)
+                    px[ry * W + rx] = 0xFF000000;
+        combat_draw_card_content(px, W, H, dx, dy, dw, dh,
+                                 card_type, true, shadow, -1);
         const char *desc = card_description_text(card_type);
-        sr_draw_text_wrap(px, W, H, px2 + 6, ey + 4, desc,
-                          pw - 12, 8, 0xFF666666, shadow);
+        sr_draw_text_wrap(px, W, H, dx, dy + dh + 4, desc,
+                          dw, 8, 0xFFAAAAAA, shadow);
     }
 
     /* Close button */
-    if (ui_button(px, W, H, W/2 - 30, H - 16, 60, 14, "CLOSE",
+    if (ui_button(px, W, H, W - 60, H - 18, 50, 14, "CLOSE",
                   0xFF111122, 0xFF222244, 0xFF333366)) {
         combat.deck_view_open = false;
         combat.discard_view_open = false;

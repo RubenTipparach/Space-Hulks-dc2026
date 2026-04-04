@@ -1,0 +1,5 @@
+# Game configuration for Space Hulks
+# Edit these values to tweak gameplay settings.
+
+debug:
+  enabled: 0
