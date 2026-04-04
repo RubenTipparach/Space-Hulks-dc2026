@@ -62,7 +62,7 @@ static int    screenshot_counter;
 /* ── App state ─────────────────────────────────────────────────── */
 
 enum { STATE_TITLE, STATE_CLASS_SELECT, STATE_INTRO, STATE_RUNNING, STATE_COMBAT,
-       STATE_SHIP_HUB, STATE_SHOP, STATE_DIALOG, STATE_STARMAP };
+       STATE_SHIP_HUB, STATE_SHOP, STATE_DIALOG, STATE_STARMAP, STATE_EPILOGUE };
 static int app_state = STATE_TITLE;
 static int selected_class = 0;  /* 0=scout, 1=marine */
 static int class_select_cursor = 0;
@@ -77,10 +77,20 @@ static bool mission_armory_done = false; /* visited Chen's armory */
 static bool mission_first_done = false;  /* completed first derelict mission */
 static int  captain_briefing_page = 0;   /* current page in multi-page briefing */
 
-/* Intro teletype state */
+/* Intro / epilogue teletype state */
 static int  intro_char_idx = 0;   /* total chars revealed so far */
 static int  intro_timer = 0;      /* frame counter for typing speed */
 static bool intro_done = false;   /* all text revealed */
+
+/* ── Boss / sample progression ─────────────────────────────────── */
+
+#define SAMPLES_REQUIRED 3
+#define STARMAPS_TOTAL   3
+static int  player_samples = 0;     /* samples collected (0-3) */
+static int  player_starmap = 0;     /* which star map we're on (0-2) */
+static bool current_map_boss_done = false;  /* boss beaten on current star map */
+static bool current_mission_is_boss = false; /* true if currently on a boss node mission */
+static bool epilogue_is_win = false; /* true = victory, false = game over */
 
 /* ── Player progression / currency ─────────────────────────────── */
 

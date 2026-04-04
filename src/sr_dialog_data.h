@@ -52,6 +52,15 @@ typedef struct {
     char objectives[DLGD_MAX_OBJECTIVES][DLGD_LINE_LEN];
     int  objective_count;
 
+    /* Epilogues */
+    char epilogue_loss[DLGD_MAX_INTRO_LINES][DLGD_LINE_LEN];
+    int  epilogue_loss_count;
+    char epilogue_win[DLGD_MAX_INTRO_LINES][DLGD_LINE_LEN];
+    int  epilogue_win_count;
+
+    /* Captain sample dialogs (between star maps) */
+    dlgd_block captain_sample[3]; /* after boss 1, 2, 3 */
+
     bool loaded;
 } dlgd_data;
 
@@ -145,10 +154,35 @@ static void dlgd_load(void) {
         }
     }
 
+    /* Epilogue: loss */
+    g_dlgd.epilogue_loss_count = (int)sr_config_float(&cfg, "epilogue_loss.count", 0);
+    if (g_dlgd.epilogue_loss_count > DLGD_MAX_INTRO_LINES) g_dlgd.epilogue_loss_count = DLGD_MAX_INTRO_LINES;
+    for (int i = 0; i < g_dlgd.epilogue_loss_count; i++) {
+        char key[64];
+        snprintf(key, sizeof(key), "epilogue_loss.line%d", i);
+        const char *v = sr_config_get(&cfg, key);
+        if (v) { strncpy(g_dlgd.epilogue_loss[i], v, DLGD_LINE_LEN - 1); g_dlgd.epilogue_loss[i][DLGD_LINE_LEN - 1] = '\0'; }
+    }
+
+    /* Epilogue: win */
+    g_dlgd.epilogue_win_count = (int)sr_config_float(&cfg, "epilogue_win.count", 0);
+    if (g_dlgd.epilogue_win_count > DLGD_MAX_INTRO_LINES) g_dlgd.epilogue_win_count = DLGD_MAX_INTRO_LINES;
+    for (int i = 0; i < g_dlgd.epilogue_win_count; i++) {
+        char key[64];
+        snprintf(key, sizeof(key), "epilogue_win.line%d", i);
+        const char *v = sr_config_get(&cfg, key);
+        if (v) { strncpy(g_dlgd.epilogue_win[i], v, DLGD_LINE_LEN - 1); g_dlgd.epilogue_win[i][DLGD_LINE_LEN - 1] = '\0'; }
+    }
+
+    /* Captain sample dialogs */
+    dlgd_load_block(&cfg, "captain_sample.sample1", &g_dlgd.captain_sample[0]);
+    dlgd_load_block(&cfg, "captain_sample.sample2", &g_dlgd.captain_sample[1]);
+    dlgd_load_block(&cfg, "captain_sample.sample3", &g_dlgd.captain_sample[2]);
+
     g_dlgd.loaded = true;
     sr_config_free(&cfg);
-    printf("[dlgd] Loaded dialog data: %d intro lines, %d briefing pages, %d objectives\n",
-           g_dlgd.intro_count, g_dlgd.captain_briefing_pages, g_dlgd.objective_count);
+    printf("[dlgd] Loaded dialog data: %d intro, %d loss, %d win lines\n",
+           g_dlgd.intro_count, g_dlgd.epilogue_loss_count, g_dlgd.epilogue_win_count);
 }
 
 #endif /* SR_DIALOG_DATA_H */

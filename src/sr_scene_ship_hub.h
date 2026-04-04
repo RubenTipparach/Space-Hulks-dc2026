@@ -90,6 +90,7 @@ typedef struct {
     int difficulty;
     int scrap_reward;
     bool visited;
+    bool is_boss;       /* true = boss node (rightmost) */
     int next[STARMAP_MAX_CHOICES]; /* indices of next nodes, -1 = none */
     int next_count;
     int x, y;           /* screen position for drawing */
@@ -526,6 +527,13 @@ static void hub_start_dialog(int npc_idx, int action) {
             if (g_dlgd.loaded)
                 dialog_from_block(&g_dlgd.captain_pre_mission);
             action = DIALOG_ACTION_NONE;
+        } else if (current_map_boss_done && !g_hub.mission_available) {
+            /* Just beat a boss — show sample dialog, then open star map for next run */
+            int si = player_samples - 1;
+            if (si < 0) si = 0; if (si > 2) si = 2;
+            if (g_dlgd.loaded)
+                dialog_from_block(&g_dlgd.captain_sample[si]);
+            action = DIALOG_ACTION_STARMAP;
         } else if (g_hub.mission_available) {
             /* Post-first-mission, under attack */
             if (g_dlgd.loaded)
@@ -1025,17 +1033,20 @@ static const char *sector_names[] = {
 };
 #define NUM_SECTOR_NAMES 16
 
+static const char *boss_names[] = { "HIVE VESSEL ALPHA", "HIVE VESSEL BETA", "HIVE VESSEL GAMMA" };
+
 static void starmap_generate(starmap_state *sm, int start_sector) {
     memset(sm, 0, sizeof(*sm));
 
-    /* Generate a branching path of 3 columns with 2-3 nodes each */
-    int col_count = 4; /* columns of nodes */
+    /* Generate branching path: 3 normal columns + 1 boss column */
+    int col_count = 5; /* 1 start + 3 normal + 1 boss */
     int node_idx = 0;
 
     /* Starting node (current position) */
     sm->nodes[0].difficulty = start_sector;
     sm->nodes[0].scrap_reward = 0;
     sm->nodes[0].visited = true;
+    sm->nodes[0].is_boss = false;
     sm->nodes[0].x = 40;
     sm->nodes[0].y = FB_HEIGHT / 2;
     snprintf(sm->nodes[0].name, 24, "SECTOR %s", sector_names[start_sector % NUM_SECTOR_NAMES]);
@@ -1044,7 +1055,8 @@ static void starmap_generate(starmap_state *sm, int start_sector) {
     int prev_start = 0, prev_count = 1;
 
     for (int col = 1; col < col_count; col++) {
-        int nodes_in_col = 2 + dng_rng_int(2); /* 2-3 nodes per column */
+        bool is_boss_col = (col == col_count - 1);
+        int nodes_in_col = is_boss_col ? 1 : (2 + dng_rng_int(2));
         if (nodes_in_col > 3) nodes_in_col = 3;
         int col_start = node_idx;
 
@@ -1052,13 +1064,23 @@ static void starmap_generate(starmap_state *sm, int start_sector) {
             starmap_node *nd = &sm->nodes[node_idx];
             int diff = start_sector + col;
             nd->difficulty = diff;
-            nd->scrap_reward = 20 + diff * 5 + dng_rng_int(10);
             nd->visited = false;
-            nd->x = 40 + col * (FB_WIDTH - 80) / (col_count - 1);
-            nd->y = 40 + n * (FB_HEIGHT - 80) / (nodes_in_col > 1 ? nodes_in_col - 1 : 1);
+            nd->is_boss = is_boss_col;
 
-            int name_idx = (start_sector + col * 3 + n) % NUM_SECTOR_NAMES;
-            snprintf(nd->name, 24, "SECTOR %s-%d", sector_names[name_idx], diff);
+            if (is_boss_col) {
+                nd->scrap_reward = 40 + diff * 10;
+                int bi = player_starmap;
+                if (bi < 0) bi = 0; if (bi > 2) bi = 2;
+                snprintf(nd->name, 24, "%s", boss_names[bi]);
+            } else {
+                nd->scrap_reward = 20 + diff * 5 + dng_rng_int(10);
+                int name_idx = (start_sector + col * 3 + n) % NUM_SECTOR_NAMES;
+                snprintf(nd->name, 24, "SECTOR %s-%d", sector_names[name_idx], diff);
+            }
+
+            nd->x = 40 + col * (FB_WIDTH - 80) / (col_count - 1);
+            nd->y = is_boss_col ? FB_HEIGHT / 2
+                : 40 + n * (FB_HEIGHT - 80) / (nodes_in_col > 1 ? nodes_in_col - 1 : 1);
 
             nd->next_count = 0;
             for (int i = 0; i < STARMAP_MAX_CHOICES; i++) nd->next[i] = -1;
@@ -1068,21 +1090,25 @@ static void starmap_generate(starmap_state *sm, int start_sector) {
 
         /* Connect previous column to this column */
         for (int p = prev_start; p < prev_start + prev_count; p++) {
-            /* Each prev node connects to 1-2 nodes in this column */
-            int conns = 1 + dng_rng_int(2);
-            if (conns > nodes_in_col) conns = nodes_in_col;
-            for (int c = 0; c < conns; c++) {
-                int target = col_start + dng_rng_int(nodes_in_col);
-                /* Avoid duplicate connections */
-                bool dup = false;
-                for (int e = 0; e < sm->nodes[p].next_count; e++)
-                    if (sm->nodes[p].next[e] == target) { dup = true; break; }
-                if (!dup && sm->nodes[p].next_count < STARMAP_MAX_CHOICES)
-                    sm->nodes[p].next[sm->nodes[p].next_count++] = target;
+            if (is_boss_col) {
+                /* All prev nodes connect to the single boss node */
+                if (sm->nodes[p].next_count < STARMAP_MAX_CHOICES)
+                    sm->nodes[p].next[sm->nodes[p].next_count++] = col_start;
+            } else {
+                int conns = 1 + dng_rng_int(2);
+                if (conns > nodes_in_col) conns = nodes_in_col;
+                for (int c = 0; c < conns; c++) {
+                    int target = col_start + dng_rng_int(nodes_in_col);
+                    bool dup = false;
+                    for (int e = 0; e < sm->nodes[p].next_count; e++)
+                        if (sm->nodes[p].next[e] == target) { dup = true; break; }
+                    if (!dup && sm->nodes[p].next_count < STARMAP_MAX_CHOICES)
+                        sm->nodes[p].next[sm->nodes[p].next_count++] = target;
+                }
             }
         }
 
-        /* Ensure every node in this column is reachable from at least one prev */
+        /* Ensure every node in this column is reachable */
         for (int n = 0; n < nodes_in_col; n++) {
             int target = col_start + n;
             bool reachable = false;
@@ -1124,6 +1150,14 @@ static void draw_starmap(uint32_t *px, int W, int H) {
 
     sr_draw_text_shadow(px, W, H, W/2 - 25, 4, "STAR MAP", 0xFFCCCCFF, shadow);
 
+    /* Samples counter on star map */
+    {
+        char samp_buf[32];
+        snprintf(samp_buf, sizeof(samp_buf), "SAMPLES %d/%d", player_samples, SAMPLES_REQUIRED);
+        uint32_t samp_col = (player_samples >= SAMPLES_REQUIRED) ? 0xFF44CC44 : 0xFFCC8822;
+        sr_draw_text_shadow(px, W, H, W - 84, 4, samp_buf, samp_col, shadow);
+    }
+
     /* Draw connections first */
     for (int i = 0; i < g_starmap.node_count; i++) {
         starmap_node *nd = &g_starmap.nodes[i];
@@ -1160,6 +1194,7 @@ static void draw_starmap(uint32_t *px, int W, int H) {
         uint32_t col;
         if (i == g_starmap.current_node) col = 0xFF22CC22;
         else if (nd->visited) col = 0xFF555555;
+        else if (nd->is_boss) col = 0xFF4444FF; /* red/orange for boss */
         else col = 0xFFCCCCFF;
 
         bool selectable = false;
@@ -1186,9 +1221,11 @@ static void draw_starmap(uint32_t *px, int W, int H) {
                 }
         }
 
-        for (int dy = -2; dy <= 2; dy++)
-            for (int dx = -2; dx <= 2; dx++) {
-                if (dx*dx + dy*dy > 5) continue;
+        int node_r = nd->is_boss ? 4 : 2;
+        int node_r2 = node_r * node_r + node_r;
+        for (int dy = -node_r; dy <= node_r; dy++)
+            for (int dx = -node_r; dx <= node_r; dx++) {
+                if (dx*dx + dy*dy > node_r2) continue;
                 int rx = nd->x + dx, ry = nd->y + dy;
                 if (rx >= 0 && rx < W && ry >= 0 && ry < H)
                     px[ry * W + rx] = is_hovered ? 0xFF00FFFF : col;
@@ -1196,13 +1233,17 @@ static void draw_starmap(uint32_t *px, int W, int H) {
 
         /* Label */
         if (i == g_starmap.current_node || selectable) {
-            sr_draw_text_shadow(px, W, H, nd->x - 20, nd->y + 6,
+            int label_y = nd->is_boss ? nd->y + 8 : nd->y + 6;
+            sr_draw_text_shadow(px, W, H, nd->x - 20, label_y,
                                 nd->name, col, shadow);
             if (selectable && nd->scrap_reward > 0) {
                 char rbuf[24];
-                snprintf(rbuf, sizeof(rbuf), "D%d  ~%d SCRAP", nd->difficulty, nd->scrap_reward);
-                sr_draw_text_shadow(px, W, H, nd->x - 20, nd->y + 16,
-                                    rbuf, 0xFF888888, shadow);
+                if (nd->is_boss)
+                    snprintf(rbuf, sizeof(rbuf), "BOSS  ~%d SCRAP", nd->scrap_reward);
+                else
+                    snprintf(rbuf, sizeof(rbuf), "D%d  ~%d SCRAP", nd->difficulty, nd->scrap_reward);
+                sr_draw_text_shadow(px, W, H, nd->x - 20, label_y + 10,
+                                    rbuf, nd->is_boss ? 0xFFCC8844 : 0xFF888888, shadow);
             }
         }
     }
@@ -1238,6 +1279,7 @@ static void draw_starmap(uint32_t *px, int W, int H) {
                 tgt->visited = true;
                 g_starmap.current_node = ct;
                 player_sector = tgt->difficulty;
+                current_mission_is_boss = tgt->is_boss;
                 g_starmap.active = false;
                 g_starmap.confirm_active = false;
                 hub_generate(&g_hub);
@@ -1286,6 +1328,7 @@ static void starmap_handle_key(int key_code) {
                 g_starmap.nodes[ct].visited = true;
                 g_starmap.current_node = ct;
                 player_sector = g_starmap.nodes[ct].difficulty;
+                current_mission_is_boss = g_starmap.nodes[ct].is_boss;
                 g_starmap.active = false;
                 g_starmap.confirm_active = false;
                 hub_generate(&g_hub);
@@ -1551,10 +1594,17 @@ static void hub_draw_hud(uint32_t *px, int W, int H) {
     snprintf(scrap_buf, sizeof(scrap_buf), "SCRAP %d", player_scrap);
     sr_draw_text_shadow(px, W, H, 4, 24, scrap_buf, 0xFF00DDDD, shadow);
 
-    /* Sector */
+    /* Sector + Samples */
     char sec_buf[32];
     snprintf(sec_buf, sizeof(sec_buf), "SECTOR %d", player_sector + 1);
     sr_draw_text_shadow(px, W, H, W - 60, 4, sec_buf, 0xFF888888, shadow);
+
+    if (mission_first_done) {
+        char samp_buf[32];
+        snprintf(samp_buf, sizeof(samp_buf), "SAMPLES %d/%d", player_samples, SAMPLES_REQUIRED);
+        uint32_t samp_col = (player_samples >= SAMPLES_REQUIRED) ? 0xFF44CC44 : 0xFFCC8822;
+        sr_draw_text_shadow(px, W, H, W - 78, 14, samp_buf, samp_col, shadow);
+    }
 
     /* Mission objectives (only during initial prep flow) */
     if (mission_briefed && !mission_first_done && g_dlgd.loaded) {
@@ -1575,7 +1625,8 @@ static void hub_draw_hud(uint32_t *px, int W, int H) {
     /* Deck button (clickable) */
     char deck_buf[32];
     snprintf(deck_buf, sizeof(deck_buf), "DECK %d", g_player.persistent_deck_count);
-    if (ui_button(px, W, H, W - 70, 14, 66, 12, deck_buf,
+    int deck_btn_y = mission_first_done ? 26 : 14;
+    if (ui_button(px, W, H, W - 70, deck_btn_y, 66, 12, deck_buf,
                   0xFF1A1A2A, 0xFF222244, 0xFF333366)) {
         deck_view_active = true;
         deck_view_selected = -1;

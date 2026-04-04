@@ -464,6 +464,86 @@ static void draw_intro_screen(sr_framebuffer *fb_ptr) {
     }
 }
 
+/* ── Epilogue teletype screen ───────────────────────────────────── */
+
+static void draw_epilogue_screen(sr_framebuffer *fb_ptr) {
+    int W = fb_ptr->width, H = fb_ptr->height;
+    uint32_t *px = fb_ptr->color;
+    uint32_t shadow = 0xFF000000;
+    uint32_t text_col = epilogue_is_win ? 0xFF44CC44 : 0xFF4444CC;
+    uint32_t dim_col  = epilogue_is_win ? 0xFF227722 : 0xFF222266;
+
+    for (int i = 0; i < W * H; i++) px[i] = 0xFF0A0A0A;
+
+    if (!g_dlgd.loaded) return;
+
+    const char (*lines)[DLGD_LINE_LEN] = epilogue_is_win
+        ? g_dlgd.epilogue_win : g_dlgd.epilogue_loss;
+    int line_count = epilogue_is_win
+        ? g_dlgd.epilogue_win_count : g_dlgd.epilogue_loss_count;
+
+    /* Advance teletype */
+    intro_timer++;
+    if (!intro_done) {
+        intro_char_idx = intro_timer * 2;
+        int total = 0;
+        for (int i = 0; i < line_count; i++)
+            total += (int)strlen(lines[i]) + 1;
+        if (intro_char_idx >= total) {
+            intro_char_idx = total;
+            intro_done = true;
+        }
+    }
+
+    /* Draw text */
+    int chars_left = intro_char_idx;
+    int y = 20;
+    for (int i = 0; i < line_count && chars_left > 0; i++) {
+        const char *line = lines[i];
+        int llen = (int)strlen(line);
+
+        if (line[0] == '_' && llen == 1) {
+            y += 10;
+            chars_left -= 2;
+            continue;
+        }
+
+        char partial[DLGD_LINE_LEN];
+        int show = (chars_left >= llen) ? llen : chars_left;
+        memcpy(partial, line, show);
+        partial[show] = '\0';
+
+        sr_draw_text_shadow(px, W, H, 30, y, partial, text_col, shadow);
+        chars_left -= llen + 1;
+        y += 10;
+    }
+
+    /* Blinking cursor */
+    if (!intro_done && (intro_timer / 15) % 2 == 0) {
+        int cx = 30, cy = 20;
+        int remain = intro_char_idx;
+        for (int i = 0; i < line_count && remain > 0; i++) {
+            const char *line = lines[i];
+            int llen = (int)strlen(line);
+            if (line[0] == '_' && llen == 1) { cy += 10; remain -= 2; continue; }
+            int show = (remain >= llen) ? llen : remain;
+            cx = 30 + show * 6;
+            remain -= llen + 1;
+            if (remain >= 0) { cy += 10; cx = 30; }
+        }
+        sr_draw_text_shadow(px, W, H, cx, cy, "_", text_col, shadow);
+    }
+
+    if (intro_done) {
+        uint32_t blink = ((intro_timer / 30) % 2 == 0) ? text_col : dim_col;
+        sr_draw_text_shadow(px, W, H, W/2 - 60, H - 20,
+                            "PRESS SPACE TO CONTINUE", blink, shadow);
+    } else {
+        sr_draw_text_shadow(px, W, H, W - 90, H - 12,
+                            "SPACE TO SKIP", dim_col, shadow);
+    }
+}
+
 /* ── Ship-mode game initialization ──────────────────────────────── */
 
 static int last_player_gx = -1, last_player_gy = -1;
@@ -590,6 +670,43 @@ static void game_init_ship(void) {
     }
 }
 
+/* ── Mission completion with boss/sample tracking ──────────────── */
+
+static void mission_complete_return_to_hub(int reward, const char *msg) {
+    player_scrap += reward;
+    hub_generate(&g_hub);
+    g_hub.mission_available = false;
+    current_combat_room = -1;
+
+    /* Boss sample collection */
+    if (current_mission_is_boss) {
+        player_samples++;
+        current_mission_is_boss = false;
+        current_map_boss_done = true;
+
+        if (player_samples >= SAMPLES_REQUIRED) {
+            /* Victory! Show win epilogue */
+            epilogue_is_win = true;
+            intro_char_idx = 0;
+            intro_timer = 0;
+            intro_done = false;
+            app_state = STATE_EPILOGUE;
+            return;
+        }
+        /* Show sample collected message */
+        snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg),
+                 "SAMPLE %d/%d SECURED! +%d SCRAP",
+                 player_samples, SAMPLES_REQUIRED, reward);
+        g_hub.hud_msg_timer = 150;
+    } else {
+        char hud_buf[64];
+        snprintf(hud_buf, sizeof(hud_buf), "%s +%d SCRAP", msg, reward);
+        snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "%s", hud_buf);
+        g_hub.hud_msg_timer = 120;
+    }
+    app_state = STATE_SHIP_HUB;
+}
+
 /* ── Handle combat end (shared by tap and keyboard) ────────────── */
 
 static void handle_combat_end(void) {
@@ -617,50 +734,31 @@ static void handle_combat_end(void) {
         console_combat = false;
 
         if (!combat.player_won) {
-            /* Player died — emergency teleport back to hub */
-            g_player.hp = g_player.hp_max / 4;
-            if (g_player.hp < 1) g_player.hp = 1;
+            /* Player died — game over, show loss epilogue */
             current_ship.boarding_active = false;
-            hub_generate(&g_hub);
-            app_state = STATE_SHIP_HUB;
-            snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "EMERGENCY EXTRACTION!");
-            g_hub.hud_msg_timer = 120;
-            g_hub.mission_available = false;
-            current_combat_room = -1;
+            epilogue_is_win = false;
+            intro_char_idx = 0;
+            intro_timer = 0;
+            intro_done = false;
+            app_state = STATE_EPILOGUE;
             return;
         }
 
         if (current_ship.player_ship_destroyed) {
-            g_player.hp = g_player.hp_max / 4;
-            if (g_player.hp < 1) g_player.hp = 1;
+            /* Player's ship destroyed — game over */
             current_ship.boarding_active = false;
-            hub_generate(&g_hub);
-            app_state = STATE_SHIP_HUB;
-            snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "SHIP DAMAGED! EMERGENCY JUMP!");
-            g_hub.hud_msg_timer = 120;
-            g_hub.mission_available = false;
-            current_combat_room = -1;
+            epilogue_is_win = false;
+            intro_char_idx = 0;
+            intro_timer = 0;
+            intro_done = false;
+            app_state = STATE_EPILOGUE;
             return;
         }
 
         if (current_ship.enemy_ship_destroyed) {
-            dng_state.current_floor = 0;
-            dng_state.dungeon = &dng_state.floors[0];
-            dng_player_init(&dng_state.player,
-                            dng_state.dungeon->spawn_gx,
-                            dng_state.dungeon->spawn_gy, 0);
-            last_player_gx = dng_state.player.gx;
-            last_player_gy = dng_state.player.gy;
             current_ship.boarding_active = false;
-            /* Mission complete — reward scrap and return to hub */
             int reward = 20 + player_sector * 10;
-            player_scrap += reward;
-            hub_generate(&g_hub);
-            app_state = STATE_SHIP_HUB;
-            snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "MISSION COMPLETE! +%d SCRAP", reward);
-            g_hub.hud_msg_timer = 120;
-            g_hub.mission_available = false;
-            current_combat_room = -1;
+            mission_complete_return_to_hub(reward, "MISSION COMPLETE!");
             return;
         }
 
@@ -677,13 +775,7 @@ static void handle_combat_end(void) {
             if (!any_alive) {
                 current_ship.boarding_active = false;
                 int reward = 25 + player_sector * 10;
-                player_scrap += reward;
-                hub_generate(&g_hub);
-                app_state = STATE_SHIP_HUB;
-                snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "ALL HOSTILES ELIMINATED! +%d SCRAP", reward);
-                g_hub.hud_msg_timer = 120;
-                g_hub.mission_available = false;
-                current_combat_room = -1;
+                mission_complete_return_to_hub(reward, "ALL HOSTILES ELIMINATED!");
                 return;
             }
         }
@@ -694,13 +786,7 @@ static void handle_combat_end(void) {
             int reward = 30 + player_sector * 10;
             for (int b = 0; b < current_ship.bonus_count; b++)
                 if (current_ship.bonus_missions[b].completed) reward += 15;
-            player_scrap += reward;
-            hub_generate(&g_hub);
-            app_state = STATE_SHIP_HUB;
-            snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "MISSION COMPLETE! +%d SCRAP", reward);
-            g_hub.hud_msg_timer = 120;
-            g_hub.mission_available = false;
-            current_combat_room = -1;
+            mission_complete_return_to_hub(reward, "MISSION COMPLETE!");
             return;
         }
 
@@ -1225,6 +1311,8 @@ static void frame(void) {
         draw_title_screen(&fb);
     } else if (app_state == STATE_INTRO) {
         draw_intro_screen(&fb);
+    } else if (app_state == STATE_EPILOGUE) {
+        draw_epilogue_screen(&fb);
     } else if (app_state == STATE_CLASS_SELECT) {
         draw_class_select(&fb);
     } else if (app_state == STATE_COMBAT) {
@@ -1585,6 +1673,10 @@ static void handle_screen_tap(float sx, float sy) {
                     mission_armory_done = false;
                     mission_first_done = false;
                     captain_briefing_page = 0;
+                    player_samples = 0;
+                    player_starmap = 0;
+                    current_map_boss_done = false;
+                    current_mission_is_boss = false;
                     /* Start intro teletype */
                     intro_char_idx = 0;
                     intro_timer = 0;
@@ -1604,6 +1696,17 @@ static void handle_screen_tap(float sx, float sy) {
         if (intro_done) {
             hub_generate(&g_hub);
             app_state = STATE_SHIP_HUB;
+        } else {
+            intro_done = true;
+            intro_char_idx = 9999;
+        }
+        return;
+    }
+
+    if (app_state == STATE_EPILOGUE) {
+        if (intro_done) {
+            app_state = STATE_TITLE;
+            save_exists = game_has_save();
         } else {
             intro_done = true;
             intro_char_idx = 9999;
@@ -1673,11 +1776,14 @@ static void handle_screen_tap(float sx, float sy) {
                     }
                     case DIALOG_ACTION_STARMAP:
                         if (!mission_first_done) {
-                            /* Star map locked before first mission */
                             snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "INVESTIGATE THE DERELICT FIRST");
                             g_hub.hud_msg_timer = 90;
                         } else {
-                            dng_rng_seed((uint32_t)(player_sector * 1337 + 42));
+                            if (current_map_boss_done) {
+                                player_starmap++;
+                                current_map_boss_done = false;
+                            }
+                            dng_rng_seed((uint32_t)(player_sector * 1337 + 42 + player_starmap * 9999));
                             starmap_generate(&g_starmap, player_sector);
                             app_state = STATE_STARMAP;
                         }
@@ -1931,6 +2037,10 @@ static void event(const sapp_event *ev) {
                 mission_armory_done = false;
                 mission_first_done = false;
                 captain_briefing_page = 0;
+                player_samples = 0;
+                player_starmap = 0;
+                current_map_boss_done = false;
+                current_mission_is_boss = false;
                 intro_char_idx = 0;
                 intro_timer = 0;
                 intro_done = false;
@@ -1947,6 +2057,20 @@ static void event(const sapp_event *ev) {
             if (intro_done) {
                 hub_generate(&g_hub);
                 app_state = STATE_SHIP_HUB;
+            } else {
+                intro_done = true;
+                intro_char_idx = 9999;
+            }
+        }
+        return;
+    }
+
+    /* ── Epilogue teletype ──────────────────────────────────── */
+    if (app_state == STATE_EPILOGUE) {
+        if (ev->key_code == SAPP_KEYCODE_SPACE || ev->key_code == SAPP_KEYCODE_ENTER) {
+            if (intro_done) {
+                app_state = STATE_TITLE;
+                save_exists = game_has_save();
             } else {
                 intro_done = true;
                 intro_char_idx = 9999;
@@ -2039,7 +2163,11 @@ static void event(const sapp_event *ev) {
                                 snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "INVESTIGATE THE DERELICT FIRST");
                                 g_hub.hud_msg_timer = 90;
                             } else {
-                                dng_rng_seed((uint32_t)(player_sector * 1337 + 42));
+                                if (current_map_boss_done) {
+                                    player_starmap++;
+                                    current_map_boss_done = false;
+                                }
+                                dng_rng_seed((uint32_t)(player_sector * 1337 + 42 + player_starmap * 9999));
                                 starmap_generate(&g_starmap, player_sector);
                                 app_state = STATE_STARMAP;
                             }
