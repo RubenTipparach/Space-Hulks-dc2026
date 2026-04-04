@@ -387,6 +387,12 @@ public class MainForm : Form
         fileMenu.DropDownItems.Add("Open...", null, (_, _) => OpenLevel());
         fileMenu.DropDownItems.Add("Save...", null, (_, _) => SaveLevel());
         fileMenu.DropDownItems.Add(new ToolStripSeparator());
+        fileMenu.DropDownItems.Add("Open Hub Ship", null, (_, _) => QuickLoad("hub.json"));
+        fileMenu.DropDownItems.Add("Open Enemy Ship", null, (_, _) => QuickLoad("sample_enemy_ship.json"));
+        fileMenu.DropDownItems.Add(new ToolStripSeparator());
+        fileMenu.DropDownItems.Add("Export Hub Ship", null, (_, _) => QuickSave("hub.json"));
+        fileMenu.DropDownItems.Add("Export Enemy Ship", null, (_, _) => QuickSave("sample_enemy_ship.json"));
+        fileMenu.DropDownItems.Add(new ToolStripSeparator());
         fileMenu.DropDownItems.Add("Exit", null, (_, _) => Close());
         menu.Items.Add(fileMenu);
 
@@ -742,6 +748,72 @@ public class MainForm : Form
         _currentFloor = 0;
         SyncControlsFromLevel();
         RefreshFloorList();
+    }
+
+    private string? FindLevelsDir()
+    {
+        // Walk up from exe dir to find levels/ folder
+        var dir = AppDomain.CurrentDomain.BaseDirectory;
+        for (int i = 0; i < 8; i++)
+        {
+            var candidate = Path.Combine(dir, "levels");
+            if (Directory.Exists(candidate)) return candidate;
+            var parent = Directory.GetParent(dir);
+            if (parent == null) break;
+            dir = parent.FullName;
+        }
+        return null;
+    }
+
+    private void QuickLoad(string filename)
+    {
+        var levelsDir = FindLevelsDir();
+        if (levelsDir == null)
+        {
+            MessageBox.Show("Could not find levels/ directory. Use Open... instead.", "Error");
+            return;
+        }
+        var path = Path.Combine(levelsDir, filename);
+        if (!File.Exists(path))
+        {
+            MessageBox.Show($"File not found: {path}", "Error");
+            return;
+        }
+        try
+        {
+            Console.WriteLine($"[QuickLoad] Loading {path}...");
+            _level = LevelSerializer.Load(path);
+            Console.WriteLine($"[QuickLoad] Success: {_level.ShipName}, {_level.Floors.Count} floors");
+            _currentFloor = 0;
+            SyncControlsFromLevel();
+            RefreshFloorList();
+            _statusLabel.Text = $"Loaded {path}";
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[QuickLoad] ERROR: {ex}");
+            MessageBox.Show($"Error loading {filename}:\n\n{ex.Message}\n\n{ex.StackTrace}", "Load Error");
+        }
+    }
+
+    private void QuickSave(string filename)
+    {
+        var levelsDir = FindLevelsDir();
+        if (levelsDir == null)
+        {
+            MessageBox.Show("Could not find levels/ directory. Use Save... instead.", "Error");
+            return;
+        }
+        var path = Path.Combine(levelsDir, filename);
+        try
+        {
+            LevelSerializer.Save(_level, path);
+            _statusLabel.Text = $"Exported to {path}";
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Error saving: {ex.Message}", "Error");
+        }
     }
 
     private void OpenLevel()

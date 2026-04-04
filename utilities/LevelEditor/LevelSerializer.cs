@@ -8,6 +8,8 @@ public static class LevelSerializer
     private static readonly JsonSerializerOptions Options = new()
     {
         WriteIndented = true,
+        PropertyNameCaseInsensitive = true,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         Converters = { new JsonStringEnumConverter() },
     };
 
@@ -88,8 +90,10 @@ public static class LevelSerializer
 
     public static LevelData Deserialize(string json)
     {
+        Console.WriteLine($"[LevelSerializer] Parsing JSON ({json.Length} chars)...");
         var dto = JsonSerializer.Deserialize<LevelDto>(json, Options)
                   ?? throw new Exception("Invalid JSON");
+        Console.WriteLine($"[LevelSerializer] Ship: \"{dto.ShipName}\" Type={dto.ShipType} Hub={dto.IsHub} Floors={dto.Floors.Count}");
         var level = new LevelData
         {
             ShipName = dto.ShipName,
@@ -114,6 +118,10 @@ public static class LevelSerializer
                 Consoles = fd.Consoles, Loot = fd.Loot,
                 Officers = fd.Officers, Npcs = fd.Npcs,
             };
+            Console.WriteLine($"[LevelSerializer]   Floor {level.Floors.Count}: {fd.Width}x{fd.Height} " +
+                              $"spawn=({fd.SpawnGX},{fd.SpawnGY}) rooms={fd.Rooms.Count} " +
+                              $"enemies={fd.Enemies.Count} npcs={fd.Npcs.Count} " +
+                              $"map rows={fd.Map.Length}");
             for (int y = 0; y < fd.Height && y < fd.Map.Length; y++)
                 for (int x = 0; x < fd.Width && x < fd.Map[y].Length; x++)
                     f.Map[y + 1, x + 1] = fd.Map[y][x];

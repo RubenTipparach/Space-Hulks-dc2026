@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace SpaceHulksLevelEditor;
 
 public enum RoomType
@@ -33,8 +35,8 @@ public enum WallDir { North, South, East, West }
 
 public class WindowFace
 {
-    public int GX { get; set; }
-    public int GY { get; set; }
+    [JsonPropertyName("gX")] public int GX { get; set; }
+    [JsonPropertyName("gY")] public int GY { get; set; }
     public WallDir Dir { get; set; }
 }
 
@@ -82,29 +84,29 @@ public class RoomData
 
 public class EntityData
 {
-    public int GX { get; set; }
-    public int GY { get; set; }
+    [JsonPropertyName("gX")] public int GX { get; set; }
+    [JsonPropertyName("gY")] public int GY { get; set; }
     public EnemyType EnemyType { get; set; }
     public string Name { get; set; } = "";
 }
 
 public class ConsoleData
 {
-    public int GX { get; set; }
-    public int GY { get; set; }
+    [JsonPropertyName("gX")] public int GX { get; set; }
+    [JsonPropertyName("gY")] public int GY { get; set; }
     public RoomType RoomType { get; set; }
 }
 
 public class LootData
 {
-    public int GX { get; set; }
-    public int GY { get; set; }
+    [JsonPropertyName("gX")] public int GX { get; set; }
+    [JsonPropertyName("gY")] public int GY { get; set; }
 }
 
 public class OfficerData
 {
-    public int GX { get; set; }
-    public int GY { get; set; }
+    [JsonPropertyName("gX")] public int GX { get; set; }
+    [JsonPropertyName("gY")] public int GY { get; set; }
     public string Name { get; set; } = "OFFICER";
     public OfficerRank Rank { get; set; } = OfficerRank.Ensign;
     public int RoomIdx { get; set; } = -1;
@@ -113,8 +115,8 @@ public class OfficerData
 
 public class NpcData
 {
-    public int GX { get; set; }
-    public int GY { get; set; }
+    [JsonPropertyName("gX")] public int GX { get; set; }
+    [JsonPropertyName("gY")] public int GY { get; set; }
     public string Name { get; set; } = "NPC";
     public int DialogId { get; set; }
 }
