@@ -15,6 +15,8 @@ public class Preview3DPanel : Panel
     public bool ShowWireframe { get; set; } = true;
     public bool ShowGhostFloors { get; set; }
     public bool ShowRoof { get; set; }
+    public bool _roofDebug;
+    private List<string> _roofDebugLines = new();
     public EditorState State { get; set; } = new();
     public int CurrentFloorIndex { get; set; }
     private const float FloorSpacing = WallH;
@@ -103,7 +105,7 @@ public class Preview3DPanel : Panel
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"GLControl failed: {ex.Message}");
+            Console.WriteLine($"GLControl failed: {ex.Message}");
         }
     }
 
@@ -197,7 +199,7 @@ void main(){
         TextureCache.EnsureLoaded();
         if (TextureCache.WallA == null) return; // not ready yet
         _glTexLoaded = true;
-        System.Diagnostics.Debug.WriteLine($"[TEX] WallA={TextureCache.WallA?.Width}x{TextureCache.WallA?.Height} " +
+        Console.WriteLine($"[TEX] WallA={TextureCache.WallA?.Width}x{TextureCache.WallA?.Height} " +
             $"ExtWall={TextureCache.ExteriorWall?.Width}x{TextureCache.ExteriorWall?.Height}");
         _glTex["wall_a"] = UploadTex(TextureCache.WallA);
         _glTex["wall_a_win"] = UploadTex(TextureCache.WallAWindow);
@@ -656,14 +658,17 @@ void main(){
                             else if (hccSW) { cpts.Add((x0 + hcc, z1)); cpts.Add((x0, z1 - hcc)); }
                             else            cpts.Add((hx0, hz1));
 
-                            float cmx = (x0 + x1) * 0.5f, cmz = (z0 + z1) * 0.5f;
+                            float cmx = 0, cmz = 0;
+                            for (int ci = 0; ci < cpts.Count; ci++) { cmx += cpts[ci].x; cmz += cpts[ci].z; }
+                            cmx /= cpts.Count; cmz /= cpts.Count;
                             float cinvW = 1f / (x1 - x0), cinvH = 1f / (z1 - z0);
+                            float cmu = (cmx - x0) * cinvW, cmv = (cmz - z0) * cinvH;
                             for (int ci = 0; ci < cpts.Count; ci++)
                             {
                                 var ca = cpts[ci];
                                 var cb = cpts[(ci + 1) % cpts.Count];
                                 Tri(corrCeilTex,
-                                    cmx, yt, cmz, 0.5f, 0.5f,
+                                    cmx, yt, cmz, cmu, cmv,
                                     ca.x, yt, ca.z, (ca.x - x0) * cinvW, (ca.z - z0) * cinvH,
                                     cb.x, yt, cb.z, (cb.x - x0) * cinvW, (cb.z - z0) * cinvH,
                                     cc);
@@ -835,6 +840,7 @@ void main(){
             Color rc = Darken(ec, 0.85f);
             float roofY = _yOff + ExtH;
             float bottomY = _yOff;
+            int _cornerNum = 0;
 
             for (int gy = 1; gy <= h; gy++)
             {
@@ -879,6 +885,36 @@ void main(){
                     bool ccSE = cc > 0 && !oS && !oE && !_hullInside[gy + 1, gx + 1];
                     bool ccSW = cc > 0 && !oS && !oW && !_hullInside[gy + 1, gx - 1];
 
+                    // Debug: print corner geometry
+                    bool hasConvex = cNW || cNE || cSW || cSE;
+                    bool hasConcave = ccNW || ccNE || ccSE || ccSW;
+                    if (_roofDebug && (hasConvex || hasConcave))
+                    {
+                        _cornerNum++;
+                        Console.WriteLine($"=== CORNER #{_cornerNum} === cell({gx},{gy}) oN={oN} oS={oS} oW={oW} oE={oE} c={c:F2} f={f:F2}");
+                        Console.WriteLine($"  cell bounds: x0={x0:F2} x1={x1:F2} z0={z0:F2} z1={z1:F2}");
+                        Console.WriteLine($"  inset bounds: rx0={rx0:F2} rx1={rx1:F2} rz0={rz0:F2} rz1={rz1:F2}");
+                        if (cNW) Console.WriteLine($"  CONVEX NW: ({rx0:F2},{rz0 + c:F2}) ({rx0 + c:F2},{rz0:F2})");
+                        if (cNE) Console.WriteLine($"  CONVEX NE: ({rx1 - c:F2},{rz0:F2}) ({rx1:F2},{rz0 + c:F2})");
+                        if (cSE) Console.WriteLine($"  CONVEX SE: ({rx1:F2},{rz1 - c:F2}) ({rx1 - c:F2},{rz1:F2})");
+                        if (cSW) Console.WriteLine($"  CONVEX SW: ({rx0 + c:F2},{rz1:F2}) ({rx0:F2},{rz1 - c:F2})");
+                        if (ccNW) Console.WriteLine($"  CONCAVE NW: ({x0:F2},{z0 + cc:F2}) ({x0 + cc:F2},{z0:F2})");
+                        if (ccNE) Console.WriteLine($"  CONCAVE NE: ({x1 - cc:F2},{z0:F2}) ({x1:F2},{z0 + cc:F2})");
+                        if (ccSE) Console.WriteLine($"  CONCAVE SE: ({x1:F2},{z1 - cc:F2}) ({x1 - cc:F2},{z1:F2})");
+                        if (ccSW) Console.WriteLine($"  CONCAVE SW: ({x0 + cc:F2},{z1:F2}) ({x0:F2},{z1 - cc:F2})");
+                        // Print wall geometry for this cell
+                        Console.WriteLine($"  WALLS:");
+                        float ex0w = rx0, ex1w = rx1, ez0w = rz0, ez1w = rz1;
+                        if (oN) { float nx0w = cNW ? ex0w+c : ex0w; float nx1w = cNE ? ex1w-c : ex1w; Console.WriteLine($"    N wall: ({nx0w:F2},{ez0w:F2}) -> ({nx1w:F2},{ez0w:F2})"); }
+                        if (oS) { float sx0w = cSW ? ex0w+c : ex0w; float sx1w = cSE ? ex1w-c : ex1w; Console.WriteLine($"    S wall: ({sx0w:F2},{ez1w:F2}) -> ({sx1w:F2},{ez1w:F2})"); }
+                        if (oW) { float wz0w = cNW ? ez0w+c : ez0w; float wz1w = cSW ? ez1w-c : ez1w; Console.WriteLine($"    W wall: ({ex0w:F2},{wz0w:F2}) -> ({ex0w:F2},{wz1w:F2})"); }
+                        if (oE) { float wz0e = cNE ? ez0w+c : ez0w; float wz1e = cSE ? ez1w-c : ez1w; Console.WriteLine($"    E wall: ({ex1w:F2},{wz0e:F2}) -> ({ex1w:F2},{wz1e:F2})"); }
+                        if (cNW) Console.WriteLine($"    NW chamfer wall: ({ex0w:F2},{ez0w+c:F2}) -> ({ex0w+c:F2},{ez0w:F2})");
+                        if (cNE) Console.WriteLine($"    NE chamfer wall: ({ex1w-c:F2},{ez0w:F2}) -> ({ex1w:F2},{ez0w+c:F2})");
+                        if (cSE) Console.WriteLine($"    SE chamfer wall: ({ex1w:F2},{ez1w-c:F2}) -> ({ex1w-c:F2},{ez1w:F2})");
+                        if (cSW) Console.WriteLine($"    SW chamfer wall: ({ex0w+c:F2},{ez1w:F2}) -> ({ex0w:F2},{ez1w-c:F2})");
+                    }
+
                     // Build polygon vertices CW from top-left
                     var pts = new List<(float x, float z)>(12);
                     if (cNW)       { pts.Add((rx0, rz0 + c)); pts.Add((rx0 + c, rz0)); }
@@ -897,9 +933,18 @@ void main(){
                     else if (ccSW) { pts.Add((x0 + cc, z1)); pts.Add((x0, z1 - cc)); }
                     else           pts.Add((rx0, rz1));
 
-                    // Triangle fan from center
-                    float cx = (x0 + x1) * 0.5f, cz = (z0 + z1) * 0.5f;
-                    float cu = 0.5f, cv = 0.5f;
+                    if (_roofDebug && (hasConvex || hasConcave))
+                    {
+                        Console.WriteLine($"  ROOF POLYGON ({pts.Count} verts):");
+                        for (int pi = 0; pi < pts.Count; pi++)
+                            Console.WriteLine($"    v{pi}: ({pts[pi].x:F2}, {pts[pi].z:F2})");
+                    }
+
+                    // Triangle fan from polygon centroid
+                    float cx = 0, cz = 0;
+                    for (int pi = 0; pi < pts.Count; pi++) { cx += pts[pi].x; cz += pts[pi].z; }
+                    cx /= pts.Count; cz /= pts.Count;
+                    float cu = (cx - x0) / (x1 - x0), cv = (cz - z0) / (z1 - z0);
                     float invW = 1f / (x1 - x0), invH = 1f / (z1 - z0);
                     for (int i = 0; i < pts.Count; i++)
                     {

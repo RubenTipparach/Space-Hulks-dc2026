@@ -1,7 +1,10 @@
+using System.Runtime.InteropServices;
+
 namespace SpaceHulksLevelEditor;
 
 public class MainForm : Form
 {
+    [DllImport("kernel32.dll")] private static extern bool AllocConsole();
     private LevelData _level = new();
     private int _currentFloor;
 
@@ -487,6 +490,13 @@ public class MainForm : Form
         {
             _preview3D.ShowRoof = !_preview3D.ShowRoof;
             btnRoof.BackColor = _preview3D.ShowRoof ? Color.FromArgb(60, 130, 180) : Color.FromArgb(50, 50, 60);
+            if (_preview3D.ShowRoof)
+            {
+                AllocConsole();
+                _preview3D._roofDebug = true;
+                _preview3D.Refresh();
+                _preview3D._roofDebug = false;
+            }
         };
         _modeLabel = new Label
         {
