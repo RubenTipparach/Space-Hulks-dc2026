@@ -102,18 +102,51 @@ static bool ui_row_hover(int bx, int by, int bw, int bh, bool *out_hovered) {
 #include "sr_ship.h"
 #include "sr_level_loader.h"
 #include "sr_dialog_data.h"
+static void game_init_ship(void); /* forward decl */
+static void game_pregen_enemy_ship(void); /* forward decl */
+
+/* Enemy ship exterior position per size (loaded from game_config.yaml) */
+typedef struct { float distance, vertical, hover_amp, hover_speed; } enemy_ship_cfg;
+static enemy_ship_cfg enemy_ship_small  = { 20.0f, -10.0f, 0.3f, 0.5f };
+static enemy_ship_cfg enemy_ship_medium = { 40.0f, -12.0f, 0.2f, 0.4f };
+static enemy_ship_cfg enemy_ship_large  = { 80.0f, -15.0f, 0.15f, 0.3f };
 #include "sr_scene_ship_hub.h"
 #include "sr_menu.h"
 static void handle_screen_tap(float sx, float sy); /* forward decl */
 #include "sr_mobile_input.h"
-
-static void game_init_ship(void); /* forward decl */
 
 /* Ship grid size based on sector difficulty: small(20), medium(40), large(80) */
 static void game_ship_size(int sector, int *out_w, int *out_h) {
     if (sector >= 6) { *out_w = 80; *out_h = 80; }
     else if (sector >= 3) { *out_w = 40; *out_h = 40; }
     else { *out_w = 20; *out_h = 20; }
+}
+
+/* Pre-generate enemy ship layout for exterior rendering (no enemies/player setup) */
+static void game_pregen_enemy_ship(void) {
+    if (dng_state.floor_generated[0]) return; /* already generated */
+
+    int gw, gh;
+    game_ship_size(player_sector, &gw, &gh);
+    dng_state.grid_w = gw;
+    dng_state.grid_h = gh;
+    dng_state.seed_base = (uint32_t)(time(NULL) ^ (player_sector * 12345));
+
+    uint32_t ship_seed = dng_state.seed_base + 9999;
+    ship_generate(&current_ship, player_sector, ship_seed);
+    dng_state.max_floors = current_ship.num_decks;
+    for (int dk = 0; dk < current_ship.num_decks && dk < DNG_MAX_FLOORS; dk++)
+        dng_state.deck_room_counts[dk] = current_ship.deck_room_count[dk];
+
+    /* Generate first floor only (enough for exterior rendering) */
+    bool is_last = (current_ship.num_decks <= 1);
+    int deck_rooms = current_ship.deck_room_count[0];
+    dng_generate_ex(&dng_state.floors[0], gw, gh, false, !is_last,
+                    dng_state.seed_base, 0, deck_rooms);
+    dng_state.floor_generated[0] = true;
+    dng_state.current_floor = 0;
+    dng_state.dungeon = &dng_state.floors[0];
+    printf("[pregen] Enemy ship floor 0 generated (%dx%d)\n", gw, gh);
 }
 
 /* ── Save / Load ─────────────────────────────────────────────────── */
@@ -1792,6 +1825,23 @@ static void init(void) {
         if (gcfg.count > 0) {
             debug_mode = (int)sr_config_float(&gcfg, "debug.enabled", 0) != 0;
             if (debug_mode) printf("[game] DEBUG MODE ENABLED\n");
+
+            /* Enemy ship position per size */
+            enemy_ship_small.distance   = sr_config_float(&gcfg, "enemy_ship_small.distance", 20.0f);
+            enemy_ship_small.vertical   = sr_config_float(&gcfg, "enemy_ship_small.vertical", -10.0f);
+            enemy_ship_small.hover_amp  = sr_config_float(&gcfg, "enemy_ship_small.hover_amplitude", 0.3f);
+            enemy_ship_small.hover_speed= sr_config_float(&gcfg, "enemy_ship_small.hover_speed", 0.5f);
+
+            enemy_ship_medium.distance   = sr_config_float(&gcfg, "enemy_ship_medium.distance", 40.0f);
+            enemy_ship_medium.vertical   = sr_config_float(&gcfg, "enemy_ship_medium.vertical", -12.0f);
+            enemy_ship_medium.hover_amp  = sr_config_float(&gcfg, "enemy_ship_medium.hover_amplitude", 0.2f);
+            enemy_ship_medium.hover_speed= sr_config_float(&gcfg, "enemy_ship_medium.hover_speed", 0.4f);
+
+            enemy_ship_large.distance   = sr_config_float(&gcfg, "enemy_ship_large.distance", 80.0f);
+            enemy_ship_large.vertical   = sr_config_float(&gcfg, "enemy_ship_large.vertical", -15.0f);
+            enemy_ship_large.hover_amp  = sr_config_float(&gcfg, "enemy_ship_large.hover_amplitude", 0.15f);
+            enemy_ship_large.hover_speed= sr_config_float(&gcfg, "enemy_ship_large.hover_speed", 0.3f);
+
             sr_config_free(&gcfg);
         }
     }

@@ -1,5 +1,27 @@
-# Game configuration for Space Hulks
+# Game configuration for Drake's Void
 # Edit these values to tweak gameplay settings.
 
 debug:
   enabled: 1
+
+# Enemy ship position relative to hub (in world units)
+# Small ship (20x20)
+enemy_ship_small:
+  distance: 20.0
+  vertical: -2.0
+  hover_amplitude: 0.3
+  hover_speed: 0.5
+
+# Medium ship (40x40)
+enemy_ship_medium:
+  distance: 40.0
+  vertical: -12.0
+  hover_amplitude: 0.2
+  hover_speed: 0.4
+
+# Large ship (80x80)
+enemy_ship_large:
+  distance: 80.0
+  vertical: -15.0
+  hover_amplitude: 0.15
+  hover_speed: 0.3

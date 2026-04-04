@@ -359,23 +359,36 @@ static void dng_generate_ex(sr_dungeon *d, int w, int h, bool has_down_stairs, b
         d->room_light_on[i] = true;  /* lights start on */
     }
 
-    /* Place one window per room on the outer wall, facing toward the room.
-     * Rooms above corridor: S-facing window on wall above (faces into room).
-     * Rooms below corridor: N-facing window on wall below (faces into room). */
+    /* Place a pair of windows per room on the outer wall, facing toward the room.
+     * Avoid corner tiles (first/last column of the room wall). */
     for (int i = 0; i < num_rooms; i++) {
         int rx = rooms[i].x, ry = rooms[i].y;
         int rw = rooms[i].w, rh = rooms[i].h;
         int cx = rx + rw / 2;
+        int wx1 = cx, wx2 = cx - 1; /* pair: center and one left */
+        /* Avoid corners: clamp to [rx+1, rx+rw-2] */
+        if (wx1 > rx + rw - 2) wx1 = rx + rw - 2;
+        if (wx1 < rx + 1) wx1 = rx + 1;
+        if (wx2 > rx + rw - 2) wx2 = rx + rw - 2;
+        if (wx2 < rx + 1) wx2 = rx + 1;
         if (ry + rh <= mid_y) {
             /* Room above corridor — S window on wall above (faces room) */
             int wy = ry - 1;
-            if (wy >= 1 && wy <= h && cx >= 1 && cx <= w && d->map[wy][cx] == 1)
-                d->win_faces[wy][cx] |= DNG_WIN_S;
+            if (wy >= 1 && wy <= h) {
+                if (wx1 >= 1 && wx1 <= w && d->map[wy][wx1] == 1)
+                    d->win_faces[wy][wx1] |= DNG_WIN_S;
+                if (wx2 >= 1 && wx2 <= w && wx2 != wx1 && d->map[wy][wx2] == 1)
+                    d->win_faces[wy][wx2] |= DNG_WIN_S;
+            }
         } else if (ry > mid_y) {
             /* Room below corridor — N window on wall below (faces room) */
             int wy = ry + rh;
-            if (wy >= 1 && wy <= h && cx >= 1 && cx <= w && d->map[wy][cx] == 1)
-                d->win_faces[wy][cx] |= DNG_WIN_N;
+            if (wy >= 1 && wy <= h) {
+                if (wx1 >= 1 && wx1 <= w && d->map[wy][wx1] == 1)
+                    d->win_faces[wy][wx1] |= DNG_WIN_N;
+                if (wx2 >= 1 && wx2 <= w && wx2 != wx1 && d->map[wy][wx2] == 1)
+                    d->win_faces[wy][wx2] |= DNG_WIN_N;
+            }
         }
     }
 

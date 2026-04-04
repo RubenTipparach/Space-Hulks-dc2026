@@ -523,10 +523,15 @@
       "loot": [],
       "officers": [],
       "windows": [
+        { "gX": 4, "gY": 4, "dir": "South" },
         { "gX": 5, "gY": 4, "dir": "South" },
+        { "gX": 10, "gY": 4, "dir": "South" },
         { "gX": 11, "gY": 4, "dir": "South" },
+        { "gX": 16, "gY": 4, "dir": "South" },
         { "gX": 17, "gY": 4, "dir": "South" },
+        { "gX": 6, "gY": 16, "dir": "North" },
         { "gX": 7, "gY": 16, "dir": "North" },
+        { "gX": 13, "gY": 16, "dir": "North" },
         { "gX": 14, "gY": 16, "dir": "North" }
       ],
       "npcs": [
