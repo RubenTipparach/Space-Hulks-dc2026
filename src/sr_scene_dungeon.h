@@ -495,7 +495,7 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
                 /* Wall cell — draw faces toward open cells.
                  * Pick texture per-face: room faces get room_wall_tex, corridor faces get wall_tex.
                  * Window faces get a window texture (wall_A_window). */
-                const sr_indexed_texture *win_tex_ptr = &itextures[ITEX_WALL_A_WIN];
+                const sr_indexed_texture *win_tex_ptr = &itextures[ITEX_GRASS]; /* DEBUG: obvious green texture for windows */
                 uint8_t wf = d->win_faces[gy][gx];
                 if (gy < d->h && d->map[gy+1][gx] != 1 && dng_vis[gy+1][gx]) {
                     const sr_indexed_texture *ft = (wf & DNG_WIN_S) ? win_tex_ptr
