@@ -411,14 +411,15 @@ static void draw_intro_screen(sr_framebuffer *fb_ptr) {
 
     /* Draw revealed text */
     int chars_left = intro_char_idx;
-    int y = 20;
+    int lh = 9; /* line height */
+    int y = 10;
     for (int i = 0; i < g_dlgd.intro_count && chars_left > 0; i++) {
         const char *line = g_dlgd.intro_lines[i];
         int llen = (int)strlen(line);
 
         /* Blank line marker */
         if (line[0] == '_' && llen == 1) {
-            y += 10;
+            y += lh;
             chars_left -= 2; /* consume the line + newline */
             continue;
         }
@@ -429,26 +430,23 @@ static void draw_intro_screen(sr_framebuffer *fb_ptr) {
         memcpy(partial, line, show);
         partial[show] = '\0';
 
-        sr_draw_text_shadow(px, W, H, 30, y, partial, green, shadow);
+        sr_draw_text_shadow(px, W, H, 20, y, partial, green, shadow);
         chars_left -= llen + 1;
-        y += 10;
+        y += lh;
     }
 
     /* Blinking cursor */
     if (!intro_done && (intro_timer / 15) % 2 == 0) {
-        /* Find cursor position */
-        int cx = 30, cy = 20;
+        int cx = 20, cy = 10;
         int remain = intro_char_idx;
         for (int i = 0; i < g_dlgd.intro_count && remain > 0; i++) {
             const char *line = g_dlgd.intro_lines[i];
             int llen = (int)strlen(line);
-            if (line[0] == '_' && llen == 1) {
-                cy += 10; remain -= 2; continue;
-            }
+            if (line[0] == '_' && llen == 1) { cy += lh; remain -= 2; continue; }
             int show = (remain >= llen) ? llen : remain;
-            cx = 30 + show * 6;
+            cx = 20 + show * 6;
             remain -= llen + 1;
-            if (remain >= 0) { cy += 10; cx = 30; }
+            if (remain >= 0) { cy += lh; cx = 20; }
         }
         sr_draw_text_shadow(px, W, H, cx, cy, "_", green, shadow);
     }
