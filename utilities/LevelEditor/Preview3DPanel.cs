@@ -925,18 +925,28 @@ void main(){
                         continue;
                     }
 
-                    // Convex corners (both faces exposed)
-                    bool cNW = oN && oW;
-                    bool cNE = oN && oE;
-                    bool cSW = oS && oW;
-                    bool cSE = oS && oE;
+                    // Convex corners (suppress at window diagonal, same as walls)
+                    bool cNW = oN && oW && c > 0 && !IsWindowCell(gx - 1, gy - 1);
+                    bool cNE = oN && oE && c > 0 && !IsWindowCell(gx + 1, gy - 1);
+                    bool cSW = oS && oW && c > 0 && !IsWindowCell(gx - 1, gy + 1);
+                    bool cSE = oS && oE && c > 0 && !IsWindowCell(gx + 1, gy + 1);
 
-                    // Concave corners (neither face exposed but diagonal is outside)
-                    float cc = Math.Max(f, c); // concave clip uses hull corner or fractional inset
-                    bool ccNW = cc > 0 && !oN && !oW && !_hullInside[gy - 1, gx - 1];
-                    bool ccNE = cc > 0 && !oN && !oE && !_hullInside[gy - 1, gx + 1];
-                    bool ccSE = cc > 0 && !oS && !oE && !_hullInside[gy + 1, gx + 1];
-                    bool ccSW = cc > 0 && !oS && !oW && !_hullInside[gy + 1, gx - 1];
+                    // Also flush inset when diagonal is a window (same as walls)
+                    if (oN && rfN > 0 && (IsWindowCell(gx - 1, gy - 1) || IsWindowCell(gx + 1, gy - 1))) rfN = 0;
+                    if (oS && rfS > 0 && (IsWindowCell(gx - 1, gy + 1) || IsWindowCell(gx + 1, gy + 1))) rfS = 0;
+                    if (oW && rfW > 0 && (IsWindowCell(gx - 1, gy - 1) || IsWindowCell(gx - 1, gy + 1))) rfW = 0;
+                    if (oE && rfE > 0 && (IsWindowCell(gx + 1, gy - 1) || IsWindowCell(gx + 1, gy + 1))) rfE = 0;
+                    rx0 = oW ? x0 + rfW : x0;
+                    rx1 = oE ? x1 - rfE : x1;
+                    rz0 = oN ? z0 + rfN : z0;
+                    rz1 = oS ? z1 - rfS : z1;
+
+                    // Concave corners (neither face exposed but diagonal is outside, skip windows)
+                    float cc = Math.Max(f, c);
+                    bool ccNW = cc > 0 && !oN && !oW && !_hullInside[gy - 1, gx - 1] && !IsWindowCell(gx - 1, gy - 1);
+                    bool ccNE = cc > 0 && !oN && !oE && !_hullInside[gy - 1, gx + 1] && !IsWindowCell(gx + 1, gy - 1);
+                    bool ccSE = cc > 0 && !oS && !oE && !_hullInside[gy + 1, gx + 1] && !IsWindowCell(gx + 1, gy + 1);
+                    bool ccSW = cc > 0 && !oS && !oW && !_hullInside[gy + 1, gx - 1] && !IsWindowCell(gx - 1, gy + 1);
 
                     // Debug: print corner geometry
                     bool hasConvex = cNW || cNE || cSW || cSE;
