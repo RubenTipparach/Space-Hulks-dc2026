@@ -103,7 +103,7 @@ jobs:
             src/sr_texture.c \
             src/sr_gif.c \
             -o build/spacehulks.exe \
-            -lopengl32 -lgdi32 -luser32 -lkernel32 -lshell32 -lwinmm -lm
+            -lopengl32 -lgdi32 -luser32 -lkernel32 -lshell32 -lwinmm -lole32 -lm
 
       - name: Package Windows zip
         shell: bash
