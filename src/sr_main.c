@@ -362,23 +362,27 @@ static void draw_title_screen(sr_framebuffer *fb_ptr) {
 
     /* New Game button */
     {
-        int bx = W/2 - 50, by = 120, bw = 100, bh = 22;
+        int bw = 100, bh = 22;
+        int bx = (W - bw) / 2, by = 120;
         bool sel = (title_cursor == 0);
         combat_draw_rect(px, W, H, bx, by, bw, bh, sel ? 0xFF222244 : 0xFF111122);
         combat_draw_rect_outline(px, W, H, bx, by, bw, bh, sel ? yellow : gray);
-        sr_draw_text_shadow(px, W, H, bx + 26, by + 7, "NEW GAME", sel ? yellow : white, shadow);
+        int tx = bx + (bw - sr_text_width("NEW GAME")) / 2;
+        sr_draw_text_shadow(px, W, H, tx, by + 7, "NEW GAME", sel ? yellow : white, shadow);
     }
 
     /* Continue button */
     {
-        int bx = W/2 - 50, by = 150, bw = 100, bh = 22;
+        int bw = 100, bh = 22;
+        int bx = (W - bw) / 2, by = 150;
         bool sel = (title_cursor == 1);
         uint32_t col = save_exists ? (sel ? yellow : white) : 0xFF444444;
         combat_draw_rect(px, W, H, bx, by, bw, bh, sel ? 0xFF222244 : 0xFF111122);
         combat_draw_rect_outline(px, W, H, bx, by, bw, bh, sel ? yellow : gray);
-        sr_draw_text_shadow(px, W, H, bx + 26, by + 7, "CONTINUE", col, shadow);
+        int tx = bx + (bw - sr_text_width("CONTINUE")) / 2;
+        sr_draw_text_shadow(px, W, H, tx, by + 7, "CONTINUE", col, shadow);
         if (!save_exists)
-            sr_draw_text_shadow(px, W, H, bx + 12, by + bh + 4, "NO SAVE FOUND", 0xFF444444, shadow);
+            sr_draw_text_centered(px, W, H, by + bh + 4, "NO SAVE FOUND", 0xFF444444, shadow);
     }
 }
 
