@@ -567,6 +567,10 @@ static void hub_start_dialog(int npc_idx, int action) {
         if (!mission_first_done && !mission_briefed) {
             if (g_dlgd.loaded) dialog_from_block(&g_dlgd.crew_init[2]);
             action = DIALOG_ACTION_NONE;
+        } else if (!mission_first_done && mission_briefed && !mission_medbay_done) {
+            /* Briefed but haven't visited medbay yet — captain said medbay first */
+            if (g_dlgd.loaded) dialog_from_block(&g_dlgd.crew_init[2]);
+            action = DIALOG_ACTION_NONE;
         } else if (!mission_first_done && mission_briefed && !mission_armory_done) {
             if (g_dlgd.loaded) dialog_from_block(&g_dlgd.post_chen);
             action = DIALOG_ACTION_SHOP;
@@ -1684,7 +1688,10 @@ static void hub_draw_hud(uint32_t *px, int W, int H) {
             btn_label = "BRIDGE";
             action = DIALOG_ACTION_STARMAP;
         } else if (rt == HUB_ROOM_SHOP) {
-            btn_label = "ARMORY"; action = DIALOG_ACTION_SHOP;
+            btn_label = "ARMORY";
+            /* Block armory until briefed and medbay done (or past first mission) */
+            if (mission_first_done || (mission_briefed && mission_medbay_done))
+                action = DIALOG_ACTION_SHOP;
         } else if (rt == HUB_ROOM_MEDBAY) {
             btn_label = "MEDBAY"; action = DIALOG_ACTION_HEAL;
         } else if (rt == HUB_ROOM_QUARTERS) {
