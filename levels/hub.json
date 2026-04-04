@@ -522,6 +522,13 @@
       "consoles": [],
       "loot": [],
       "officers": [],
+      "windows": [
+        { "gX": 5, "gY": 4, "dir": "North" },
+        { "gX": 11, "gY": 4, "dir": "North" },
+        { "gX": 17, "gY": 4, "dir": "North" },
+        { "gX": 7, "gY": 16, "dir": "South" },
+        { "gX": 14, "gY": 16, "dir": "South" }
+      ],
       "npcs": [
         {
           "gX": 16,

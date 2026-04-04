@@ -90,6 +90,7 @@ static int  dng_floor_texture = -1;    /* -1 = default ITEX_TILE, else override 
 static int  dng_ceiling_texture = -1;  /* -1 = default ITEX_WOOD, else override */
 static bool dng_skip_pillars = false;  /* true = don't draw corner pillars */
 static bool dng_skip_exterior = false; /* true = don't draw exterior hull */
+static float dng_hull_padding = 0.25f; /* hull expansion padding (in cells) */
 static float (*dng_fog_fn)(float, float, float) = NULL; /* override for fog vertex intensity */
 
 /* ── Hull mask for exterior rendering ──────────────────────────── */
@@ -829,6 +830,10 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
         const sr_indexed_texture *ext_tex = &itextures[ITEX_EXT_WALL];
         const sr_indexed_texture *ext_win_tex = &itextures[ITEX_EXT_WINDOW];
 
+        /* Fractional inset: hull_padding=0.25 → 1 layer, inset = (1-0.25)*cell = 1.5 */
+        float hp_ceil = ceilf(dng_hull_padding);
+        float f_inset = (hp_ceil - dng_hull_padding) * DNG_CELL_SIZE;
+
         /* Disable pixel lighting for exterior (lit by ambient only) */
         sr_set_pixel_light_fn(NULL);
 
@@ -846,55 +851,74 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
                 bool oW = gx <= 1 || !dng_hull_inside[gy][gx-1];
                 bool oE = gx >= d->w || !dng_hull_inside[gy][gx+1];
 
-                /* Check if adjacent outside cell is a window cell (for texture) */
-                bool winN = oN && gy > 1 && dng_has_win_face(d, gx, gy-1, DNG_WIN_S);
-                bool winS = oS && gy < d->h && dng_has_win_face(d, gx, gy+1, DNG_WIN_N);
-                bool winW = oW && gx > 1 && dng_has_win_face(d, gx-1, gy, DNG_WIN_E);
-                bool winE = oE && gx < d->w && dng_has_win_face(d, gx+1, gy, DNG_WIN_W);
+                /* Window cell detection for flush faces */
+                bool wN = oN && dng_is_win_cell(d, gx, gy-1);
+                bool wS = oS && dng_is_win_cell(d, gx, gy+1);
+                bool wW = oW && dng_is_win_cell(d, gx-1, gy);
+                bool wE = oE && dng_is_win_cell(d, gx+1, gy);
+
+                /* Per-face inset: 0 for window faces (flush), f_inset otherwise.
+                 * Also flush if diagonal neighbor is a window cell. */
+                float fN = wN ? 0 : f_inset, fS = wS ? 0 : f_inset;
+                float fW = wW ? 0 : f_inset, fE = wE ? 0 : f_inset;
+                if (oN && fN > 0 && (dng_is_win_cell(d,gx-1,gy-1) || dng_is_win_cell(d,gx+1,gy-1))) fN = 0;
+                if (oS && fS > 0 && (dng_is_win_cell(d,gx-1,gy+1) || dng_is_win_cell(d,gx+1,gy+1))) fS = 0;
+                if (oW && fW > 0 && (dng_is_win_cell(d,gx-1,gy-1) || dng_is_win_cell(d,gx-1,gy+1))) fW = 0;
+                if (oE && fE > 0 && (dng_is_win_cell(d,gx+1,gy-1) || dng_is_win_cell(d,gx+1,gy+1))) fE = 0;
+
+                float ex0 = oW ? x0 + fW : x0;
+                float ex1 = oE ? x1 - fE : x1;
+                float ez0 = oN ? z0 + fN : z0;
+                float ez1 = oS ? z1 - fS : z1;
+
+                /* Per-face window texture: only when window points toward us */
+                bool winTexN = oN && gy > 1 && dng_has_win_face(d, gx, gy-1, DNG_WIN_S);
+                bool winTexS = oS && gy < d->h && dng_has_win_face(d, gx, gy+1, DNG_WIN_N);
+                bool winTexW = oW && gx > 1 && dng_has_win_face(d, gx-1, gy, DNG_WIN_E);
+                bool winTexE = oE && gx < d->w && dng_has_win_face(d, gx+1, gy, DNG_WIN_W);
 
                 /* North exterior wall */
                 if (oN) {
-                    const sr_indexed_texture *ft = winN ? ext_win_tex : ext_tex;
+                    const sr_indexed_texture *ft = winTexN ? ext_win_tex : ext_tex;
                     dng_draw_wall(fb_ptr, &mvp,
-                        x0, y_hi, z0,  x1, y_hi, z0,
-                        x1, y_lo, z0,  x0, y_lo, z0,
+                        ex0, y_hi, ez0,  ex1, y_hi, ez0,
+                        ex1, y_lo, ez0,  ex0, y_lo, ez0,
                         ft, 0, 0, -1);
                 }
                 /* South exterior wall */
                 if (oS) {
-                    const sr_indexed_texture *ft = winS ? ext_win_tex : ext_tex;
+                    const sr_indexed_texture *ft = winTexS ? ext_win_tex : ext_tex;
                     dng_draw_wall(fb_ptr, &mvp,
-                        x1, y_hi, z1,  x0, y_hi, z1,
-                        x0, y_lo, z1,  x1, y_lo, z1,
+                        ex1, y_hi, ez1,  ex0, y_hi, ez1,
+                        ex0, y_lo, ez1,  ex1, y_lo, ez1,
                         ft, 0, 0, 1);
                 }
                 /* West exterior wall */
                 if (oW) {
-                    const sr_indexed_texture *ft = winW ? ext_win_tex : ext_tex;
+                    const sr_indexed_texture *ft = winTexW ? ext_win_tex : ext_tex;
                     dng_draw_wall(fb_ptr, &mvp,
-                        x0, y_hi, z0,  x0, y_hi, z1,
-                        x0, y_lo, z1,  x0, y_lo, z0,
+                        ex0, y_hi, ez0,  ex0, y_hi, ez1,
+                        ex0, y_lo, ez1,  ex0, y_lo, ez0,
                         ft, -1, 0, 0);
                 }
                 /* East exterior wall */
                 if (oE) {
-                    const sr_indexed_texture *ft = winE ? ext_win_tex : ext_tex;
+                    const sr_indexed_texture *ft = winTexE ? ext_win_tex : ext_tex;
                     dng_draw_wall(fb_ptr, &mvp,
-                        x1, y_hi, z1,  x1, y_hi, z0,
-                        x1, y_lo, z0,  x1, y_lo, z1,
+                        ex1, y_hi, ez1,  ex1, y_hi, ez0,
+                        ex1, y_lo, ez0,  ex1, y_lo, ez1,
                         ft, 1, 0, 0);
                 }
 
-                /* Roof (top plate) for hull cells that aren't open floor */
+                /* Roof + bottom plates for hull wall cells */
                 if (d->map[gy][gx] == 1) {
                     dng_draw_hquad(fb_ptr, &mvp,
-                        x0, y_hi, z1,  x1, y_hi, z1,
-                        x1, y_hi, z0,  x0, y_hi, z0,
+                        ex0, y_hi, ez1,  ex1, y_hi, ez1,
+                        ex1, y_hi, ez0,  ex0, y_hi, ez0,
                         0, 1, 1, 0, ext_tex, 0, 1, 0);
-                    /* Bottom plate */
                     dng_draw_hquad(fb_ptr, &mvp,
-                        x0, y_lo, z0,  x1, y_lo, z0,
-                        x1, y_lo, z1,  x0, y_lo, z1,
+                        ex0, y_lo, ez0,  ex1, y_lo, ez0,
+                        ex1, y_lo, ez1,  ex0, y_lo, ez1,
                         0, 0, 1, 1, ext_tex, 0, -1, 0);
                 }
             }
