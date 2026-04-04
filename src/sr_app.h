@@ -69,6 +69,8 @@ enum { STATE_TITLE, STATE_CLASS_SELECT, STATE_INTRO, STATE_RUNNING, STATE_COMBAT
        STATE_SHIP_HUB, STATE_SHOP, STATE_DIALOG, STATE_STARMAP, STATE_EPILOGUE,
        STATE_BEAM, STATE_MISSION_SUMMARY };
 static int app_state = STATE_TITLE;
+static bool game_paused = false;   /* pause menu overlay */
+static int  pause_prev_state = 0;  /* state before pause */
 static int selected_class = 0;  /* 0=scout, 1=marine */
 static int class_select_cursor = 0;
 static bool skip_intro = false;
@@ -148,7 +150,37 @@ typedef struct {
 static mission_summary g_summary;
 
 #define SAVE_FILE "spacehulks.sav"
+#define SETTINGS_FILE "spacehulks.cfg"
 #define SAVE_MAGIC 0x534B4C48  /* "HLKS" */
+
+/* ── User settings (persisted to SETTINGS_FILE) ───────────────── */
+
+static float settings_master_vol = 1.0f;
+
+static void settings_save(void) {
+    FILE *f = fopen(SETTINGS_FILE, "wb");
+    if (!f) return;
+    fprintf(f, "skip_intro=%d\n", skip_intro ? 1 : 0);
+    fprintf(f, "master_vol=%.2f\n", settings_master_vol);
+    fclose(f);
+}
+
+static void settings_load(void) {
+    FILE *f = fopen(SETTINGS_FILE, "rb");
+    if (!f) return;
+    char line[64];
+    while (fgets(line, sizeof(line), f)) {
+        int val;
+        float fval;
+        if (sscanf(line, "skip_intro=%d", &val) == 1) skip_intro = (val != 0);
+        if (sscanf(line, "master_vol=%f", &fval) == 1) {
+            settings_master_vol = fval;
+            if (settings_master_vol < 0) settings_master_vol = 0;
+            if (settings_master_vol > 1) settings_master_vol = 1;
+        }
+    }
+    fclose(f);
+}
 
 /* ── Simple RNG (deterministic) ─────────────────────────────────── */
 

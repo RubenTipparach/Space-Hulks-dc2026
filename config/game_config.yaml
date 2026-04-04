@@ -2,4 +2,4 @@
 # Edit these values to tweak gameplay settings.
 
 debug:
-  enabled: 0
+  enabled: 1

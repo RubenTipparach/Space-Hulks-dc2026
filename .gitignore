@@ -16,3 +16,7 @@ tools/LevelEditor/bin/
 utilities/LevelEditor/obj/
 utilities/LevelEditor/bin/
 utilities/LevelEditor backup lol/
+utilities/LevelEditor.Tests/bin/
+utilities/LevelEditor.Tests/obj/Debug/
+utilities/LevelEditor.Tests/.vs/
+utilities/LevelEditor.Tests/obj/

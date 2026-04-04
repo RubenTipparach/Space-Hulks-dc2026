@@ -1341,7 +1341,7 @@ static void starmap_generate(starmap_state *sm, int start_sector) {
     sm->nodes[0].visited = true;
     sm->nodes[0].is_boss = false;
     sm->nodes[0].x = 40;
-    sm->nodes[0].y = FB_HEIGHT / 2;
+    sm->nodes[0].y = FB_HEIGHT / 4;
     snprintf(sm->nodes[0].name, 24, "SECTOR %s", sector_names[start_sector % NUM_SECTOR_NAMES]);
     node_idx = 1;
 
@@ -1372,8 +1372,9 @@ static void starmap_generate(starmap_state *sm, int start_sector) {
             }
 
             nd->x = 40 + col * (FB_WIDTH - 80) / (col_count - 1);
-            nd->y = is_boss_col ? FB_HEIGHT / 2
-                : 40 + n * (FB_HEIGHT - 80) / (nodes_in_col > 1 ? nodes_in_col - 1 : 1);
+            int map_h = FB_HEIGHT / 2; /* squished to 50% height */
+            nd->y = is_boss_col ? map_h / 2
+                : 20 + n * (map_h - 40) / (nodes_in_col > 1 ? nodes_in_col - 1 : 1);
 
             nd->next_count = 0;
             for (int i = 0; i < STARMAP_MAX_CHOICES; i++) nd->next[i] = -1;

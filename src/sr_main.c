@@ -377,7 +377,7 @@ static void draw_title_screen(sr_framebuffer *fb_ptr) {
 
     for (int i = 0; i < W * H; i++) px[i] = 0xFF0D0D11;
 
-    sr_draw_text_centered(px, W, H, 60, "SPACE HULKS", white, shadow);
+    sr_draw_text_centered(px, W, H, 60, "DRAKE'S VOID", white, shadow);
     sr_draw_text_centered(px, W, H, 80, "DUNGEON CRAWLER", gray, shadow);
 
     /* New Game button */
@@ -1267,7 +1267,7 @@ static void draw_class_select(sr_framebuffer *fb_ptr) {
 
     for (int i = 0; i < W * H; i++) px[i] = 0xFF0D0D11;
 
-    sr_draw_text_shadow(px, W, H, W/2 - 45, 8, "SPACE HULKS", white, shadow);
+    sr_draw_text_shadow(px, W, H, W/2 - 45, 8, "DRAKE'S VOID", white, shadow);
     sr_draw_text_shadow(px, W, H, W/2 - 55, 22, "SELECT YOUR CLASS", gray, shadow);
 
     /* 4 classes in a row */
@@ -1307,17 +1307,123 @@ static void draw_class_select(sr_framebuffer *fb_ptr) {
                        "LASER/DEFLECT", "STUN GUN");
     }
 
-    /* Skip intro toggle */
+    /* Bottom bar: skip intro checkbox + START button */
     {
-        int sx = W/2 - 40;
         int sy = H - 28;
+
+        /* Skip intro checkbox */
+        int sx = W/2 - 70;
         uint32_t box_col = skip_intro ? 0xFF44FF44 : 0xFF333333;
         combat_draw_rect(px, W, H, sx, sy, 8, 8, box_col);
         combat_draw_rect_outline(px, W, H, sx, sy, 8, 8, 0xFF888888);
         sr_draw_text_shadow(px, W, H, sx + 12, sy, "SKIP INTRO",
                             skip_intro ? 0xFF44FF44 : gray, shadow);
+
+        /* START button */
+        if (ui_button(px, W, H, W/2 + 20, sy - 2, 50, 12, "START",
+                      0xFF223322, 0xFF334433, 0xFF446644)) {
+            /* Trigger game start with currently selected class */
+            selected_class = class_select_cursor;
+            player_persist_init(selected_class);
+            weakness_init((uint32_t)(time(NULL) ^ (selected_class * 31337)));
+            player_scrap = 30;
+            player_biomass = 0;
+            memset(player_consumables, 0, sizeof(player_consumables));
+            player_sector = 0;
+            captain_briefing_page = 0;
+            player_samples = 0;
+            player_starmap = 0;
+            current_map_boss_done = false;
+            current_mission_is_boss = false;
+            settings_save();
+            if (skip_intro) {
+                mission_briefed = true;
+                mission_medbay_done = true;
+                mission_armory_done = true;
+                mission_first_done = false;
+                hub_generate(&g_hub);
+                memset(&g_dialog, 0, sizeof(g_dialog));
+                snprintf(g_dialog.speaker, sizeof(g_dialog.speaker), "CPT HARDEN");
+                snprintf(g_dialog.lines[0], DIALOG_LINE_LEN, "GET TO THE TELEPORTER, SOLDIER.");
+                snprintf(g_dialog.lines[1], DIALOG_LINE_LEN, "WE HAVE A DERELICT TO BOARD.");
+                g_dialog.line_count = 2;
+                g_dialog.pending_action = DIALOG_ACTION_NONE;
+                g_dialog.active = true;
+                app_state = STATE_SHIP_HUB;
+            } else {
+                mission_briefed = false;
+                mission_medbay_done = false;
+                mission_armory_done = false;
+                mission_first_done = false;
+                medbay_used = false;
+                intro_char_idx = 0;
+                intro_timer = 0;
+                intro_done = false;
+                app_state = STATE_INTRO;
+            }
+        }
     }
 
+}
+
+/* ── Pause menu overlay ─────────────────────────────────────────── */
+
+static void draw_pause_menu(sr_framebuffer *fb_ptr) {
+    int W = fb_ptr->width, H = fb_ptr->height;
+    uint32_t *px = fb_ptr->color;
+    uint32_t shadow = 0xFF000000;
+
+    /* Dim background */
+    for (int i = 0; i < W * H; i++) {
+        uint32_t c = px[i];
+        int r = ((c >> 0) & 0xFF) / 3;
+        int g = ((c >> 8) & 0xFF) / 3;
+        int b = ((c >> 16) & 0xFF) / 3;
+        px[i] = 0xFF000000 | (b << 16) | (g << 8) | r;
+    }
+
+    /* Panel */
+    int pw = 140, ph = 80;
+    int px0 = (W - pw) / 2, py0 = (H - ph) / 2;
+    combat_draw_rect(px, W, H, px0, py0, pw, ph, 0xFF111122);
+    combat_draw_rect_outline(px, W, H, px0, py0, pw, ph, 0xFF444466);
+
+    sr_draw_text_shadow(px, W, H, px0 + pw/2 - 18, py0 + 4, "PAUSED", 0xFFCCCCFF, shadow);
+
+    /* Volume slider */
+    sr_draw_text_shadow(px, W, H, px0 + 8, py0 + 20, "VOLUME", 0xFF888888, shadow);
+    int bar_x = px0 + 50, bar_y = py0 + 20, bar_w = 80, bar_h = 8;
+    combat_draw_rect(px, W, H, bar_x, bar_y, bar_w, bar_h, 0xFF222233);
+    int fill_w = (int)(settings_master_vol * bar_w);
+    if (fill_w > 0)
+        combat_draw_rect(px, W, H, bar_x, bar_y, fill_w, bar_h, 0xFF4466AA);
+    combat_draw_rect_outline(px, W, H, bar_x, bar_y, bar_w, bar_h, 0xFF555577);
+
+    /* Volume click detection */
+    if (ui_mouse_clicked &&
+        ui_click_x >= bar_x && ui_click_x <= bar_x + bar_w &&
+        ui_click_y >= bar_y - 4 && ui_click_y <= bar_y + bar_h + 4) {
+        settings_master_vol = (float)(ui_click_x - bar_x) / bar_w;
+        if (settings_master_vol < 0) settings_master_vol = 0;
+        if (settings_master_vol > 1) settings_master_vol = 1;
+        audio_vol.ambient = settings_master_vol * 0.7f;
+        audio_vol.footstep = settings_master_vol * 0.4f;
+    }
+
+    /* Resume button */
+    if (ui_button(px, W, H, px0 + 20, py0 + 38, pw - 40, 14, "RESUME",
+                  0xFF222233, 0xFF333344, 0xFF444466)) {
+        game_paused = false;
+        settings_save();
+    }
+
+    /* Main menu button */
+    if (ui_button(px, W, H, px0 + 20, py0 + 58, pw - 40, 14, "MAIN MENU",
+                  0xFF332222, 0xFF443333, 0xFF664444)) {
+        game_paused = false;
+        settings_save();
+        app_state = STATE_TITLE;
+    }
 }
 
 /* ── Shaders ─────────────────────────────────────────────────────── */
@@ -1594,6 +1700,9 @@ static void init(void) {
         }
     }
     sr_audio_init();
+    settings_load();
+    audio_vol.ambient = settings_master_vol * 0.7f;
+    audio_vol.footstep = settings_master_vol * 0.4f;
 
 #ifdef _WIN32
     timeBeginPeriod(1);
@@ -1978,6 +2087,29 @@ static void frame(void) {
         scale[1] = win_aspect / fb_aspect;
     }
 
+    /* Hamburger menu button (top-right, for mobile) */
+    if (!game_paused && (app_state == STATE_RUNNING || app_state == STATE_SHIP_HUB || app_state == STATE_COMBAT)) {
+        int hb_x = fb.width - 16, hb_y = 2, hb_sz = 12;
+        uint32_t *px = fb.color;
+        int W = fb.width, H = fb.height;
+        /* Draw three horizontal lines */
+        for (int row = 0; row < 3; row++) {
+            int ly = hb_y + 2 + row * 4;
+            for (int lx = hb_x + 2; lx < hb_x + hb_sz - 2; lx++)
+                if (lx >= 0 && lx < W && ly >= 0 && ly < H)
+                    px[ly * W + lx] = 0xFFAAAAAA;
+        }
+        /* Click detection */
+        if (ui_mouse_clicked &&
+            ui_click_x >= hb_x && ui_click_x <= hb_x + hb_sz &&
+            ui_click_y >= hb_y && ui_click_y <= hb_y + hb_sz) {
+            game_paused = true;
+        }
+    }
+
+    /* Pause menu overlay (drawn on top of everything) */
+    if (game_paused) draw_pause_menu(&fb);
+
     /* Clear UI click state after drawing (consumed this frame) */
     ui_mouse_clicked = false;
 
@@ -2041,6 +2173,8 @@ static void handle_screen_tap(float sx, float sy) {
     ui_mouse_x = fx;
     ui_mouse_y = fy;
 
+    if (game_paused) return; /* pause menu handles its own clicks via ui_button */
+
     if (app_state == STATE_MISSION_SUMMARY) {
         app_state = STATE_SHIP_HUB;
         return;
@@ -2072,63 +2206,17 @@ static void handle_screen_tap(float sx, float sy) {
             int sy = FB_HEIGHT - 28;
             if (fx >= sx && fx <= sx + 80 && fy >= sy && fy <= sy + 10) {
                 skip_intro = !skip_intro;
+                settings_save();
                 return;
             }
         }
+        /* Click on class box to select (START button handles game start) */
         int gap = (FB_WIDTH - CLASS_COUNT * CLASS_BOX_W) / (CLASS_COUNT + 1);
         int by = 40;
         for (int ci = 0; ci < CLASS_COUNT; ci++) {
             int bx = gap * (ci + 1) + CLASS_BOX_W * ci;
             if (fx >= bx && fx <= bx + CLASS_BOX_W && fy >= by && fy <= by + CLASS_BOX_H) {
-                if (class_select_cursor == ci) {
-                    selected_class = ci;
-                    player_persist_init(selected_class);
-                    /* Randomize enemy weaknesses for this run */
-                    weakness_init((uint32_t)(time(NULL) ^ (selected_class * 31337)));
-                    player_scrap = 30;
-                    player_biomass = 0;
-                    memset(player_consumables, 0, sizeof(player_consumables));
-                    player_sector = 0;
-                    /* Reset mission flow state for new game */
-                    captain_briefing_page = 0;
-                    player_samples = 0;
-                    player_starmap = 0;
-                    current_map_boss_done = false;
-                    current_mission_is_boss = false;
-
-                    if (skip_intro) {
-                        /* Skip intro: mark briefing/prep done, go straight to hub */
-                        mission_briefed = true;
-                        mission_medbay_done = true;
-                        mission_armory_done = true;
-                        mission_first_done = false;
-                        hub_generate(&g_hub);
-                        /* Show quick message to head to teleporter */
-                        memset(&g_dialog, 0, sizeof(g_dialog));
-                        snprintf(g_dialog.speaker, sizeof(g_dialog.speaker), "CPT HARDEN");
-                        snprintf(g_dialog.lines[0], DIALOG_LINE_LEN,
-                                 "GET TO THE TELEPORTER, SOLDIER.");
-                        snprintf(g_dialog.lines[1], DIALOG_LINE_LEN,
-                                 "WE HAVE A DERELICT TO BOARD.");
-                        g_dialog.line_count = 2;
-                        g_dialog.pending_action = DIALOG_ACTION_NONE;
-                        g_dialog.active = true;
-                        app_state = STATE_SHIP_HUB;
-                    } else {
-                        mission_briefed = false;
-                        mission_medbay_done = false;
-                        mission_armory_done = false;
-                        mission_first_done = false;
-                        medbay_used = false;
-                        /* Start intro teletype */
-                        intro_char_idx = 0;
-                        intro_timer = 0;
-                        intro_done = false;
-                        app_state = STATE_INTRO;
-                    }
-                } else {
-                    class_select_cursor = ci;
-                }
+                class_select_cursor = ci;
                 return;
             }
         }
@@ -2538,6 +2626,24 @@ static void event(const sapp_event *ev) {
         return;
     }
 
+    /* ── Pause menu toggle (ESC during gameplay) ──────────── */
+    if (ev->key_code == SAPP_KEYCODE_ESCAPE &&
+        (app_state == STATE_RUNNING || app_state == STATE_SHIP_HUB || app_state == STATE_COMBAT)) {
+        game_paused = !game_paused;
+        if (!game_paused) settings_save();
+        return;
+    }
+    if (game_paused) return; /* block all other input while paused */
+
+    /* ── Debug: Ctrl+F5 = instant win dungeon ──────────────── */
+    if (debug_mode && ev->key_code == SAPP_KEYCODE_F5 && (ev->modifiers & SAPP_MODIFIER_CTRL) &&
+        app_state == STATE_RUNNING && current_ship.initialized) {
+        current_ship.boarding_active = false;
+        int reward = 30 + player_sector * 10;
+        mission_complete_return_to_hub(reward, "DEBUG: MISSION COMPLETE", true);
+        return;
+    }
+
     /* ── Mission summary screen ─────────────────────────────── */
     if (app_state == STATE_MISSION_SUMMARY) {
         if (ev->key_code == SAPP_KEYCODE_SPACE || ev->key_code == SAPP_KEYCODE_ENTER ||
@@ -2587,6 +2693,7 @@ static void event(const sapp_event *ev) {
                 break;
             case SAPP_KEYCODE_TAB:
                 skip_intro = !skip_intro;
+                settings_save();
                 break;
             case SAPP_KEYCODE_ENTER:
             case SAPP_KEYCODE_KP_ENTER:
@@ -3071,7 +3178,7 @@ sapp_desc sokol_main(int argc, char *argv[]) {
         .event_cb   = event,
         .width      = FB_WIDTH * 2,
         .height     = FB_HEIGHT * 2,
-        .window_title = "Space Hulks",
+        .window_title = "Drake's Void",
         .high_dpi     = true,
         .logger.func  = slog_func,
         .swap_interval = 0,

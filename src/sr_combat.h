@@ -140,8 +140,8 @@ static const char_class char_classes[] = {
     },
     [CLASS_ENGINEER] = {
         .hp_max = 26,
-        /* 2 shield, 1 shoot, 1 burst, 1 move, 0 melee, ..., welder 3, chainsaw 2 */
-        .deck_composition = { 2, 1, 1, 1, 0, 0,0,0,0,0,0, 0,0,0,0, 0,0, 3, 2 },
+        /* 2 shield, 1 shoot, 1 burst, 1 move, 0 melee, ..., welder 3, chainsaw 2, ..., quickstep 2 */
+        .deck_composition = { 2, 1, 1, 1, 0, 0,0,0,0,0,0, 0,0,0,0, 0,0, 3, 2, 0,0,0,0, 2 },
         .name = "ENGINEER",
         .sprite = spr_engineer,
     },
@@ -976,7 +976,7 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
             int t = cs->target;
             while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
             if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
-            if (t >= 0 && cs->enemies[t].distance <= 0) {
+            if (t >= 0 && cs->enemies[t].distance <= 1) {
                 int dmg = 4 + cs->fire_atk_bonus;
                 combat_deal_damage_enemy(cs, t, dmg);
                 cs->player_shield += 2;
@@ -997,7 +997,7 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
             int t = cs->target;
             while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
             if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
-            if (t >= 0 && cs->enemies[t].distance <= 0) {
+            if (t >= 0 && cs->enemies[t].distance <= 1) {
                 int dmg = 8 + cs->fire_atk_bonus;
                 combat_deal_damage_enemy(cs, t, dmg);
                 cs->player_shield += 3;
@@ -1903,8 +1903,8 @@ static const char *card_effect_text(int card_type) {
         case CARD_LIGHTNING:   return "STUN 1-2T\n2 DMG";
         case CARD_SNIPER:      return "5 DMG\nDIST 2+";
         case CARD_SHOTGUN:     return "1-3 DMG\nANY RANGE";
-        case CARD_WELDER:      return "4 DMG +2SH\nMELEE";
-        case CARD_CHAINSAW:    return "8 DMG +3SH\nMELEE";
+        case CARD_WELDER:      return "4 DMG +2SH\nRANGE 2";
+        case CARD_CHAINSAW:    return "8 DMG +3SH\nRANGE 2";
         case CARD_LASER:       return "4 DMG\nPRECISION";
         case CARD_DEFLECTOR:   return "+4 SHIELD\nREFLECT DMG";
         case CARD_STUN_GUN:    return "STUN 1T\n1 DMG";
@@ -1937,8 +1937,8 @@ static const char *card_description_text(int card_type) {
         case CARD_LIGHTNING:   return "CHANCE TO STUN FOR\n1-2 TURNS PLUS\nDIRECT DAMAGE.";
         case CARD_SNIPER:      return "HIGH DAMAGE BUT\nREQUIRES DISTANCE OF\n2 OR MORE.";
         case CARD_SHOTGUN:     return "SPREAD SHOT. MORE\nDAMAGE UP CLOSE.\n3 AT MELEE, 1 AT FAR.";
-        case CARD_WELDER:      return "MELEE WELD ATTACK.\nDAMAGE + SHIELD.\nMUST BE ADJACENT.";
-        case CARD_CHAINSAW:    return "DEVASTATING MELEE\nDAMAGE + SHIELD.\nMUST BE ADJACENT.";
+        case CARD_WELDER:      return "WELD ATTACK.\nDAMAGE + SHIELD.\nRANGE 2.";
+        case CARD_CHAINSAW:    return "DEVASTATING CHAINSAW\nDAMAGE + SHIELD.\nRANGE 2.";
         case CARD_LASER:       return "PRECISION ENERGY\nWEAPON. IGNORES\nSHIELD.";
         case CARD_DEFLECTOR:   return "SHIELD THAT REFLECTS\n1 DAMAGE BACK AT\nATTACKERS.";
         case CARD_STUN_GUN:    return "STUNS ONE ENEMY FOR\n1 TURN AND DEALS\nMINOR DAMAGE.";

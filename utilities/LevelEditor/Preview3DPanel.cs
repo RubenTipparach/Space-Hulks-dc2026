@@ -734,24 +734,29 @@ void main(){
                 bool oW = !_hullInside[gy, gx - 1];
                 bool oE = !_hullInside[gy, gx + 1];
 
-                // Per-face window check — check adjacent outside cell's window pointing toward us
-                bool wN = oN && _winSet != null && _winSet.Contains((gx, gy - 1, WallDir.South));
-                bool wS = oS && _winSet != null && _winSet.Contains((gx, gy + 1, WallDir.North));
-                bool wW = oW && _winSet != null && _winSet.Contains((gx - 1, gy, WallDir.East));
-                bool wE = oE && _winSet != null && _winSet.Contains((gx + 1, gy, WallDir.West));
+                // Per-face window check — adjacent outside cell is a window cell
+                bool wN = oN && IsWindowCell(gx, gy - 1);
+                bool wS = oS && IsWindowCell(gx, gy + 1);
+                bool wW = oW && IsWindowCell(gx - 1, gy);
+                bool wE = oE && IsWindowCell(gx + 1, gy);
+
+                // Detect convex corners (skip when diagonal cell is a window)
+                bool cNW = oN && oW && c > 0 && !IsWindowCell(gx - 1, gy - 1);
+                bool cNE = oN && oE && c > 0 && !IsWindowCell(gx + 1, gy - 1);
+                bool cSW = oS && oW && c > 0 && !IsWindowCell(gx - 1, gy + 1);
+                bool cSE = oS && oE && c > 0 && !IsWindowCell(gx + 1, gy + 1);
 
                 // Inset exposed faces by fractional padding remainder (0 for window faces)
+                // Also flush if a neighbor along the wall has a window on the same outside face
                 float fN = wN ? 0 : f, fS = wS ? 0 : f, fW = wW ? 0 : f, fE = wE ? 0 : f;
+                if (oN && fN > 0 && (IsWindowCell(gx - 1, gy - 1) || IsWindowCell(gx + 1, gy - 1))) fN = 0;
+                if (oS && fS > 0 && (IsWindowCell(gx - 1, gy + 1) || IsWindowCell(gx + 1, gy + 1))) fS = 0;
+                if (oW && fW > 0 && (IsWindowCell(gx - 1, gy - 1) || IsWindowCell(gx - 1, gy + 1))) fW = 0;
+                if (oE && fE > 0 && (IsWindowCell(gx + 1, gy - 1) || IsWindowCell(gx + 1, gy + 1))) fE = 0;
                 float ex0 = oW ? x0 + fW : x0;
                 float ex1 = oE ? x1 - fE : x1;
                 float ez0 = oN ? z0 + fN : z0;
                 float ez1 = oS ? z1 - fS : z1;
-
-                // Detect convex corners
-                bool cNW = oN && oW && c > 0;
-                bool cNE = oN && oE && c > 0;
-                bool cSW = oS && oW && c > 0;
-                bool cSE = oS && oE && c > 0;
 
                 // Per-face window texture selection
                 // North wall (x0,z0) to (x1,z0) — trimmed at corners
@@ -839,6 +844,28 @@ void main(){
                         float xb = (gx - 1) * Cell, zb = gy * Cell;
                         WallQuad(extW, xb + ccFill, yb, zb, xb, yb, zb - ccFill, xb, yt, zb - ccFill, xb + ccFill, yt, zb, sD);
                     }
+                }
+            }
+        }
+
+        // Window connector walls: fill gaps between flush window faces and inset neighbors
+        if (f > 0 && _winSet != null && floor.Windows != null)
+        {
+            var connectors = HullGeometry.ComputeWindowConnectors(_hullInside, _winSet, w, h, Cell, f);
+            foreach (var conn in connectors)
+            {
+                float yb = _yOff, yt = _yOff + ExtH;
+                if (Math.Abs(conn.X0 - conn.X1) < 0.001f)
+                {
+                    // Vertical wall (same X)
+                    float x = conn.X0;
+                    WallQuad(extW, x, yb, conn.Z0, x, yb, conn.Z1, x, yt, conn.Z1, x, yt, conn.Z0, sE);
+                }
+                else
+                {
+                    // Horizontal wall (same Z)
+                    float z = conn.Z0;
+                    WallQuad(extW, conn.X0, yb, z, conn.X1, yb, z, conn.X1, yt, z, conn.X0, yt, z, sN);
                 }
             }
         }

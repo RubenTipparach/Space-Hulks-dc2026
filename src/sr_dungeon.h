@@ -1000,7 +1000,8 @@ static void dng_spawn_hallway_enemies(sr_dungeon *d, int floor_num) {
         /* Verify still empty */
         if (d->aliens[sgy][sgx] != 0) continue;
 
-        uint8_t etype = 1 + (uint8_t)dng_rng_int(max_type);
+        uint8_t etype;
+        do { etype = 1 + (uint8_t)dng_rng_int(max_type); } while (etype == 2); /* skip brute (type 2) in hallways */
         d->aliens[sgy][sgx] = etype;
         dng_gen_alien_name(d->alien_names[sgy][sgx], 16);
 
