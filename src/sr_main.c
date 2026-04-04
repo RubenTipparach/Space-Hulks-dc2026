@@ -1721,13 +1721,14 @@ static void handle_screen_tap(float sx, float sy) {
         }
         if (g_dialog.active) {
             if (g_dialog.confirm_mode) {
-                /* Confirm dialog — check YES/NO button hits */
+                /* Confirm dialog — check YES/NO button hits (tabs below box) */
                 int H = FB_HEIGHT;
-                int bx = 40, bw = FB_WIDTH - 80, bh = 60;
-                int by = H - 70;
+                int bx = 20, bw = FB_WIDTH - 40, bh = 44;
+                int by = H - 58;
+                int tab_y = by + bh;
                 /* YES button area */
-                if (fx >= bx + bw - 150 && fx < bx + bw - 90 &&
-                    fy >= by + bh - 14 && fy < by + bh - 2) {
+                if (fx >= bx + bw - 140 && fx < bx + bw - 80 &&
+                    fy >= tab_y && fy < tab_y + 14) {
                     int action = g_dialog.pending_action;
                     g_dialog.active = false;
                     g_dialog.confirm_mode = false;
@@ -1743,8 +1744,8 @@ static void handle_screen_tap(float sx, float sy) {
                     }
                 }
                 /* NO button area */
-                else if (fx >= bx + bw - 80 && fx < bx + bw - 20 &&
-                         fy >= by + bh - 14 && fy < by + bh - 2) {
+                else if (fx >= bx + bw - 70 && fx < bx + bw - 10 &&
+                         fy >= tab_y && fy < tab_y + 14) {
                     g_dialog.active = false;
                     g_dialog.confirm_mode = false;
                 }

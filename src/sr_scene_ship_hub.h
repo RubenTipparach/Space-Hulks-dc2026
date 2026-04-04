@@ -627,8 +627,8 @@ static void draw_dialog(uint32_t *px, int W, int H) {
     if (!g_dialog.active) return;
     uint32_t shadow = 0xFF000000;
 
-    /* Dialog box at bottom */
-    int bx = 40, by = H - 70, bw = W - 80, bh = 60;
+    /* Dialog box — spans most of screen width */
+    int bx = 20, by = H - 58, bw = W - 40, bh = 44;
     for (int ry = by; ry < by + bh && ry < H; ry++)
         for (int rx = bx; rx < bx + bw && rx < W; rx++) {
             if (rx < 0 || ry < 0) continue;
@@ -647,28 +647,37 @@ static void draw_dialog(uint32_t *px, int W, int H) {
     /* Speaker name */
     sr_draw_text_shadow(px, W, H, bx + 4, by + 4, g_dialog.speaker, 0xFF00DDDD, shadow);
 
-    /* Dialog lines */
+    /* Dialog lines — span full box width */
     for (int i = 0; i < g_dialog.line_count; i++)
         sr_draw_text_shadow(px, W, H, bx + 4, by + 16 + i * 10,
                             g_dialog.lines[i], 0xFFCCCCCC, shadow);
 
+    /* Buttons — attached tab below the box, right side */
+    int tab_y = by + bh;
     if (g_dialog.confirm_mode) {
-        /* YES / NO buttons */
-        if (ui_button(px, W, H, bx + bw - 150, by + bh - 14, 60, 12,
+        /* YES / NO buttons as tabs below box */
+        if (ui_button(px, W, H, bx + bw - 140, tab_y, 60, 14,
                       "YES", 0xFF112211, 0xFF223322, 0xFF44CC44)) {
-            /* handled by tap/key — confirm_mode YES click */
         }
-        if (ui_button(px, W, H, bx + bw - 80, by + bh - 14, 60, 12,
+        if (ui_button(px, W, H, bx + bw - 70, tab_y, 60, 14,
                       "NO", 0xFF221111, 0xFF332222, 0xFF882222)) {
-            /* handled by tap/key — confirm_mode NO click */
         }
+        /* Connect tabs to box — draw border continuation */
+        for (int rx = bx + bw - 140; rx < bx + bw - 140 + 130 && rx < W; rx++)
+            if (tab_y - 1 >= 0 && tab_y - 1 < H && rx >= 0)
+                px[(tab_y - 1) * W + rx] = 0xFF111122; /* erase bottom border where tabs attach */
     } else {
         const char *dismiss_label = g_dialog.pending_action != DIALOG_ACTION_NONE
             ? "CONTINUE" : "CLOSE";
-        if (ui_button(px, W, H, bx + bw - 80, by + bh - 14, 70, 12,
+        int btn_w = 70;
+        int btn_x = bx + bw - btn_w - 5;
+        if (ui_button(px, W, H, btn_x, tab_y, btn_w, 14,
                       dismiss_label, 0xFF1A1A33, 0xFF222255, 0xFF44CC44)) {
-            /* Mark for dismiss — handled by handle_screen_tap via tap flow */
         }
+        /* Erase border where tab attaches to box */
+        for (int rx = btn_x; rx < btn_x + btn_w && rx < W; rx++)
+            if (tab_y - 1 >= 0 && tab_y - 1 < H && rx >= 0)
+                px[(tab_y - 1) * W + rx] = 0xFF111122;
     }
 }
 
@@ -1633,8 +1642,8 @@ static void hub_draw_hud(uint32_t *px, int W, int H) {
     }
 
     /* Room/NPC interaction button — merged room name + action into one button */
-    /* Skip when deck viewer is open (modal) */
-    if (deck_view_active) return;
+    /* Skip when deck viewer is open (modal) or dialog is active */
+    if (deck_view_active || g_dialog.active) return;
 
     int room_idx = hub_room_at_pos(g_hub.player.gx, g_hub.player.gy);
     int look_gx = g_hub.player.gx + dng_dir_dx[g_hub.player.dir];
