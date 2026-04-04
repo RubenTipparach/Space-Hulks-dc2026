@@ -1844,7 +1844,7 @@ static void frame(void) {
             {
                 int map_scale = 2;
                 int map_bottom = 28 + dng_state.dungeon->h * map_scale + 4;
-                int hx = fb.width - dng_state.dungeon->w * map_scale + 2;
+                int hx = fb.width - dng_state.dungeon->w * map_scale - 18;
                 int hy = map_bottom;
                 uint32_t dim = 0xFF888888;
                 uint32_t shadow = 0xFF000000;

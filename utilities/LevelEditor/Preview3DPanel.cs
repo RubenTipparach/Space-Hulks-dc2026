@@ -734,11 +734,11 @@ void main(){
                 bool oW = !_hullInside[gy, gx - 1];
                 bool oE = !_hullInside[gy, gx + 1];
 
-                // Per-face window check (window faces stay flush at cell boundary)
-                bool wN = oN && _winSet != null && _winSet.Contains((gx, gy, WallDir.North));
-                bool wS = oS && _winSet != null && _winSet.Contains((gx, gy, WallDir.South));
-                bool wW = oW && _winSet != null && _winSet.Contains((gx, gy, WallDir.West));
-                bool wE = oE && _winSet != null && _winSet.Contains((gx, gy, WallDir.East));
+                // Per-face window check — check adjacent outside cell's window pointing toward us
+                bool wN = oN && _winSet != null && _winSet.Contains((gx, gy - 1, WallDir.South));
+                bool wS = oS && _winSet != null && _winSet.Contains((gx, gy + 1, WallDir.North));
+                bool wW = oW && _winSet != null && _winSet.Contains((gx - 1, gy, WallDir.East));
+                bool wE = oE && _winSet != null && _winSet.Contains((gx + 1, gy, WallDir.West));
 
                 // Inset exposed faces by fractional padding remainder (0 for window faces)
                 float fN = wN ? 0 : f, fS = wS ? 0 : f, fW = wW ? 0 : f, fE = wE ? 0 : f;
@@ -757,7 +757,7 @@ void main(){
                 // North wall (x0,z0) to (x1,z0) — trimmed at corners
                 if (oN)
                 {
-                    int ft = _winSet != null && _winSet.Contains((gx, gy, WallDir.North)) ? extWin : extW;
+                    int ft = wN ? extWin : extW;
                     float nx0 = cNW ? ex0 + c : ex0;
                     float nx1 = cNE ? ex1 - c : ex1;
                     if (nx0 < nx1)
@@ -766,7 +766,7 @@ void main(){
                 // South wall (x1,z1) to (x0,z1)
                 if (oS)
                 {
-                    int ft = _winSet != null && _winSet.Contains((gx, gy, WallDir.South)) ? extWin : extW;
+                    int ft = wS ? extWin : extW;
                     float sx0 = cSW ? ex0 + c : ex0;
                     float sx1 = cSE ? ex1 - c : ex1;
                     if (sx0 < sx1)
@@ -775,7 +775,7 @@ void main(){
                 // West wall (x0,z1) to (x0,z0)
                 if (oW)
                 {
-                    int ft = _winSet != null && _winSet.Contains((gx, gy, WallDir.West)) ? extWin : extW;
+                    int ft = wW ? extWin : extW;
                     float wz0 = cNW ? ez0 + c : ez0;
                     float wz1 = cSW ? ez1 - c : ez1;
                     if (wz0 < wz1)
@@ -784,7 +784,7 @@ void main(){
                 // East wall (x1,z0) to (x1,z1)
                 if (oE)
                 {
-                    int ft = _winSet != null && _winSet.Contains((gx, gy, WallDir.East)) ? extWin : extW;
+                    int ft = wE ? extWin : extW;
                     float wz0e = cNE ? ez0 + c : ez0;
                     float wz1e = cSE ? ez1 - c : ez1;
                     if (wz0e < wz1e)
@@ -803,8 +803,8 @@ void main(){
             }
         }
 
-        // Fill concave corner gaps caused by fractional padding inset or hull corner
-        float ccFill = Math.Max(f, c); // concave corner fill size
+        // Fill concave corner gaps with diagonal walls (skip at window cells)
+        float ccFill = Math.Max(f, c);
         if (ccFill > 0)
         {
             for (int gy = 1; gy <= h; gy++)
@@ -819,26 +819,22 @@ void main(){
                     bool iW = _hullInside[gy, gx - 1];
                     bool iE = _hullInside[gy, gx + 1];
 
-                    // NE concave: north and east inside, diagonal NE outside
-                    if (iN && iE && !_hullInside[gy - 1, gx + 1])
+                    if (iN && iE && !_hullInside[gy - 1, gx + 1] && !IsWindowCell(gx + 1, gy - 1))
                     {
                         float xb = gx * Cell, zb = (gy - 1) * Cell;
                         WallQuad(extW, xb - ccFill, yb, zb, xb, yb, zb + ccFill, xb, yt, zb + ccFill, xb - ccFill, yt, zb, sD);
                     }
-                    // NW concave
-                    if (iN && iW && !_hullInside[gy - 1, gx - 1])
+                    if (iN && iW && !_hullInside[gy - 1, gx - 1] && !IsWindowCell(gx - 1, gy - 1))
                     {
                         float xb = (gx - 1) * Cell, zb = (gy - 1) * Cell;
                         WallQuad(extW, xb, yb, zb + ccFill, xb + ccFill, yb, zb, xb + ccFill, yt, zb, xb, yt, zb + ccFill, sD);
                     }
-                    // SE concave
-                    if (iS && iE && !_hullInside[gy + 1, gx + 1])
+                    if (iS && iE && !_hullInside[gy + 1, gx + 1] && !IsWindowCell(gx + 1, gy + 1))
                     {
                         float xb = gx * Cell, zb = gy * Cell;
                         WallQuad(extW, xb, yb, zb - ccFill, xb - ccFill, yb, zb, xb - ccFill, yt, zb, xb, yt, zb - ccFill, sD);
                     }
-                    // SW concave
-                    if (iS && iW && !_hullInside[gy + 1, gx - 1])
+                    if (iS && iW && !_hullInside[gy + 1, gx - 1] && !IsWindowCell(gx - 1, gy + 1))
                     {
                         float xb = (gx - 1) * Cell, zb = gy * Cell;
                         WallQuad(extW, xb + ccFill, yb, zb, xb, yb, zb - ccFill, xb, yt, zb - ccFill, xb + ccFill, yt, zb, sD);
