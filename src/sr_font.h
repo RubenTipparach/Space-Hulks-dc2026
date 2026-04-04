@@ -139,6 +139,13 @@ static inline int sr_draw_text(uint32_t *pixels, int fb_w, int fb_h,
     return x;
 }
 
+/* Measure text width in pixels. */
+static inline int sr_text_width(const char *str) {
+    int len = 0;
+    while (str[len]) len++;
+    return len * (SR_FONT_W + 1);
+}
+
 /* Draw text with a 1px dark shadow for readability over any background. */
 static inline void sr_draw_text_shadow(uint32_t *pixels, int fb_w, int fb_h,
                                        int x, int y, const char *str,
@@ -146,6 +153,15 @@ static inline void sr_draw_text_shadow(uint32_t *pixels, int fb_w, int fb_h,
 {
     sr_draw_text(pixels, fb_w, fb_h, x+1, y+1, str, shadow);
     sr_draw_text(pixels, fb_w, fb_h, x, y, str, color);
+}
+
+/* Draw text centered horizontally on the screen. */
+static inline void sr_draw_text_centered(uint32_t *pixels, int fb_w, int fb_h,
+                                         int y, const char *str,
+                                         uint32_t color, uint32_t shadow)
+{
+    int x = (fb_w - sr_text_width(str)) / 2;
+    sr_draw_text_shadow(pixels, fb_w, fb_h, x, y, str, color, shadow);
 }
 
 /* Draw text with word wrap within a max pixel width. Handles \n as forced

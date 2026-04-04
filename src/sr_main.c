@@ -357,8 +357,8 @@ static void draw_title_screen(sr_framebuffer *fb_ptr) {
 
     for (int i = 0; i < W * H; i++) px[i] = 0xFF0D0D11;
 
-    sr_draw_text_shadow(px, W, H, W/2 - 45, 60, "SPACE HULKS", white, shadow);
-    sr_draw_text_shadow(px, W, H, W/2 - 50, 80, "DUNGEON CRAWLER", gray, shadow);
+    sr_draw_text_centered(px, W, H, 60, "SPACE HULKS", white, shadow);
+    sr_draw_text_centered(px, W, H, 80, "DUNGEON CRAWLER", gray, shadow);
 
     /* New Game button */
     {
