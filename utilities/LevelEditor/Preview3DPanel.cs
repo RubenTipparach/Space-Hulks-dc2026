@@ -369,7 +369,8 @@ void main(){
 
         // Expand N layers of walls (extrude along normals: cardinal + diagonal corner fill)
         // Window faces block expansion in their direction (hull flush at windows)
-        for (int layer = 0; layer < (int)Math.Ceiling(State.HullPadding); layer++)
+        int layers = State.HullPadding > 0 ? Math.Max(1, (int)Math.Ceiling(State.HullPadding)) : 0;
+        for (int layer = 0; layer < layers; layer++)
         {
             // Cardinal expansion
             var toExpand = new List<(int y, int x)>();
@@ -604,7 +605,75 @@ void main(){
                         fc = Lerp(fc, RoomColors[room.Type], 0.25f);
                     FlatQuad(corrFloorTex, x0, yb, z0, x1, z1, fc);
                     Color cc = Darken(fc, 0.7f);
-                    FlatQuad(corrCeilTex, x0, yt, z1, x1, z0, cc);
+
+                    // If exterior is on, conform ceiling to hull shape (inset + chamfer)
+                    if (_hullInside != null && _hullInside[gy, gx])
+                    {
+                        float hc = State.HullCorner * Cell;
+                        float hf = (float)(Math.Ceiling(State.HullPadding) - State.HullPadding) * Cell;
+
+                        bool hoN = !_hullInside[gy - 1, gx];
+                        bool hoS = !_hullInside[gy + 1, gx];
+                        bool hoW = !_hullInside[gy, gx - 1];
+                        bool hoE = !_hullInside[gy, gx + 1];
+
+                        float hx0 = hoW ? x0 + hf : x0;
+                        float hx1 = hoE ? x1 - hf : x1;
+                        float hz0 = hoN ? z0 + hf : z0;
+                        float hz1 = hoS ? z1 - hf : z1;
+
+                        if (hc <= 0 && hf <= 0)
+                        {
+                            FlatQuad(corrCeilTex, x0, yt, z1, x1, z0, cc);
+                        }
+                        else
+                        {
+                            bool hcNW = hoN && hoW;
+                            bool hcNE = hoN && hoE;
+                            bool hcSW = hoS && hoW;
+                            bool hcSE = hoS && hoE;
+
+                            float hcc = Math.Max(hf, hc); // concave clip uses hull corner or fractional inset
+                            bool hccNW = hcc > 0 && !hoN && !hoW && !_hullInside[gy - 1, gx - 1];
+                            bool hccNE = hcc > 0 && !hoN && !hoE && !_hullInside[gy - 1, gx + 1];
+                            bool hccSE = hcc > 0 && !hoS && !hoE && !_hullInside[gy + 1, gx + 1];
+                            bool hccSW = hcc > 0 && !hoS && !hoW && !_hullInside[gy + 1, gx - 1];
+
+                            var cpts = new List<(float x, float z)>(12);
+                            if (hcNW)       { cpts.Add((hx0, hz0 + hc)); cpts.Add((hx0 + hc, hz0)); }
+                            else if (hccNW) { cpts.Add((x0, z0 + hcc)); cpts.Add((x0 + hcc, z0)); }
+                            else            cpts.Add((hx0, hz0));
+
+                            if (hcNE)       { cpts.Add((hx1 - hc, hz0)); cpts.Add((hx1, hz0 + hc)); }
+                            else if (hccNE) { cpts.Add((x1 - hcc, z0)); cpts.Add((x1, z0 + hcc)); }
+                            else            cpts.Add((hx1, hz0));
+
+                            if (hcSE)       { cpts.Add((hx1, hz1 - hc)); cpts.Add((hx1 - hc, hz1)); }
+                            else if (hccSE) { cpts.Add((x1, z1 - hcc)); cpts.Add((x1 - hcc, z1)); }
+                            else            cpts.Add((hx1, hz1));
+
+                            if (hcSW)       { cpts.Add((hx0 + hc, hz1)); cpts.Add((hx0, hz1 - hc)); }
+                            else if (hccSW) { cpts.Add((x0 + hcc, z1)); cpts.Add((x0, z1 - hcc)); }
+                            else            cpts.Add((hx0, hz1));
+
+                            float cmx = (x0 + x1) * 0.5f, cmz = (z0 + z1) * 0.5f;
+                            float cinvW = 1f / (x1 - x0), cinvH = 1f / (z1 - z0);
+                            for (int ci = 0; ci < cpts.Count; ci++)
+                            {
+                                var ca = cpts[ci];
+                                var cb = cpts[(ci + 1) % cpts.Count];
+                                Tri(corrCeilTex,
+                                    cmx, yt, cmz, 0.5f, 0.5f,
+                                    ca.x, yt, ca.z, (ca.x - x0) * cinvW, (ca.z - z0) * cinvH,
+                                    cb.x, yt, cb.z, (cb.x - x0) * cinvW, (cb.z - z0) * cinvH,
+                                    cc);
+                            }
+                        }
+                    }
+                    else
+                    {
+                        FlatQuad(corrCeilTex, x0, yt, z1, x1, z0, cc);
+                    }
                 }
             }
         }
@@ -634,6 +703,7 @@ void main(){
         Color sE = Darken(ec, 0.75f);
 
         float c = State.HullCorner * Cell; // chamfer offset
+        float f = (float)(Math.Ceiling(State.HullPadding) - State.HullPadding) * Cell; // fractional inset
         Color sD = Darken(ec, 0.67f); // diagonal face color
 
         for (int gy = 1; gy <= h; gy++)
@@ -651,6 +721,12 @@ void main(){
                 bool oW = !_hullInside[gy, gx - 1];
                 bool oE = !_hullInside[gy, gx + 1];
 
+                // Inset exposed faces by fractional padding remainder
+                float ex0 = oW ? x0 + f : x0;
+                float ex1 = oE ? x1 - f : x1;
+                float ez0 = oN ? z0 + f : z0;
+                float ez1 = oS ? z1 - f : z1;
+
                 // Detect convex corners
                 bool cNW = oN && oW && c > 0;
                 bool cNE = oN && oE && c > 0;
@@ -658,96 +734,168 @@ void main(){
                 bool cSE = oS && oE && c > 0;
 
                 // Per-face window texture selection
-                // North wall (x0,z0) to (x1,z0) — trimmed at corners
+                // North wall at ez0, spanning ex0 to ex1
                 if (oN)
                 {
                     int ft = _winSet != null && _winSet.Contains((gx, gy, WallDir.North)) ? extWin : extW;
-                    float nx0 = cNW ? x0 + c : x0;
-                    float nx1 = cNE ? x1 - c : x1;
+                    float nx0 = cNW ? ex0 + c : ex0;
+                    float nx1 = cNE ? ex1 - c : ex1;
                     if (nx0 < nx1)
-                        WallQuad(ft, nx0, yb, z0, nx1, yb, z0, nx1, yt, z0, nx0, yt, z0, sN);
+                        WallQuad(ft, nx0, yb, ez0, nx1, yb, ez0, nx1, yt, ez0, nx0, yt, ez0, sN);
                 }
-                // South wall (x1,z1) to (x0,z1)
+                // South wall at ez1
                 if (oS)
                 {
                     int ft = _winSet != null && _winSet.Contains((gx, gy, WallDir.South)) ? extWin : extW;
-                    float sx0 = cSW ? x0 + c : x0;
-                    float sx1 = cSE ? x1 - c : x1;
+                    float sx0 = cSW ? ex0 + c : ex0;
+                    float sx1 = cSE ? ex1 - c : ex1;
                     if (sx0 < sx1)
-                        WallQuad(ft, sx1, yb, z1, sx0, yb, z1, sx0, yt, z1, sx1, yt, z1, sN);
+                        WallQuad(ft, sx1, yb, ez1, sx0, yb, ez1, sx0, yt, ez1, sx1, yt, ez1, sN);
                 }
-                // West wall (x0,z1) to (x0,z0)
+                // West wall at ex0
                 if (oW)
                 {
                     int ft = _winSet != null && _winSet.Contains((gx, gy, WallDir.West)) ? extWin : extW;
-                    float wz0 = cNW ? z0 + c : z0;
-                    float wz1 = cSW ? z1 - c : z1;
+                    float wz0 = cNW ? ez0 + c : ez0;
+                    float wz1 = cSW ? ez1 - c : ez1;
                     if (wz0 < wz1)
-                        WallQuad(ft, x0, yb, wz1, x0, yb, wz0, x0, yt, wz0, x0, yt, wz1, sE);
+                        WallQuad(ft, ex0, yb, wz1, ex0, yb, wz0, ex0, yt, wz0, ex0, yt, wz1, sE);
                 }
-                // East wall (x1,z0) to (x1,z1)
+                // East wall at ex1
                 if (oE)
                 {
                     int ft = _winSet != null && _winSet.Contains((gx, gy, WallDir.East)) ? extWin : extW;
-                    float ez0 = cNE ? z0 + c : z0;
-                    float ez1 = cSE ? z1 - c : z1;
-                    if (ez0 < ez1)
-                        WallQuad(ft, x1, yb, ez0, x1, yb, ez1, x1, yt, ez1, x1, yt, ez0, sE);
+                    float wz0e = cNE ? ez0 + c : ez0;
+                    float wz1e = cSE ? ez1 - c : ez1;
+                    if (wz0e < wz1e)
+                        WallQuad(ft, ex1, yb, wz0e, ex1, yb, wz1e, ex1, yt, wz1e, ex1, yt, wz0e, sE);
                 }
 
                 // Diagonal chamfer walls at corners (always use base exterior texture)
                 if (cNW)
-                    WallQuad(extW, x0, yb, z0 + c, x0 + c, yb, z0, x0 + c, yt, z0, x0, yt, z0 + c, sD);
+                    WallQuad(extW, ex0, yb, ez0 + c, ex0 + c, yb, ez0, ex0 + c, yt, ez0, ex0, yt, ez0 + c, sD);
                 if (cNE)
-                    WallQuad(extW, x1 - c, yb, z0, x1, yb, z0 + c, x1, yt, z0 + c, x1 - c, yt, z0, sD);
+                    WallQuad(extW, ex1 - c, yb, ez0, ex1, yb, ez0 + c, ex1, yt, ez0 + c, ex1 - c, yt, ez0, sD);
                 if (cSW)
-                    WallQuad(extW, x0 + c, yb, z1, x0, yb, z1 - c, x0, yt, z1 - c, x0 + c, yt, z1, sD);
+                    WallQuad(extW, ex0 + c, yb, ez1, ex0, yb, ez1 - c, ex0, yt, ez1 - c, ex0 + c, yt, ez1, sD);
                 if (cSE)
-                    WallQuad(extW, x1, yb, z1 - c, x1 - c, yb, z1, x1 - c, yt, z1, x1, yt, z1 - c, sD);
+                    WallQuad(extW, ex1, yb, ez1 - c, ex1 - c, yb, ez1, ex1 - c, yt, ez1, ex1, yt, ez1 - c, sD);
             }
         }
 
-        // Roof: cover inside cells where no floor exists above, with chamfered corners
-        if (ShowRoof)
+        // Fill concave corner gaps caused by fractional padding inset or hull corner
+        float ccFill = Math.Max(f, c); // concave corner fill size
+        if (ccFill > 0)
         {
-            int roofTex = alien ? Tex("bricks") : Tex("hub_ceiling");
-            Color rc = Darken(ec, 0.85f);
-            float roofY = _yOff + ExtH;
             for (int gy = 1; gy <= h; gy++)
             {
                 for (int gx = 1; gx <= w; gx++)
                 {
-                    if (!_hullInside[gy, gx] || HasFloorAbove(floor, gx, gy)) continue;
+                    if (!_hullInside[gy, gx]) continue;
+                    float yb = _yOff, yt = _yOff + ExtH;
+
+                    bool iN = _hullInside[gy - 1, gx];
+                    bool iS = _hullInside[gy + 1, gx];
+                    bool iW = _hullInside[gy, gx - 1];
+                    bool iE = _hullInside[gy, gx + 1];
+
+                    // NE concave: north and east inside, diagonal NE outside
+                    if (iN && iE && !_hullInside[gy - 1, gx + 1])
+                    {
+                        float xb = gx * Cell, zb = (gy - 1) * Cell;
+                        WallQuad(extW, xb - ccFill, yb, zb, xb, yb, zb + ccFill, xb, yt, zb + ccFill, xb - ccFill, yt, zb, sD);
+                    }
+                    // NW concave
+                    if (iN && iW && !_hullInside[gy - 1, gx - 1])
+                    {
+                        float xb = (gx - 1) * Cell, zb = (gy - 1) * Cell;
+                        WallQuad(extW, xb, yb, zb + ccFill, xb + ccFill, yb, zb, xb + ccFill, yt, zb, xb, yt, zb + ccFill, sD);
+                    }
+                    // SE concave
+                    if (iS && iE && !_hullInside[gy + 1, gx + 1])
+                    {
+                        float xb = gx * Cell, zb = gy * Cell;
+                        WallQuad(extW, xb, yb, zb - ccFill, xb - ccFill, yb, zb, xb - ccFill, yt, zb, xb, yt, zb - ccFill, sD);
+                    }
+                    // SW concave
+                    if (iS && iW && !_hullInside[gy + 1, gx - 1])
+                    {
+                        float xb = (gx - 1) * Cell, zb = gy * Cell;
+                        WallQuad(extW, xb + ccFill, yb, zb, xb, yb, zb - ccFill, xb, yt, zb - ccFill, xb + ccFill, yt, zb, sD);
+                    }
+                }
+            }
+        }
+
+        // Roof + bottom hull plates: cover inside cells with chamfered/inset polygons
+        if (ShowRoof)
+        {
+            int hullTex = alien ? Tex("bricks") : Tex("roof");
+            if (hullTex == 0) hullTex = extW; // fallback
+            Color rc = Darken(ec, 0.85f);
+            float roofY = _yOff + ExtH;
+            float bottomY = _yOff;
+
+            for (int gy = 1; gy <= h; gy++)
+            {
+                for (int gx = 1; gx <= w; gx++)
+                {
+                    if (!_hullInside[gy, gx]) continue;
 
                     float x0 = (gx - 1) * Cell, x1 = gx * Cell;
                     float z0 = (gy - 1) * Cell, z1 = gy * Cell;
-
-                    if (c <= 0)
-                    {
-                        FlatQuad(roofTex, x0, roofY, z1, x1, z0, rc);
-                        continue;
-                    }
 
                     bool oN = !_hullInside[gy - 1, gx];
                     bool oS = !_hullInside[gy + 1, gx];
                     bool oW = !_hullInside[gy, gx - 1];
                     bool oE = !_hullInside[gy, gx + 1];
 
+                    // Inset exposed faces by fractional padding remainder
+                    float rx0 = oW ? x0 + f : x0;
+                    float rx1 = oE ? x1 - f : x1;
+                    float rz0 = oN ? z0 + f : z0;
+                    float rz1 = oS ? z1 - f : z1;
+
+                    bool hasRoof = !HasFloorAbove(floor, gx, gy);
+
+                    if (c <= 0 && f <= 0)
+                    {
+                        if (hasRoof)
+                            FlatQuad(hullTex, x0, roofY, z1, x1, z0, rc);
+                        FlatQuad(hullTex, x0, bottomY, z0, x1, z1, rc);
+                        continue;
+                    }
+
+                    // Convex corners (both faces exposed)
                     bool cNW = oN && oW;
                     bool cNE = oN && oE;
                     bool cSW = oS && oW;
                     bool cSE = oS && oE;
 
+                    // Concave corners (neither face exposed but diagonal is outside)
+                    float cc = Math.Max(f, c); // concave clip uses hull corner or fractional inset
+                    bool ccNW = cc > 0 && !oN && !oW && !_hullInside[gy - 1, gx - 1];
+                    bool ccNE = cc > 0 && !oN && !oE && !_hullInside[gy - 1, gx + 1];
+                    bool ccSE = cc > 0 && !oS && !oE && !_hullInside[gy + 1, gx + 1];
+                    bool ccSW = cc > 0 && !oS && !oW && !_hullInside[gy + 1, gx - 1];
+
                     // Build polygon vertices CW from top-left
-                    var pts = new List<(float x, float z)>(8);
-                    if (cNW) { pts.Add((x0, z0 + c)); pts.Add((x0 + c, z0)); }
-                    else pts.Add((x0, z0));
-                    if (cNE) { pts.Add((x1 - c, z0)); pts.Add((x1, z0 + c)); }
-                    else pts.Add((x1, z0));
-                    if (cSE) { pts.Add((x1, z1 - c)); pts.Add((x1 - c, z1)); }
-                    else pts.Add((x1, z1));
-                    if (cSW) { pts.Add((x0 + c, z1)); pts.Add((x0, z1 - c)); }
-                    else pts.Add((x0, z1));
+                    var pts = new List<(float x, float z)>(12);
+                    if (cNW)       { pts.Add((rx0, rz0 + c)); pts.Add((rx0 + c, rz0)); }
+                    else if (ccNW) { pts.Add((x0, z0 + cc)); pts.Add((x0 + cc, z0)); }
+                    else           pts.Add((rx0, rz0));
+
+                    if (cNE)       { pts.Add((rx1 - c, rz0)); pts.Add((rx1, rz0 + c)); }
+                    else if (ccNE) { pts.Add((x1 - cc, z0)); pts.Add((x1, z0 + cc)); }
+                    else           pts.Add((rx1, rz0));
+
+                    if (cSE)       { pts.Add((rx1, rz1 - c)); pts.Add((rx1 - c, rz1)); }
+                    else if (ccSE) { pts.Add((x1, z1 - cc)); pts.Add((x1 - cc, z1)); }
+                    else           pts.Add((rx1, rz1));
+
+                    if (cSW)       { pts.Add((rx0 + c, rz1)); pts.Add((rx0, rz1 - c)); }
+                    else if (ccSW) { pts.Add((x0 + cc, z1)); pts.Add((x0, z1 - cc)); }
+                    else           pts.Add((rx0, rz1));
 
                     // Triangle fan from center
                     float cx = (x0 + x1) * 0.5f, cz = (z0 + z1) * 0.5f;
@@ -757,10 +905,18 @@ void main(){
                     {
                         var a = pts[i];
                         var b = pts[(i + 1) % pts.Count];
-                        Tri(roofTex,
-                            cx, roofY, cz, cu, cv,
-                            b.x, roofY, b.z, (b.x - x0) * invW, (b.z - z0) * invH,
-                            a.x, roofY, a.z, (a.x - x0) * invW, (a.z - z0) * invH,
+                        // Roof (top) — CW winding facing up
+                        if (hasRoof)
+                            Tri(hullTex,
+                                cx, roofY, cz, cu, cv,
+                                b.x, roofY, b.z, (b.x - x0) * invW, (b.z - z0) * invH,
+                                a.x, roofY, a.z, (a.x - x0) * invW, (a.z - z0) * invH,
+                                rc);
+                        // Bottom hull plate — CCW winding facing down
+                        Tri(hullTex,
+                            cx, bottomY, cz, cu, cv,
+                            a.x, bottomY, a.z, (a.x - x0) * invW, (a.z - z0) * invH,
+                            b.x, bottomY, b.z, (b.x - x0) * invW, (b.z - z0) * invH,
                             rc);
                     }
                 }

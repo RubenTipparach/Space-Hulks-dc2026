@@ -324,7 +324,8 @@ public class GridPanel : Panel
         }
 
         // Expand N layers of walls (extrude along normals: cardinal + diagonal corner fill)
-        for (int layer = 0; layer < (int)Math.Ceiling(State.HullPadding); layer++)
+        int layers = State.HullPadding > 0 ? Math.Max(1, (int)Math.Ceiling(State.HullPadding)) : 0;
+        for (int layer = 0; layer < layers; layer++)
         {
             // Cardinal expansion
             var toExpand = new List<(int y, int x)>();
@@ -368,18 +369,25 @@ public class GridPanel : Panel
         // Draw perimeter lines where inside meets non-inside
         using var pen = new Pen(Color.FromArgb(200, 40, 120, 255), 2);
         float cp = State.HullCorner * CellSize; // chamfer offset in pixels
+        float fp = (float)(Math.Ceiling(State.HullPadding) - State.HullPadding) * CellSize; // fractional inset in pixels
         for (int gy = 1; gy <= h; gy++)
         {
             for (int gx = 1; gx <= w; gx++)
             {
                 if (!inside[gy, gx]) continue;
-                int px = Margin + (gx - 1) * CellSize;
-                int py = MarginY + (gy - 1) * CellSize;
+                float px = Margin + (gx - 1) * CellSize;
+                float py = MarginY + (gy - 1) * CellSize;
 
                 bool oN = !inside[gy - 1, gx];
                 bool oS = !inside[gy + 1, gx];
                 bool oW = !inside[gy, gx - 1];
                 bool oE = !inside[gy, gx + 1];
+
+                // Inset exposed faces by fractional padding remainder
+                float ix0 = oW ? px + fp : px;
+                float ix1 = oE ? px + CellSize - fp : px + CellSize;
+                float iy0 = oN ? py + fp : py;
+                float iy1 = oS ? py + CellSize - fp : py + CellSize;
 
                 bool cNW = oN && oW && cp > 0;
                 bool cNE = oN && oE && cp > 0;
@@ -388,34 +396,64 @@ public class GridPanel : Panel
 
                 if (oN) // north edge
                 {
-                    float nx0 = cNW ? px + cp : px;
-                    float nx1 = cNE ? px + CellSize - cp : px + CellSize;
-                    if (nx0 < nx1) g.DrawLine(pen, nx0, py, nx1, py);
+                    float nx0 = cNW ? ix0 + cp : ix0;
+                    float nx1 = cNE ? ix1 - cp : ix1;
+                    if (nx0 < nx1) g.DrawLine(pen, nx0, iy0, nx1, iy0);
                 }
                 if (oS) // south edge
                 {
-                    float sx0 = cSW ? px + cp : px;
-                    float sx1 = cSE ? px + CellSize - cp : px + CellSize;
-                    if (sx0 < sx1) g.DrawLine(pen, sx0, py + CellSize, sx1, py + CellSize);
+                    float sx0 = cSW ? ix0 + cp : ix0;
+                    float sx1 = cSE ? ix1 - cp : ix1;
+                    if (sx0 < sx1) g.DrawLine(pen, sx0, iy1, sx1, iy1);
                 }
                 if (oW) // west edge
                 {
-                    float wy0 = cNW ? py + cp : py;
-                    float wy1 = cSW ? py + CellSize - cp : py + CellSize;
-                    if (wy0 < wy1) g.DrawLine(pen, px, wy0, px, wy1);
+                    float wy0 = cNW ? iy0 + cp : iy0;
+                    float wy1 = cSW ? iy1 - cp : iy1;
+                    if (wy0 < wy1) g.DrawLine(pen, ix0, wy0, ix0, wy1);
                 }
                 if (oE) // east edge
                 {
-                    float ey0 = cNE ? py + cp : py;
-                    float ey1 = cSE ? py + CellSize - cp : py + CellSize;
-                    if (ey0 < ey1) g.DrawLine(pen, px + CellSize, ey0, px + CellSize, ey1);
+                    float ey0 = cNE ? iy0 + cp : iy0;
+                    float ey1 = cSE ? iy1 - cp : iy1;
+                    if (ey0 < ey1) g.DrawLine(pen, ix1, ey0, ix1, ey1);
                 }
 
                 // Diagonal chamfer lines at corners
-                if (cNW) g.DrawLine(pen, px, py + cp, px + cp, py);
-                if (cNE) g.DrawLine(pen, px + CellSize - cp, py, px + CellSize, py + cp);
-                if (cSW) g.DrawLine(pen, px + cp, py + CellSize, px, py + CellSize - cp);
-                if (cSE) g.DrawLine(pen, px + CellSize, py + CellSize - cp, px + CellSize - cp, py + CellSize);
+                if (cNW) g.DrawLine(pen, ix0, iy0 + cp, ix0 + cp, iy0);
+                if (cNE) g.DrawLine(pen, ix1 - cp, iy0, ix1, iy0 + cp);
+                if (cSW) g.DrawLine(pen, ix0 + cp, iy1, ix0, iy1 - cp);
+                if (cSE) g.DrawLine(pen, ix1, iy1 - cp, ix1 - cp, iy1);
+
+                // Concave corner fill lines (diagonal fills at L-junctions)
+                if (fp > 0)
+                {
+                    bool iN = inside[gy - 1, gx];
+                    bool iS = inside[gy + 1, gx];
+                    bool iW = inside[gy, gx - 1];
+                    bool iE = inside[gy, gx + 1];
+
+                    if (iN && iE && !inside[gy - 1, gx + 1])
+                    {
+                        float xb = Margin + gx * CellSize, zb = MarginY + (gy - 1) * CellSize;
+                        g.DrawLine(pen, xb - fp, zb, xb, zb + fp);
+                    }
+                    if (iN && iW && !inside[gy - 1, gx - 1])
+                    {
+                        float xb = Margin + (gx - 1) * CellSize, zb = MarginY + (gy - 1) * CellSize;
+                        g.DrawLine(pen, xb, zb + fp, xb + fp, zb);
+                    }
+                    if (iS && iE && !inside[gy + 1, gx + 1])
+                    {
+                        float xb = Margin + gx * CellSize, zb = MarginY + gy * CellSize;
+                        g.DrawLine(pen, xb, zb - fp, xb - fp, zb);
+                    }
+                    if (iS && iW && !inside[gy + 1, gx - 1])
+                    {
+                        float xb = Margin + (gx - 1) * CellSize, zb = MarginY + gy * CellSize;
+                        g.DrawLine(pen, xb + fp, zb, xb, zb - fp);
+                    }
+                }
             }
         }
     }
