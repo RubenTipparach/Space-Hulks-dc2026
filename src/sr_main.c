@@ -385,23 +385,27 @@ static void draw_title_screen(sr_framebuffer *fb_ptr) {
     {
         int bw = 100, bh = 22;
         int bx = (W - bw) / 2, by = 120;
-        bool sel = (title_cursor == 0);
-        combat_draw_rect(px, W, H, bx, by, bw, bh, sel ? 0xFF222244 : 0xFF111122);
-        combat_draw_rect_outline(px, W, H, bx, by, bw, bh, sel ? yellow : gray);
-        int tx = bx + (bw - sr_text_width("NEW GAME")) / 2;
-        sr_draw_text_shadow(px, W, H, tx, by + 7, "NEW GAME", sel ? yellow : white, shadow);
+        if (ui_button(px, W, H, bx, by, bw, bh, "NEW GAME",
+                      0xFF111122, 0xFF222244, 0xFF333366)) {
+            app_state = STATE_CLASS_SELECT;
+        }
     }
 
     /* Continue button */
     {
         int bw = 100, bh = 22;
         int bx = (W - bw) / 2, by = 150;
-        bool sel = (title_cursor == 1);
-        uint32_t col = save_exists ? (sel ? yellow : white) : 0xFF444444;
-        combat_draw_rect(px, W, H, bx, by, bw, bh, sel ? 0xFF222244 : 0xFF111122);
-        combat_draw_rect_outline(px, W, H, bx, by, bw, bh, sel ? yellow : gray);
-        int tx = bx + (bw - sr_text_width("CONTINUE")) / 2;
-        sr_draw_text_shadow(px, W, H, tx, by + 7, "CONTINUE", col, shadow);
+        if (save_exists) {
+            if (ui_button(px, W, H, bx, by, bw, bh, "CONTINUE",
+                          0xFF111122, 0xFF222244, 0xFF333366)) {
+                title_cursor = 99; /* signal continue was clicked */
+            }
+        } else {
+            combat_draw_rect(px, W, H, bx, by, bw, bh, 0xFF111122);
+            combat_draw_rect_outline(px, W, H, bx, by, bw, bh, 0xFF333333);
+            int tx = bx + (bw - sr_text_width("CONTINUE")) / 2;
+            sr_draw_text_shadow(px, W, H, tx, by + 7, "CONTINUE", 0xFF444444, shadow);
+        }
     }
 }
 
@@ -1369,6 +1373,92 @@ static void draw_class_select(sr_framebuffer *fb_ptr) {
 
 /* ── Pause menu overlay ─────────────────────────────────────────── */
 
+/* ── Starfield background (visible through windows) ─────────────── */
+
+/* ── Starfield: fixed 3D points on a sphere, projected to screen ── */
+
+#define STAR_COUNT 300
+static float star_positions[STAR_COUNT * 3]; /* x, y, z on unit sphere */
+static uint32_t star_colors[STAR_COUNT];
+static bool stars_initialized = false;
+
+static void stars_init(void) {
+    /* Deterministic seed for reproducible star positions */
+    uint32_t seed = 42;
+    for (int i = 0; i < STAR_COUNT; i++) {
+        /* Generate uniformly distributed points on unit sphere */
+        seed = seed * 1103515245u + 12345u;
+        float u = (float)(seed >> 8 & 0xFFFF) / 65535.0f;
+        seed = seed * 1103515245u + 12345u;
+        float v = (float)(seed >> 8 & 0xFFFF) / 65535.0f;
+
+        float theta = u * 2.0f * 3.14159265f;
+        float phi = acosf(2.0f * v - 1.0f);
+
+        star_positions[i * 3 + 0] = sinf(phi) * cosf(theta);
+        star_positions[i * 3 + 1] = sinf(phi) * sinf(theta);
+        star_positions[i * 3 + 2] = cosf(phi);
+
+        /* Random brightness */
+        seed = seed * 1103515245u + 12345u;
+        int brightness = 100 + (int)(seed >> 16 & 0x9F);
+        if (brightness > 255) brightness = 255;
+        star_colors[i] = 0xFF000000 | (uint32_t)(brightness << 16 | brightness << 8 | brightness);
+    }
+    stars_initialized = true;
+}
+
+static void draw_starfield(sr_framebuffer *fb_ptr, const dng_player *p) {
+    if (!stars_initialized) stars_init();
+
+    uint32_t *px = fb_ptr->color;
+    int W = fb_ptr->width, H = fb_ptr->height;
+    float angle = p->angle * 6.28318f;
+    float ca = cosf(angle), sa = sinf(angle);
+
+    float fov = 70.0f * 3.14159265f / 180.0f;
+    float aspect = (float)W / (float)H;
+    float f = 1.0f / tanf(fov * 0.5f);
+
+    float star_radius = 30.0f; /* sphere radius (inside near/far clip) */
+
+    for (int i = 0; i < STAR_COUNT; i++) {
+        /* World position on sphere centered at camera */
+        float wx = star_positions[i * 3 + 0] * star_radius;
+        float wy = star_positions[i * 3 + 1] * star_radius;
+        float wz = star_positions[i * 3 + 2] * star_radius;
+
+        /* Transform to camera space (Y-axis rotation only, camera at origin) */
+        float cx = ca * wx + sa * wz;    /* right component */
+        float cy = wy;                    /* up component */
+        float cz = -sa * wx + ca * wz;   /* forward component (negative = in front) */
+
+        /* Behind camera? */
+        if (cz >= -0.1f) continue;
+
+        /* Project to screen */
+        float inv_z = -1.0f / cz;
+        float sx = (cx * f * inv_z / aspect + 1.0f) * 0.5f * W;
+        float sy = (-cy * f * inv_z + 1.0f) * 0.5f * H;
+
+        int ix = (int)sx, iy = (int)sy;
+        if (ix < 0 || ix >= W || iy < 0 || iy >= H) continue;
+
+        /* Shimmer: vary brightness per star using sin wave with unique phase */
+        uint32_t base = star_colors[i] & 0xFF;
+        float phase = (float)i * 1.7f + (float)dng_time * (1.5f + (i & 3) * 0.5f);
+        float flicker = 0.75f + 0.25f * sinf(phase);
+        int b = (int)(base * flicker);
+        if (b > 255) b = 255;
+        uint32_t col = 0xFF000000 | (uint32_t)(b << 16 | b << 8 | b);
+
+        px[iy * W + ix] = col;
+        if (ix + 1 < W) px[iy * W + ix + 1] = col;
+        if (iy + 1 < H) px[(iy + 1) * W + ix] = col;
+        if (ix + 1 < W && iy + 1 < H) px[(iy + 1) * W + ix + 1] = col;
+    }
+}
+
 static void draw_pause_menu(sr_framebuffer *fb_ptr) {
     int W = fb_ptr->width, H = fb_ptr->height;
     uint32_t *px = fb_ptr->color;
@@ -1751,6 +1841,14 @@ static void frame(void) {
 
     if (app_state == STATE_TITLE) {
         draw_title_screen(&fb);
+        /* Handle continue button click (signaled from ui_button in draw) */
+        if (title_cursor == 99) {
+            title_cursor = 1;
+            if (save_exists && game_load()) {
+                last_player_gx = dng_state.player.gx;
+                last_player_gy = dng_state.player.gy;
+            }
+        }
     } else if (app_state == STATE_INTRO) {
         draw_intro_screen(&fb);
     } else if (app_state == STATE_EPILOGUE) {
@@ -1772,6 +1870,7 @@ static void frame(void) {
         draw_combat_scene(&fb);
     } else if (app_state == STATE_SHIP_HUB) {
         dng_player_update(&g_hub.player);
+        draw_starfield(&fb, &g_hub.player);
         hub_draw_scene(&fb);
         hub_draw_hud(fb.color, fb.width, fb.height);
         hub_draw_minimap(&fb);
@@ -1836,6 +1935,7 @@ static void frame(void) {
             check_random_encounter();
 
         dng_enemies_lerp_update((float)dt);
+        draw_starfield(&fb, &dng_state.player);
         draw_dungeon_scene(&fb, &vp);
         draw_dungeon_minimap(&fb);
 
@@ -2187,28 +2287,14 @@ static void handle_screen_tap(float sx, float sy) {
     }
 
     if (app_state == STATE_TITLE) {
-        /* New Game button */
-        int bx = FB_WIDTH/2 - 50, bw = 100, bh = 22;
-        if (fx >= bx && fx <= bx + bw && fy >= 120 && fy <= 120 + bh) {
-            app_state = STATE_CLASS_SELECT;
-            return;
-        }
-        /* Continue button */
-        if (fx >= bx && fx <= bx + bw && fy >= 150 && fy <= 150 + bh && save_exists) {
-            if (game_load()) {
-                last_player_gx = dng_state.player.gx;
-                last_player_gy = dng_state.player.gy;
-                /* app_state restored by game_load() */
-            }
-            return;
-        }
+        /* Buttons handled by ui_button in draw_title_screen */
         return;
     }
 
     if (app_state == STATE_CLASS_SELECT) {
         /* Skip intro checkbox */
         {
-            int sx = FB_WIDTH/2 - 40;
+            int sx = FB_WIDTH/2 - 70;
             int sy = FB_HEIGHT - 28;
             if (fx >= sx && fx <= sx + 80 && fy >= sy && fy <= sy + 10) {
                 skip_intro = !skip_intro;
@@ -2642,6 +2728,18 @@ static void event(const sapp_event *ev) {
         return;
     }
     if (game_paused) return; /* block all other input while paused */
+
+    /* ── Debug: Ctrl+F6 = toggle window segments ─────────── */
+    if (debug_mode && ev->key_code == SAPP_KEYCODE_F6 && (ev->modifiers & SAPP_MODIFIER_CTRL)) {
+        dng_hide_windows = !dng_hide_windows;
+        return;
+    }
+
+    /* ── Debug: Ctrl+F7 = toggle interior geometry ──────────── */
+    if (debug_mode && ev->key_code == SAPP_KEYCODE_F7 && (ev->modifiers & SAPP_MODIFIER_CTRL)) {
+        dng_hide_interior = !dng_hide_interior;
+        return;
+    }
 
     /* ── Debug: Ctrl+F5 = instant win dungeon ──────────────── */
     if (debug_mode && ev->key_code == SAPP_KEYCODE_F5 && (ev->modifiers & SAPP_MODIFIER_CTRL) &&

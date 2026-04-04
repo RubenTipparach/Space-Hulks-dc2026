@@ -84,6 +84,8 @@ static int dng_light_mode = 0;
 static bool dng_show_info = false;
 static bool dng_expanded_map = false;
 static bool dng_sprites_unlit = false;  /* true = sprites skip fog tint */
+static bool dng_hide_windows = false;  /* debug: hide window wall segments */
+static bool dng_hide_interior = false; /* debug: hide all interior geometry */
 static int  dng_wall_texture = -1;      /* -1 = default ITEX_BRICK, else override */
 static int  dng_room_wall_texture = -1; /* -1 = same as wall_texture; wall faces facing room cells */
 static int  dng_floor_texture = -1;    /* -1 = default ITEX_TILE, else override */
@@ -91,7 +93,7 @@ static int  dng_ceiling_texture = -1;  /* -1 = default ITEX_WOOD, else override 
 static bool dng_skip_pillars = false;  /* true = don't draw corner pillars */
 static bool dng_skip_exterior = false; /* true = don't draw exterior hull */
 static float dng_hull_padding = 0.25f; /* hull expansion padding (in cells) */
-static float dng_hull_corner = 0.0f;  /* chamfer corner size (in cells, 0 = no chamfer) */
+static float dng_hull_corner = 0.25f; /* chamfer corner size (in cells, matches C# editor default) */
 static float (*dng_fog_fn)(float, float, float) = NULL; /* override for fog vertex intensity */
 
 /* ── Hull mask for exterior rendering ──────────────────────────── */
@@ -372,6 +374,31 @@ static void dng_draw_wall(sr_framebuffer *fb_ptr, const sr_mat4 *mvp,
     }
 }
 
+/* Exterior wall: reversed winding, unlit (no fog/lighting) */
+static void dng_draw_wall_ext(sr_framebuffer *fb_ptr, const sr_mat4 *mvp,
+                           float ax, float ay, float az,
+                           float bx, float by, float bz,
+                           float cx, float cy, float cz,
+                           float dx, float dy, float dz,
+                           const sr_indexed_texture *tex,
+                           float nx, float ny, float nz) {
+    float edge_x = bx - ax, edge_y = by - ay, edge_z = bz - az;
+    float width = sqrtf(edge_x*edge_x + edge_y*edge_y + edge_z*edge_z);
+    float vert_x = dx - ax, vert_y = dy - ay, vert_z = dz - az;
+    float height = sqrtf(vert_x*vert_x + vert_y*vert_y + vert_z*vert_z);
+    float u_scale = width / DNG_CELL_SIZE;
+    float v_scale = height / DNG_CELL_SIZE;
+
+    /* Reversed winding (d,c,b,a) + unlit (R=128 → intensity 1.0 = base color) */
+    uint32_t unlit = 0xFF808080;
+    sr_draw_quad_indexed(fb_ptr,
+        sr_vert_c(dx,dy,dz, 0,v_scale, unlit),
+        sr_vert_c(cx,cy,cz, u_scale,v_scale, unlit),
+        sr_vert_c(bx,by,bz, u_scale,0, unlit),
+        sr_vert_c(ax,ay,az, 0,0, unlit),
+        tex, mvp);
+}
+
 static void dng_draw_wall_ds(sr_framebuffer *fb_ptr, const sr_mat4 *mvp,
                               float ax, float ay, float az,
                               float bx, float by, float bz,
@@ -491,43 +518,62 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
             float z0 = (gy - 1) * DNG_CELL_SIZE;
             float z1 = gy * DNG_CELL_SIZE;
 
+            if (dng_hide_interior) continue; /* debug: skip all interior geometry */
+
             if (d->map[gy][gx] == 1) {
                 /* Wall cell — draw faces toward open cells.
                  * Pick texture per-face: room faces get room_wall_tex, corridor faces get wall_tex.
                  * Window faces get a window texture (wall_A_window). */
                 const sr_indexed_texture *win_tex_ptr = &itextures[ITEX_WALL_A_WIN];
                 uint8_t wf = d->win_faces[gy][gx];
+                /* Window faces use no pillar padding (flush with cell edge) */
                 if (gy < d->h && d->map[gy+1][gx] != 1 && dng_vis[gy+1][gx]) {
-                    const sr_indexed_texture *ft = (wf & DNG_WIN_S) ? win_tex_ptr
+                    if (!(dng_hide_windows && (wf & DNG_WIN_S))) {
+                    bool isWin = (wf & DNG_WIN_S) != 0;
+                    const sr_indexed_texture *ft = isWin ? win_tex_ptr
                         : (dng_room_at(d, gx, gy+1) >= 0) ? room_wall_tex : wall_tex;
+                    float wp2 = isWin ? 0.0f : WP;
                     dng_draw_wall(fb_ptr, &mvp,
-                        x0+WP, y_hi, z1,  x1-WP, y_hi, z1,
-                        x1-WP, y_lo, z1,  x0+WP, y_lo, z1,
+                        x0+wp2, y_hi, z1,  x1-wp2, y_hi, z1,
+                        x1-wp2, y_lo, z1,  x0+wp2, y_lo, z1,
                         ft, 0, 0, 1);
+                    }
                 }
                 if (gy > 1 && d->map[gy-1][gx] != 1 && dng_vis[gy-1][gx]) {
-                    const sr_indexed_texture *ft = (wf & DNG_WIN_N) ? win_tex_ptr
+                    if (!(dng_hide_windows && (wf & DNG_WIN_N))) {
+                    bool isWin = (wf & DNG_WIN_N) != 0;
+                    const sr_indexed_texture *ft = isWin ? win_tex_ptr
                         : (dng_room_at(d, gx, gy-1) >= 0) ? room_wall_tex : wall_tex;
+                    float wp2 = isWin ? 0.0f : WP;
                     dng_draw_wall(fb_ptr, &mvp,
-                        x1-WP, y_hi, z0,  x0+WP, y_hi, z0,
-                        x0+WP, y_lo, z0,  x1-WP, y_lo, z0,
+                        x1-wp2, y_hi, z0,  x0+wp2, y_hi, z0,
+                        x0+wp2, y_lo, z0,  x1-wp2, y_lo, z0,
                         ft, 0, 0, -1);
+                    }
                 }
                 if (gx < d->w && d->map[gy][gx+1] != 1 && dng_vis[gy][gx+1]) {
-                    const sr_indexed_texture *ft = (wf & DNG_WIN_E) ? win_tex_ptr
+                    if (!(dng_hide_windows && (wf & DNG_WIN_E))) {
+                    bool isWin = (wf & DNG_WIN_E) != 0;
+                    const sr_indexed_texture *ft = isWin ? win_tex_ptr
                         : (dng_room_at(d, gx+1, gy) >= 0) ? room_wall_tex : wall_tex;
+                    float wp2 = isWin ? 0.0f : WP;
                     dng_draw_wall(fb_ptr, &mvp,
-                        x1, y_hi, z1-WP,  x1, y_hi, z0+WP,
-                        x1, y_lo, z0+WP,  x1, y_lo, z1-WP,
+                        x1, y_hi, z1-wp2,  x1, y_hi, z0+wp2,
+                        x1, y_lo, z0+wp2,  x1, y_lo, z1-wp2,
                         ft, 1, 0, 0);
+                    }
                 }
                 if (gx > 1 && d->map[gy][gx-1] != 1 && dng_vis[gy][gx-1]) {
-                    const sr_indexed_texture *ft = (wf & DNG_WIN_W) ? win_tex_ptr
+                    if (!(dng_hide_windows && (wf & DNG_WIN_W))) {
+                    bool isWin = (wf & DNG_WIN_W) != 0;
+                    const sr_indexed_texture *ft = isWin ? win_tex_ptr
                         : (dng_room_at(d, gx-1, gy) >= 0) ? room_wall_tex : wall_tex;
+                    float wp2 = isWin ? 0.0f : WP;
                     dng_draw_wall(fb_ptr, &mvp,
-                        x0, y_hi, z0+WP,  x0, y_hi, z1-WP,
-                        x0, y_lo, z1-WP,  x0, y_lo, z0+WP,
+                        x0, y_hi, z0+wp2,  x0, y_hi, z1-wp2,
+                        x0, y_lo, z1-wp2,  x0, y_lo, z0+wp2,
                         ft, -1, 0, 0);
+                    }
                 }
             } else {
                 /* Open cell */
@@ -904,45 +950,45 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
                 bool winTexE = oE && gx < d->w && dng_has_win_face(d, gx+1, gy, DNG_WIN_W);
 
                 /* North wall — trimmed at chamfer corners */
-                if (oN) {
+                if (oN && !(dng_hide_windows && winTexN)) {
                     const sr_indexed_texture *ft = winTexN ? ext_win_tex : ext_tex;
                     float nx0 = cNW ? ex0 + ch : ex0;
                     float nx1 = cNE ? ex1 - ch : ex1;
                     if (nx0 < nx1)
-                        dng_draw_wall(fb_ptr, &mvp,
+                        dng_draw_wall_ext(fb_ptr, &mvp,
                             nx0, y_hi, ez0,  nx1, y_hi, ez0,
                             nx1, y_lo, ez0,  nx0, y_lo, ez0,
                             ft, 0, 0, -1);
                 }
                 /* South wall */
-                if (oS) {
+                if (oS && !(dng_hide_windows && winTexS)) {
                     const sr_indexed_texture *ft = winTexS ? ext_win_tex : ext_tex;
                     float sx0 = cSW ? ex0 + ch : ex0;
                     float sx1 = cSE ? ex1 - ch : ex1;
                     if (sx0 < sx1)
-                        dng_draw_wall(fb_ptr, &mvp,
+                        dng_draw_wall_ext(fb_ptr, &mvp,
                             sx1, y_hi, ez1,  sx0, y_hi, ez1,
                             sx0, y_lo, ez1,  sx1, y_lo, ez1,
                             ft, 0, 0, 1);
                 }
                 /* West wall */
-                if (oW) {
+                if (oW && !(dng_hide_windows && winTexW)) {
                     const sr_indexed_texture *ft = winTexW ? ext_win_tex : ext_tex;
                     float wz0 = cNW ? ez0 + ch : ez0;
                     float wz1 = cSW ? ez1 - ch : ez1;
                     if (wz0 < wz1)
-                        dng_draw_wall(fb_ptr, &mvp,
+                        dng_draw_wall_ext(fb_ptr, &mvp,
                             ex0, y_hi, wz1,  ex0, y_hi, wz0,
                             ex0, y_lo, wz0,  ex0, y_lo, wz1,
                             ft, -1, 0, 0);
                 }
                 /* East wall */
-                if (oE) {
+                if (oE && !(dng_hide_windows && winTexE)) {
                     const sr_indexed_texture *ft = winTexE ? ext_win_tex : ext_tex;
                     float wz0e = cNE ? ez0 + ch : ez0;
                     float wz1e = cSE ? ez1 - ch : ez1;
                     if (wz0e < wz1e)
-                        dng_draw_wall(fb_ptr, &mvp,
+                        dng_draw_wall_ext(fb_ptr, &mvp,
                             ex1, y_hi, wz0e,  ex1, y_hi, wz1e,
                             ex1, y_lo, wz1e,  ex1, y_lo, wz0e,
                             ft, 1, 0, 0);
@@ -950,22 +996,22 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
 
                 /* Diagonal chamfer walls at convex corners */
                 if (cNW)
-                    dng_draw_wall(fb_ptr, &mvp,
+                    dng_draw_wall_ext(fb_ptr, &mvp,
                         ex0, y_hi, ez0+ch,  ex0+ch, y_hi, ez0,
                         ex0+ch, y_lo, ez0,  ex0, y_lo, ez0+ch,
                         ext_tex, -0.707f, 0, -0.707f);
                 if (cNE)
-                    dng_draw_wall(fb_ptr, &mvp,
+                    dng_draw_wall_ext(fb_ptr, &mvp,
                         ex1-ch, y_hi, ez0,  ex1, y_hi, ez0+ch,
                         ex1, y_lo, ez0+ch,  ex1-ch, y_lo, ez0,
                         ext_tex, 0.707f, 0, -0.707f);
                 if (cSW)
-                    dng_draw_wall(fb_ptr, &mvp,
+                    dng_draw_wall_ext(fb_ptr, &mvp,
                         ex0+ch, y_hi, ez1,  ex0, y_hi, ez1-ch,
                         ex0, y_lo, ez1-ch,  ex0+ch, y_lo, ez1,
                         ext_tex, -0.707f, 0, 0.707f);
                 if (cSE)
-                    dng_draw_wall(fb_ptr, &mvp,
+                    dng_draw_wall_ext(fb_ptr, &mvp,
                         ex1, y_hi, ez1-ch,  ex1-ch, y_hi, ez1,
                         ex1-ch, y_lo, ez1,  ex1, y_lo, ez1-ch,
                         ext_tex, 0.707f, 0, 0.707f);
@@ -989,7 +1035,7 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
                         if (iN && iE && !(gy > 1 && gx < d->w && dng_hull_inside[gy-1][gx+1])
                             && !dng_is_win_cell(d, gx+1, gy-1)) {
                             float xb = gx * DNG_CELL_SIZE, zb = (gy-1) * DNG_CELL_SIZE;
-                            dng_draw_wall(fb_ptr, &mvp,
+                            dng_draw_wall_ext(fb_ptr, &mvp,
                                 xb-ccFill, y_hi, zb,  xb, y_hi, zb+ccFill,
                                 xb, y_lo, zb+ccFill,  xb-ccFill, y_lo, zb,
                                 ext_tex, -0.707f, 0, -0.707f);
@@ -998,7 +1044,7 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
                         if (iN && iW && !(gy > 1 && gx > 1 && dng_hull_inside[gy-1][gx-1])
                             && !dng_is_win_cell(d, gx-1, gy-1)) {
                             float xb = (gx-1) * DNG_CELL_SIZE, zb = (gy-1) * DNG_CELL_SIZE;
-                            dng_draw_wall(fb_ptr, &mvp,
+                            dng_draw_wall_ext(fb_ptr, &mvp,
                                 xb, y_hi, zb+ccFill,  xb+ccFill, y_hi, zb,
                                 xb+ccFill, y_lo, zb,  xb, y_lo, zb+ccFill,
                                 ext_tex, 0.707f, 0, -0.707f);
@@ -1007,7 +1053,7 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
                         if (iS && iE && !(gy < d->h && gx < d->w && dng_hull_inside[gy+1][gx+1])
                             && !dng_is_win_cell(d, gx+1, gy+1)) {
                             float xb = gx * DNG_CELL_SIZE, zb = gy * DNG_CELL_SIZE;
-                            dng_draw_wall(fb_ptr, &mvp,
+                            dng_draw_wall_ext(fb_ptr, &mvp,
                                 xb, y_hi, zb-ccFill,  xb-ccFill, y_hi, zb,
                                 xb-ccFill, y_lo, zb,  xb, y_lo, zb-ccFill,
                                 ext_tex, 0.707f, 0, 0.707f);
@@ -1016,7 +1062,7 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
                         if (iS && iW && !(gy < d->h && gx > 1 && dng_hull_inside[gy+1][gx-1])
                             && !dng_is_win_cell(d, gx-1, gy+1)) {
                             float xb = (gx-1) * DNG_CELL_SIZE, zb = gy * DNG_CELL_SIZE;
-                            dng_draw_wall(fb_ptr, &mvp,
+                            dng_draw_wall_ext(fb_ptr, &mvp,
                                 xb+ccFill, y_hi, zb,  xb, y_hi, zb-ccFill,
                                 xb, y_lo, zb-ccFill,  xb+ccFill, y_lo, zb,
                                 ext_tex, -0.707f, 0, 0.707f);
@@ -1027,84 +1073,116 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
         }
 
         /* ── Pass 3: Window connector walls ─────────────────────── */
-        /* Fill gaps between flush window faces and inset neighbors
-         * (port of HullGeometry.ComputeWindowConnectors) */
+        /* Exact port of HullGeometry.ComputeWindowConnectors from C#.
+         * Iterates per window face direction independently (N, S, E, W). */
+        static bool _wc_logged = false;
         if (f > 0) {
+            if (!_wc_logged) printf("[hull] Pass 3: window connectors (f=%.3f, ch=%.3f)\n", f, ch);
             int w = d->w, h = d->h;
-            for (int gy = 1; gy <= h; gy++) {
-                for (int gx = 1; gx <= w; gx++) {
-                    uint8_t wf = d->win_faces[gy][gx];
-                    if (!wf) continue;
+            /* Process each direction separately, matching C# foreach over winSet */
+            for (int dir = 0; dir < 4; dir++) {
+                uint8_t dir_bit = (dir == 0) ? DNG_WIN_N : (dir == 1) ? DNG_WIN_S
+                                : (dir == 2) ? DNG_WIN_E : DNG_WIN_W;
 
-                    /* N/S facing windows */
-                    if (wf & (DNG_WIN_N | DNG_WIN_S)) {
-                        int dir_s = (wf & DNG_WIN_S) ? 1 : -1; /* +1=south, -1=north */
-                        int iy = gy + dir_s; /* inside cell row */
-                        if (iy < 1 || iy > h || !dng_hull_inside[iy][gx]) goto skip_ns;
-                        {
-                            float wz = (wf & DNG_WIN_S) ? gy * DNG_CELL_SIZE : (gy-1) * DNG_CELL_SIZE;
-                            float iz = (wf & DNG_WIN_S) ? wz - f : wz + f;
-                            float minz = wz < iz ? wz : iz, maxz = wz > iz ? wz : iz;
-                            int oy = (wf & DNG_WIN_S) ? iy + 1 : iy - 1; /* outside row for neighbor check */
+                for (int gy = 1; gy <= h; gy++) {
+                    for (int gx = 1; gx <= w; gx++) {
+                        if (!(d->win_faces[gy][gx] & dir_bit)) continue;
+
+                        if (dir == 0 || dir == 1) {
+                            /* N/S facing window on wall cell (gx,gy) */
+                            const char *dname = (dir == 0) ? "N" : "S";
+                            int iy = (dir == 1) ? gy + 1 : gy - 1; /* inside cell */
+                            if (iy < 1 || iy > h) { if (!_wc_logged) printf("[wc] %s (%d,%d) skip: iy=%d OOB\n", dname, gx, gy, iy); continue; }
+                            if (!dng_hull_inside[iy][gx]) { if (!_wc_logged) printf("[wc] %s (%d,%d) skip: hull_inside[%d][%d]=false\n", dname, gx, gy, iy, gx); continue; }
+
+                            if (!_wc_logged) printf("[wc] %s (%d,%d) iy=%d ACTIVE\n", dname, gx, gy, iy);
+
+                            float wz = (dir == 1) ? gy * DNG_CELL_SIZE : (gy - 1) * DNG_CELL_SIZE;
+                            float iz = (dir == 1) ? wz - f : wz + f;
+                            float minz = wz < iz ? wz : iz;
+                            float maxz = wz > iz ? wz : iz;
+                            int oy = (dir == 1) ? iy + 1 : iy - 1; /* outside row */
+
                             /* Left neighbor connector */
-                            if (gx-1 >= 1 && dng_hull_inside[iy][gx-1]
-                                && (oy < 1 || oy > h || !dng_hull_inside[oy][gx-1])
-                                && !dng_is_win_cell(d, gx-1, gy)) {
-                                float bx = (gx-1) * DNG_CELL_SIZE;
-                                dng_draw_wall(fb_ptr, &mvp,
+                            bool leftOk = gx - 1 >= 1 && dng_hull_inside[iy][gx - 1]
+                                && (oy < 1 || oy > h || !dng_hull_inside[oy][gx - 1])
+                                && !dng_is_win_cell(d, gx - 1, gy);
+                            if (!_wc_logged) printf("[wc]   left: gx-1=%d hull[%d][%d]=%d hull[%d][%d]=%d winCell(%d,%d)=%d => %s\n",
+                                gx-1, iy, gx-1, (gx-1>=1 ? dng_hull_inside[iy][gx-1] : -1),
+                                oy, gx-1, (oy>=1&&oy<=h&&gx-1>=1 ? dng_hull_inside[oy][gx-1] : -1),
+                                gx-1, gy, dng_is_win_cell(d, gx-1, gy), leftOk ? "EMIT" : "skip");
+                            if (leftOk) {
+                                float bx = (gx - 1) * DNG_CELL_SIZE;
+                                dng_draw_wall_ext(fb_ptr, &mvp,
                                     bx, y_hi, minz,  bx, y_hi, maxz,
                                     bx, y_lo, maxz,  bx, y_lo, minz,
                                     ext_tex, -1, 0, 0);
                             }
                             /* Right neighbor connector */
-                            if (gx+1 <= w && dng_hull_inside[iy][gx+1]
-                                && (oy < 1 || oy > h || !dng_hull_inside[oy][gx+1])
-                                && !dng_is_win_cell(d, gx+1, gy)) {
+                            bool rightOk = gx + 1 <= w && dng_hull_inside[iy][gx + 1]
+                                && (oy < 1 || oy > h || !dng_hull_inside[oy][gx + 1])
+                                && !dng_is_win_cell(d, gx + 1, gy);
+                            if (!_wc_logged) printf("[wc]   right: gx+1=%d hull[%d][%d]=%d hull[%d][%d]=%d winCell(%d,%d)=%d => %s\n",
+                                gx+1, iy, gx+1, (gx+1<=w ? dng_hull_inside[iy][gx+1] : -1),
+                                oy, gx+1, (oy>=1&&oy<=h&&gx+1<=w ? dng_hull_inside[oy][gx+1] : -1),
+                                gx+1, gy, dng_is_win_cell(d, gx+1, gy), rightOk ? "EMIT" : "skip");
+                            if (rightOk) {
                                 float bx = gx * DNG_CELL_SIZE;
-                                dng_draw_wall(fb_ptr, &mvp,
+                                dng_draw_wall_ext(fb_ptr, &mvp,
                                     bx, y_hi, minz,  bx, y_hi, maxz,
                                     bx, y_lo, maxz,  bx, y_lo, minz,
                                     ext_tex, 1, 0, 0);
                             }
-                        }
-                        skip_ns:;
-                    }
+                        } else {
+                            /* E/W facing window on wall cell (gx,gy) */
+                            const char *dname = (dir == 2) ? "E" : "W";
+                            int ix = (dir == 2) ? gx + 1 : gx - 1; /* inside cell */
+                            if (ix < 1 || ix > w) { if (!_wc_logged) printf("[wc] %s (%d,%d) skip: ix=%d OOB\n", dname, gx, gy, ix); continue; }
+                            if (!dng_hull_inside[gy][ix]) { if (!_wc_logged) printf("[wc] %s (%d,%d) skip: hull_inside[%d][%d]=false\n", dname, gx, gy, gy, ix); continue; }
 
-                    /* E/W facing windows */
-                    if (wf & (DNG_WIN_E | DNG_WIN_W)) {
-                        int dir_e = (wf & DNG_WIN_E) ? 1 : -1;
-                        int ix = gx + dir_e;
-                        if (ix < 1 || ix > w || !dng_hull_inside[gy][ix]) goto skip_ew;
-                        {
-                            float wx = (wf & DNG_WIN_E) ? gx * DNG_CELL_SIZE : (gx-1) * DNG_CELL_SIZE;
-                            float ix2 = (wf & DNG_WIN_E) ? wx - f : wx + f;
-                            float minx = wx < ix2 ? wx : ix2, maxx = wx > ix2 ? wx : ix2;
-                            int ox = (wf & DNG_WIN_E) ? ix + 1 : ix - 1;
+                            if (!_wc_logged) printf("[wc] %s (%d,%d) ix=%d ACTIVE\n", dname, gx, gy, ix);
+
+                            float wx = (dir == 2) ? gx * DNG_CELL_SIZE : (gx - 1) * DNG_CELL_SIZE;
+                            float ix2 = (dir == 2) ? wx - f : wx + f;
+                            float minx = wx < ix2 ? wx : ix2;
+                            float maxx = wx > ix2 ? wx : ix2;
+                            int ox = (dir == 2) ? ix + 1 : ix - 1; /* outside column */
+
                             /* Top neighbor connector */
-                            if (gy-1 >= 1 && dng_hull_inside[gy-1][ix]
-                                && (ox < 1 || ox > w || !dng_hull_inside[gy-1][ox])
-                                && !dng_is_win_cell(d, gx, gy-1)) {
-                                float bz = (gy-1) * DNG_CELL_SIZE;
-                                dng_draw_wall(fb_ptr, &mvp,
+                            bool topOk = gy - 1 >= 1 && dng_hull_inside[gy - 1][ix]
+                                && (ox < 1 || ox > w || !dng_hull_inside[gy - 1][ox])
+                                && !dng_is_win_cell(d, gx, gy - 1);
+                            if (!_wc_logged) printf("[wc]   top: gy-1=%d hull[%d][%d]=%d hull[%d][%d]=%d winCell(%d,%d)=%d => %s\n",
+                                gy-1, gy-1, ix, (gy-1>=1 ? dng_hull_inside[gy-1][ix] : -1),
+                                gy-1, ox, (gy-1>=1&&ox>=1&&ox<=w ? dng_hull_inside[gy-1][ox] : -1),
+                                gx, gy-1, dng_is_win_cell(d, gx, gy-1), topOk ? "EMIT" : "skip");
+                            if (topOk) {
+                                float bz = (gy - 1) * DNG_CELL_SIZE;
+                                dng_draw_wall_ext(fb_ptr, &mvp,
                                     minx, y_hi, bz,  maxx, y_hi, bz,
                                     maxx, y_lo, bz,  minx, y_lo, bz,
                                     ext_tex, 0, 0, -1);
                             }
                             /* Bottom neighbor connector */
-                            if (gy+1 <= h && dng_hull_inside[gy+1][ix]
-                                && (ox < 1 || ox > w || !dng_hull_inside[gy+1][ox])
-                                && !dng_is_win_cell(d, gx, gy+1)) {
+                            bool botOk = gy + 1 <= h && dng_hull_inside[gy + 1][ix]
+                                && (ox < 1 || ox > w || !dng_hull_inside[gy + 1][ox])
+                                && !dng_is_win_cell(d, gx, gy + 1);
+                            if (!_wc_logged) printf("[wc]   bot: gy+1=%d hull[%d][%d]=%d hull[%d][%d]=%d winCell(%d,%d)=%d => %s\n",
+                                gy+1, gy+1, ix, (gy+1<=h ? dng_hull_inside[gy+1][ix] : -1),
+                                gy+1, ox, (gy+1<=h&&ox>=1&&ox<=w ? dng_hull_inside[gy+1][ox] : -1),
+                                gx, gy+1, dng_is_win_cell(d, gx, gy+1), botOk ? "EMIT" : "skip");
+                            if (botOk) {
                                 float bz = gy * DNG_CELL_SIZE;
-                                dng_draw_wall(fb_ptr, &mvp,
+                                dng_draw_wall_ext(fb_ptr, &mvp,
                                     minx, y_hi, bz,  maxx, y_hi, bz,
                                     maxx, y_lo, bz,  minx, y_lo, bz,
                                     ext_tex, 0, 0, 1);
                             }
                         }
-                        skip_ew:;
                     }
                 }
             }
+            _wc_logged = true;
         }
 
         /* ── Pass 4: Roof + bottom hull plates (polygon fan) ────── */

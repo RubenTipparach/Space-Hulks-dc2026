@@ -192,10 +192,16 @@ public static class PaletteCore
         float[,] bufB = new float[h, w];
         bool[,] bufTransparent = new bool[h, w];
 
+        /* Force convert to 32bpp ARGB so paletted PNGs with tRNS chunks
+           correctly report alpha via GetPixel */
+        using var argb = new Bitmap(w, h, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        using (var g = Graphics.FromImage(argb))
+            g.DrawImage(source, 0, 0, w, h);
+
         for (int y = 0; y < h; y++)
         for (int x = 0; x < w; x++)
         {
-            Color px = source.GetPixel(x, y);
+            Color px = argb.GetPixel(x, y);
             bufR[y, x] = px.R;
             bufG[y, x] = px.G;
             bufB[y, x] = px.B;
