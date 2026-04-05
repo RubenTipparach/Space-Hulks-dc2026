@@ -196,7 +196,7 @@ static void game_pregen_enemy_ship(void) {
 
 /* ── Save / Load ─────────────────────────────────────────────────── */
 
-#define SAVE_VERSION 7  /* bumped: added starmap progress */
+#define SAVE_VERSION 8  /* bumped: added boss mission state */
 
 /*  Save header — fixed-size portion written first.
  *  After the header, each generated dungeon floor (sr_dungeon) is
@@ -245,6 +245,9 @@ typedef struct {
     bool starmap_node_visited[STARMAP_MAX_NODES];
     int  starmap_visited_path[STARMAP_MAX_NODES];
     int  starmap_visited_path_count;
+
+    /* Boss mission state */
+    bool is_boss_mission;
 } save_header;
 
 /* Variables used by save/load — declared here so they're visible to game_save/game_load */
@@ -348,6 +351,7 @@ static void game_save(void) {
         hdr.starmap_node_visited[i] = (i < g_starmap.node_count) ? g_starmap.nodes[i].visited : false;
     memcpy(hdr.starmap_visited_path, g_starmap.visited_path, sizeof(hdr.starmap_visited_path));
     hdr.starmap_visited_path_count = g_starmap.visited_path_count;
+    hdr.is_boss_mission = current_mission_is_boss;
 
     FILE *f = fopen(SAVE_FILE, "wb");
     if (!f) return;
@@ -446,6 +450,17 @@ static bool game_load(void) {
         app_state = STATE_RUNNING;
     }
 
+    /* Restore boss mission state */
+    current_mission_is_boss = hdr.is_boss_mission;
+    /* Also check starmap node in case save predates this field */
+    if (!current_mission_is_boss && g_starmap.current_node >= 0 &&
+        g_starmap.current_node < g_starmap.node_count &&
+        g_starmap.nodes[g_starmap.current_node].is_boss)
+        current_mission_is_boss = true;
+
+    if (current_mission_is_boss)
+        printf("[LOAD] Boss mission active (node %d)\n", g_starmap.current_node);
+
     /* Loading a save means player is past the intro flow */
     mission_briefed = true;
     mission_medbay_done = true;
@@ -487,9 +502,44 @@ static void draw_title_screen(sr_framebuffer *fb_ptr) {
     {
         int bw = 100, bh = 22;
         int bx = (W - bw) / 2, by = 120;
-        if (ui_button(px, W, H, bx, by, bw, bh, "NEW GAME",
-                      0xFF111122, 0xFF222244, 0xFF333366)) {
-            app_state = STATE_CLASS_SELECT;
+        if (!title_confirm_new) {
+            if (ui_button(px, W, H, bx, by, bw, bh, "NEW GAME",
+                          0xFF111122, 0xFF222244, 0xFF333366)) {
+                if (save_exists)
+                    title_confirm_new = true;
+                else
+                    app_state = STATE_CLASS_SELECT;
+            }
+        } else {
+            /* Confirm dialog */
+            int dbw = 180, dbh = 50;
+            int dbx = W/2 - dbw/2, dby = H/2 - dbh/2;
+            for (int ry = dby; ry < dby + dbh && ry < H; ry++)
+                for (int rx = dbx; rx < dbx + dbw && rx < W; rx++)
+                    if (rx >= 0 && ry >= 0) px[ry * W + rx] = 0xFF111133;
+            for (int rx = dbx; rx < dbx + dbw && rx < W; rx++) {
+                if (dby >= 0) px[dby * W + rx] = 0xFF4444AA;
+                if (dby+dbh-1 < H) px[(dby+dbh-1) * W + rx] = 0xFF4444AA;
+            }
+            for (int ry = dby; ry < dby + dbh && ry < H; ry++) {
+                if (dbx >= 0) px[ry * W + dbx] = 0xFF4444AA;
+                if (dbx+dbw-1 < W) px[ry * W + dbx+dbw-1] = 0xFF4444AA;
+            }
+            sr_draw_text_shadow(px, W, H, dbx + 10, dby + 6,
+                "START NEW RUN?", 0xFFCCCCCC, shadow);
+            sr_draw_text_shadow(px, W, H, dbx + 10, dby + 18,
+                "PREVIOUS SAVE WILL BE DELETED", 0xFFCC4444, shadow);
+            if (ui_button(px, W, H, dbx + 10, dby + dbh - 16, 60, 14, "YES",
+                          0xFF112211, 0xFF223322, 0xFF44CC44)) {
+                game_delete_save();
+                save_exists = false;
+                title_confirm_new = false;
+                app_state = STATE_CLASS_SELECT;
+            }
+            if (ui_button(px, W, H, dbx + dbw - 70, dby + dbh - 16, 60, 14, "NO",
+                          0xFF221111, 0xFF332222, 0xFF882222)) {
+                title_confirm_new = false;
+            }
         }
     }
 
@@ -1046,15 +1096,31 @@ static void game_init_ship(void) {
                 }
             }
 
-            /* Remove stairs on last floor (no stairs if only 1 deck) */
+            /* Remove invalid stairs — stairs only exist between adjacent floors */
             for (int fl = 0; fl < current_ship.num_decks && fl < DNG_MAX_FLOORS; fl++) {
                 if (!dng_state.floor_generated[fl]) continue;
-                bool is_last = (fl >= current_ship.num_decks - 1);
-                if (is_last) {
-                    dng_state.floors[fl].has_up = false;
-                    dng_state.floors[fl].stairs_gx = -1;
-                    dng_state.floors[fl].stairs_gy = -1;
+                sr_dungeon *fld = &dng_state.floors[fl];
+                bool has_floor_below = (fl > 0 && dng_state.floor_generated[fl - 1]);
+                bool has_floor_above = (fl + 1 < current_ship.num_decks &&
+                                        fl + 1 < DNG_MAX_FLOORS &&
+                                        dng_state.floor_generated[fl + 1]);
+                if (!has_floor_below) {
+                    if (fld->has_down)
+                        printf("[stairs] Floor %d: removing down-stairs (no floor below)\n", fl);
+                    fld->has_down = false;
+                    fld->down_gx = -1;
+                    fld->down_gy = -1;
                 }
+                if (!has_floor_above) {
+                    if (fld->has_up)
+                        printf("[stairs] Floor %d: removing up-stairs (no floor above)\n", fl);
+                    fld->has_up = false;
+                    fld->stairs_gx = -1;
+                    fld->stairs_gy = -1;
+                }
+                printf("[stairs] Floor %d: has_up=%d up=(%d,%d) has_down=%d down=(%d,%d)\n",
+                       fl, fld->has_up, fld->stairs_gx, fld->stairs_gy,
+                       fld->has_down, fld->down_gx, fld->down_gy);
             }
 
             printf("[game_init_ship] Level file: %s\n", level_path);
@@ -1105,25 +1171,44 @@ static void game_init_ship(void) {
             printf("[game_init_ship] dng_spawn_hallway_enemies done, enemy_count=%d\n", dng_enemy_count);
             fflush(stdout);
 
-            /* Place boss in specified room if this is a boss mission */
-            if (g_starmap.active && g_starmap.current_node >= 0 &&
-                g_starmap.current_node < g_starmap.node_count) {
-                starmap_node *sn = &g_starmap.nodes[g_starmap.current_node];
-                if (sn->boss_room >= 0 && sn->boss_room < dng_state.dungeon->room_count) {
-                    sr_dungeon *dd = dng_state.dungeon;
-                    int br = sn->boss_room;
-                    /* Offset from room center so boss isn't on the console */
-                    int bx = dd->room_cx[br] + 1, by = dd->room_cy[br] + 1;
-                    if (bx > dd->w) bx = dd->room_cx[br];
-                    if (by > dd->h) by = dd->room_cy[br];
-                    /* Always use ENEMY_BOSS_1 (Ravager / astrozom) */
-                    int boss_type = ENEMY_BOSS_1;
-                    dd->aliens[by][bx] = (uint8_t)(boss_type + 1);
-                    snprintf(dd->alien_names[by][bx], 16, "%s",
-                             enemy_templates[boss_type].name);
-                    printf("[game_init_ship] Boss %s placed in room %d at (%d,%d)\n",
-                           enemy_templates[boss_type].name, br, bx, by);
+            /* Place boss in reactor room if this is a boss mission */
+            if (current_mission_is_boss) {
+                int boss_type = ENEMY_BOSS_1;
+                bool placed = false;
+                /* Search all floors for reactor room */
+                for (int fl = 0; fl < current_ship.num_decks && fl < DNG_MAX_FLOORS && !placed; fl++) {
+                    sr_dungeon *dd = &dng_state.floors[fl];
+                    for (int r = 0; r < dd->room_count && !placed; r++) {
+                        if (dd->consoles[dd->room_cy[r]][dd->room_cx[r]] != ROOM_REACTOR) continue;
+                        int bx = dd->room_cx[r] + 1;
+                        int by = dd->room_cy[r] + 1;
+                        if (bx < 1 || bx > dd->w) bx = dd->room_cx[r];
+                        if (by < 1 || by > dd->h) by = dd->room_cy[r];
+                        dd->aliens[by][bx] = (uint8_t)(boss_type + 1);
+                        snprintf(dd->alien_names[by][bx], 16, "%s",
+                                 enemy_templates[boss_type].name);
+                        printf("[BOSS] %s placed on floor %d, reactor room %d at gx=%d gy=%d\n",
+                               enemy_templates[boss_type].name, fl, r, bx, by);
+                        fflush(stdout);
+                        placed = true;
+                    }
+                }
+                if (!placed) {
+                    printf("[BOSS] WARNING: No reactor room found! Placing in last room of last floor.\n");
                     fflush(stdout);
+                    int fl = current_ship.num_decks - 1;
+                    if (fl >= 0 && fl < DNG_MAX_FLOORS) {
+                        sr_dungeon *dd = &dng_state.floors[fl];
+                        int r = dd->room_count - 1;
+                        if (r >= 0) {
+                            int bx = dd->room_cx[r] + 1, by = dd->room_cy[r] + 1;
+                            if (bx < 1 || bx > dd->w) bx = dd->room_cx[r];
+                            if (by < 1 || by > dd->h) by = dd->room_cy[r];
+                            dd->aliens[by][bx] = (uint8_t)(boss_type + 1);
+                            snprintf(dd->alien_names[by][bx], 16, "%s",
+                                     enemy_templates[boss_type].name);
+                        }
+                    }
                 }
             }
 
@@ -1322,6 +1407,23 @@ static void handle_combat_end(void) {
         }
 
         /* Player ship never takes damage — destroyed check removed */
+
+        /* Check if we just killed a boss — instant mission complete */
+        if (combat.player_won && current_mission_is_boss) {
+            bool boss_killed = false;
+            for (int i = 0; i < combat.enemy_count; i++) {
+                if (combat.enemies[i].type >= ENEMY_BOSS_1 &&
+                    combat.enemies[i].type <= ENEMY_BOSS_3 &&
+                    !combat.enemies[i].alive)
+                    boss_killed = true;
+            }
+            if (boss_killed) {
+                current_ship.boarding_active = false;
+                int reward = 50 + player_sector * 15;
+                mission_complete_return_to_hub(reward, "BOSS DEFEATED!", true);
+                return;
+            }
+        }
 
         if (current_ship.enemy_ship_destroyed) {
             current_ship.boarding_active = false;
@@ -1799,11 +1901,24 @@ static void draw_pause_menu(sr_framebuffer *fb_ptr) {
     if (ui_mouse_clicked &&
         ui_click_x >= bar_x && ui_click_x <= bar_x + bar_w &&
         ui_click_y >= bar_y - 4 && ui_click_y <= bar_y + bar_h + 4) {
+        float old_vol = settings_master_vol;
         settings_master_vol = (float)(ui_click_x - bar_x) / bar_w;
         if (settings_master_vol < 0) settings_master_vol = 0;
         if (settings_master_vol > 1) settings_master_vol = 1;
         audio_vol.ambient = settings_master_vol * 0.7f;
         audio_vol.footstep = settings_master_vol * 0.4f;
+        /* Update all currently playing voices to reflect new master volume */
+        if (old_vol > 0.001f) {
+            float scale = settings_master_vol / old_vol;
+            for (int i = 0; i < SR_AUDIO_MAX_VOICES; i++)
+                if (audio_voices[i].active)
+                    audio_voices[i].volume *= scale;
+        } else {
+            /* Was muted — restart at new volume */
+            for (int i = 0; i < SR_AUDIO_MAX_VOICES; i++)
+                if (audio_voices[i].active)
+                    audio_voices[i].volume = settings_master_vol * 0.4f;
+        }
     }
 
     /* Resume button */
@@ -2382,7 +2497,42 @@ static void frame(void) {
         dng_window_texture = ITEX_ALIEN_WIN;
         dng_skip_pillars = true;
 
-        draw_dungeon_scene(&fb, &vp);
+        /* Render ALL generated floors (current + others at Y offsets) */
+        {
+            float floor_height = DNG_CELL_SIZE;
+            sr_dungeon *save_dng = dng_state.dungeon;
+            float save_y = dng_state.player.y;
+            int cur = dng_state.current_floor;
+
+            static bool _floors_logged = false;
+            if (!_floors_logged) {
+                printf("[multi_floor] Rendering %d floors, current=%d\n", dng_state.max_floors, cur);
+                for (int fl = 0; fl < dng_state.max_floors && fl < DNG_MAX_FLOORS; fl++) {
+                    if (!dng_state.floor_generated[fl]) continue;
+                    sr_dungeon *fd = &dng_state.floors[fl];
+                    printf("[multi_floor] Floor %d: %dx%d has_up=%d up=(%d,%d) dir=%d has_down=%d down=(%d,%d) dir=%d\n",
+                           fl, fd->w, fd->h,
+                           fd->has_up, fd->stairs_gx, fd->stairs_gy, fd->stairs_dir,
+                           fd->has_down, fd->down_gx, fd->down_gy, fd->down_dir);
+                }
+                fflush(stdout);
+                _floors_logged = true;
+            }
+
+            for (int fl = 0; fl < dng_state.max_floors && fl < DNG_MAX_FLOORS; fl++) {
+                if (!dng_state.floor_generated[fl]) continue;
+                dng_state.dungeon = &dng_state.floors[fl];
+                dng_state.player.y = save_y - (fl - cur) * floor_height;
+                dng_hull_computed = false;
+                dng_skip_stairs = (fl != cur);
+                draw_dungeon_scene(&fb, &vp);
+            }
+            dng_skip_stairs = false;
+
+            dng_state.dungeon = save_dng;
+            dng_state.player.y = save_y;
+            dng_hull_computed = false;
+        }
 
         /* Reset to defaults */
         dng_wall_texture = -1;
@@ -3237,6 +3387,17 @@ static void event(const sapp_event *ev) {
 
     /* ── Title screen ────────────────────────────────────────── */
     if (app_state == STATE_TITLE) {
+        if (title_confirm_new) {
+            if (ev->key_code == SAPP_KEYCODE_Y || ev->key_code == SAPP_KEYCODE_ENTER) {
+                game_delete_save();
+                save_exists = false;
+                title_confirm_new = false;
+                app_state = STATE_CLASS_SELECT;
+            } else if (ev->key_code == SAPP_KEYCODE_N || ev->key_code == SAPP_KEYCODE_ESCAPE) {
+                title_confirm_new = false;
+            }
+            return;
+        }
         switch (ev->key_code) {
             case SAPP_KEYCODE_UP:
             case SAPP_KEYCODE_W:
@@ -3250,7 +3411,10 @@ static void event(const sapp_event *ev) {
             case SAPP_KEYCODE_KP_ENTER:
             case SAPP_KEYCODE_SPACE:
                 if (title_cursor == 0) {
-                    app_state = STATE_CLASS_SELECT;
+                    if (save_exists)
+                        title_confirm_new = true;
+                    else
+                        app_state = STATE_CLASS_SELECT;
                 } else if (save_exists && game_load()) {
                     last_player_gx = dng_state.player.gx;
                     last_player_gy = dng_state.player.gy;

@@ -97,22 +97,54 @@ static int dng_rng_int(int max) {
 
 /* ── Alien name generation ───────────────────────────────────────── */
 
-static const char *dng_alien_prefixes[] = {
-    "ZR", "KR", "VX", "GH", "SK", "BL", "TR", "NX", "QZ", "XL",
-    "DR", "MK", "PH", "SN", "GL", "FL", "TH", "CH", "WR", "SH",
-};
-#define DNG_ALIEN_PREFIX_COUNT 20
+#define DNG_ALIEN_NAME_MAX 32
+static char dng_alien_prefix_buf[DNG_ALIEN_NAME_MAX][8];
+static char dng_alien_suffix_buf[DNG_ALIEN_NAME_MAX][8];
+static const char *dng_alien_prefixes[DNG_ALIEN_NAME_MAX];
+static const char *dng_alien_suffixes[DNG_ALIEN_NAME_MAX];
+static int dng_alien_prefix_count = 0;
+static int dng_alien_suffix_count = 0;
 
-static const char *dng_alien_suffixes[] = {
-    "AAK", "IKS", "ULL", "ORM", "AXE", "ENT", "IRE", "OKK", "URG", "ASH",
-    "ILK", "UNG", "ARN", "EEL", "OOZ", "AWN", "IPP", "UTH", "AGG", "ISS",
-};
-#define DNG_ALIEN_SUFFIX_COUNT 20
+/* Default names (used if config not loaded) */
+static void dng_alien_names_init_defaults(void) {
+    if (dng_alien_prefix_count > 0) return; /* already loaded */
+    const char *dp[] = {"ZR","KR","VX","GH","SK","BL","TR","NX","QZ","XL",
+                        "DR","MK","PH","SN","GL","FL","TH","CH","WR","SH"};
+    const char *ds[] = {"AAK","IKS","ULL","ORM","AXE","ENT","IRE","OKK","URG","ASH",
+                        "ILK","UNG","ARN","EEL","OOZ","AWN","IPP","UTH","AGG","ISS"};
+    dng_alien_prefix_count = 20;
+    dng_alien_suffix_count = 20;
+    for (int i = 0; i < 20; i++) {
+        snprintf(dng_alien_prefix_buf[i], 8, "%s", dp[i]);
+        dng_alien_prefixes[i] = dng_alien_prefix_buf[i];
+        snprintf(dng_alien_suffix_buf[i], 8, "%s", ds[i]);
+        dng_alien_suffixes[i] = dng_alien_suffix_buf[i];
+    }
+}
+
+/* Load from comma-separated config string */
+static int dng_alien_parse_csv(const char *csv, char buf[][8], const char *ptrs[], int max) {
+    int count = 0;
+    const char *p = csv;
+    while (*p && count < max) {
+        while (*p == ' ' || *p == ',') p++;
+        if (!*p) break;
+        int len = 0;
+        while (p[len] && p[len] != ',' && len < 7) len++;
+        memcpy(buf[count], p, len);
+        buf[count][len] = 0;
+        ptrs[count] = buf[count];
+        count++;
+        p += len;
+    }
+    return count;
+}
 
 static void dng_gen_alien_name(char *out, int max_len) {
-    int pi = dng_rng_int(DNG_ALIEN_PREFIX_COUNT);
-    int si = dng_rng_int(DNG_ALIEN_SUFFIX_COUNT);
-    snprintf(out, max_len, "%s'%s", dng_alien_prefixes[pi], dng_alien_suffixes[si]);
+    if (dng_alien_prefix_count == 0) dng_alien_names_init_defaults();
+    int pi = dng_rng_int(dng_alien_prefix_count);
+    int si = dng_rng_int(dng_alien_suffix_count);
+    snprintf(out, max_len, "%s-%s", dng_alien_prefixes[pi], dng_alien_suffixes[si]);
 }
 
 /* ── Dungeon queries ─────────────────────────────────────────────── */
@@ -1134,6 +1166,8 @@ static void dng_spawn_hallway_enemies(sr_dungeon *d, int floor_num) {
 /* ── Move an enemy one step along its path ──────────────────────── */
 
 static void dng_enemy_move_step(dng_enemy *e, sr_dungeon *d) {
+    /* Bosses never move from their room */
+    if (e->type >= ENEMY_BOSS_1 && e->type <= ENEMY_BOSS_3) return;
     if (e->path_len <= 0) return;
     int nx = e->path[0];
     int ny = e->path[1];

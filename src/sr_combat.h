@@ -301,7 +301,21 @@ static void enemy_load_config(void) {
     enemy_load_one(&cfg, "boss_1",       ENEMY_BOSS_1);
     enemy_load_one(&cfg, "boss_2",       ENEMY_BOSS_2);
     enemy_load_one(&cfg, "boss_3",       ENEMY_BOSS_3);
-    printf("[enemies] Loaded config from enemies.yaml\n");
+    /* Load alien name pools */
+    const char *prefixes = sr_config_get(&cfg, "name_prefixes");
+    if (prefixes) {
+        int n = dng_alien_parse_csv(prefixes, dng_alien_prefix_buf, dng_alien_prefixes, DNG_ALIEN_NAME_MAX);
+        if (n > 0) dng_alien_prefix_count = n;
+    }
+    const char *suffixes = sr_config_get(&cfg, "name_suffixes");
+    if (suffixes) {
+        int n = dng_alien_parse_csv(suffixes, dng_alien_suffix_buf, dng_alien_suffixes, DNG_ALIEN_NAME_MAX);
+        if (n > 0) dng_alien_suffix_count = n;
+    }
+    if (dng_alien_prefix_count == 0) dng_alien_names_init_defaults();
+
+    printf("[enemies] Loaded config from enemies.yaml (%d prefixes, %d suffixes)\n",
+           dng_alien_prefix_count, dng_alien_suffix_count);
     sr_config_free(&cfg);
 }
 

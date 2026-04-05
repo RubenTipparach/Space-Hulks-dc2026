@@ -2005,8 +2005,20 @@ static void hub_draw_scene(sr_framebuffer *fb_ptr) {
             _rs_logged = true;
         }
         sr_set_pixel_light_fn(NULL);
-        draw_remote_ship_interior(fb_ptr, &remote_mvp, enemy_d, ship_ox, ship_oy, ship_oz, true);
-        draw_remote_ship_exterior(fb_ptr, &remote_mvp, enemy_d, ship_ox, ship_oy, ship_oz, true);
+        /* Render all generated floors of the remote enemy ship */
+        float floor_height = DNG_CELL_SIZE;
+        for (int fl = 0; fl < dng_state.max_floors && fl < DNG_MAX_FLOORS; fl++) {
+            if (!dng_state.floor_generated[fl]) continue;
+            float fl_oy = ship_oy + fl * floor_height;
+            sr_dungeon *fl_d = &dng_state.floors[fl];
+            /* Set floor above for roof culling */
+            _remote_floor_above = NULL;
+            if (fl + 1 < dng_state.max_floors && fl + 1 < DNG_MAX_FLOORS && dng_state.floor_generated[fl + 1])
+                _remote_floor_above = &dng_state.floors[fl + 1];
+            draw_remote_ship_interior(fb_ptr, &remote_mvp, fl_d, ship_ox, fl_oy, ship_oz, true);
+            draw_remote_ship_exterior(fb_ptr, &remote_mvp, fl_d, ship_ox, fl_oy, ship_oz, true);
+        }
+        _remote_floor_above = NULL;
     }
 
     /* Restore */

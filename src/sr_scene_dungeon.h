@@ -93,6 +93,7 @@ static int  dng_ceiling_texture = -1;  /* -1 = default ITEX_WOOD, else override 
 static int  dng_window_texture = -1;  /* -1 = default ITEX_WALL_A_WIN, else override */
 static bool dng_skip_pillars = false;  /* true = don't draw corner pillars */
 static bool dng_skip_exterior = false; /* true = don't draw exterior hull */
+static bool dng_skip_stairs = false;  /* true = render stair cells as flat floor */
 static bool dng_alien_exterior = false; /* true = use alien textures for exterior */
 static float dng_hull_padding = 0.25f; /* hull expansion padding (in cells) */
 static float dng_hull_corner = 0.25f; /* chamfer corner size (in cells, matches C# editor default) */
@@ -580,12 +581,31 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
                 }
             } else {
                 /* Open cell */
-                bool is_up_stairs = (d->has_up && gx == d->stairs_gx && gy == d->stairs_gy);
-                bool is_down_stairs = (d->has_down && gx == d->down_gx && gy == d->down_gy);
+                bool is_up_stairs = !dng_skip_stairs && (d->has_up && gx == d->stairs_gx && gy == d->stairs_gy);
+                bool is_down_stairs = !dng_skip_stairs && (d->has_down && gx == d->down_gx && gy == d->down_gy);
 
                 if (is_up_stairs || is_down_stairs) {
                     int sdir = is_up_stairs ? d->stairs_dir : d->down_dir;
                     bool going_down = is_down_stairs;
+                    {
+                        /* Log each unique stair only once */
+                        static int _logged_stairs[8][3]; /* gx, gy, dir */
+                        static int _logged_count = 0;
+                        bool already = false;
+                        for (int li = 0; li < _logged_count; li++)
+                            if (_logged_stairs[li][0] == gx && _logged_stairs[li][1] == gy &&
+                                _logged_stairs[li][2] == (going_down ? 1 : 0)) { already = true; break; }
+                        if (!already && _logged_count < 8) {
+                            _logged_stairs[_logged_count][0] = gx;
+                            _logged_stairs[_logged_count][1] = gy;
+                            _logged_stairs[_logged_count][2] = going_down ? 1 : 0;
+                            _logged_count++;
+                            printf("[stair_geom] %s at (%d,%d) dir=%d y_lo=%.2f y_hi=%.2f%s%s\n",
+                                   going_down ? "DOWN" : "UP", gx, gy, sdir, y_lo, y_hi,
+                                   is_up_stairs ? " [UP]" : "", is_down_stairs ? " [DOWN]" : "");
+                            fflush(stdout);
+                        }
+                    }
                     float y_range = y_hi - y_lo;
                     float step_h = y_range / DNG_NUM_STEPS;
                     float step_d = DNG_CELL_SIZE / DNG_NUM_STEPS;
@@ -707,28 +727,7 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
                             0,1,1,0, ceil_tex, 0,-1,0);
                     }
 
-                    /* Enclose the OTHER floor's stair shaft so we don't see void.
-                     * Down-stairs: box below y_lo. Up-stairs: box above y_hi. */
-                    {
-                        float sh_top, sh_bot; /* shaft vertical extent */
-                        if (going_down) {
-                            sh_top = y_lo;
-                            sh_bot = y_lo - y_range;
-                        } else {
-                            sh_top = y_hi + y_range;
-                            sh_bot = y_hi;
-                        }
-                        /* All 4 walls around the shaft */
-                        dng_draw_wall(fb_ptr, &mvp, x0,sh_top,z0, x0,sh_top,z1, x0,sh_bot,z1, x0,sh_bot,z0, stex, 1,0,0);  /* W */
-                        dng_draw_wall(fb_ptr, &mvp, x1,sh_top,z1, x1,sh_top,z0, x1,sh_bot,z0, x1,sh_bot,z1, stex, -1,0,0); /* E */
-                        dng_draw_wall(fb_ptr, &mvp, x1,sh_top,z0, x0,sh_top,z0, x0,sh_bot,z0, x1,sh_bot,z0, stex, 0,0,1);  /* N */
-                        dng_draw_wall(fb_ptr, &mvp, x0,sh_top,z1, x1,sh_top,z1, x1,sh_bot,z1, x0,sh_bot,z1, stex, 0,0,-1); /* S */
-                        /* Floor/ceiling cap at the far end */
-                        float cap_y = going_down ? sh_bot : sh_top;
-                        dng_draw_hquad(fb_ptr, &mvp,
-                            x0,cap_y,z0, x1,cap_y,z0, x1,cap_y,z1, x0,cap_y,z1,
-                            0,0,1,1, stex, 0, going_down ? 1 : -1, 0);
-                    }
+                    /* Other floors rendered separately — no shaft walls needed */
                 } else {
                     /* Normal floor + ceiling */
                     dng_draw_hquad(fb_ptr, &mvp,
@@ -1211,9 +1210,12 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
                     bool oW = gx <= 1 || !dng_hull_inside[gy][gx-1];
                     bool oE = gx >= w || !dng_hull_inside[gy][gx+1];
 
+                    /* Skip roof for open cells — interior ceiling already covers them */
+                    bool is_open = (d->map[gy][gx] == 0);
+
                     /* Simple case: no chamfer/inset */
                     if (ch <= 0 && f <= 0) {
-                        if (d->map[gy][gx] == 1) {
+                        if (!is_open) {
                             dng_draw_hquad(fb_ptr, &mvp,
                                 x0, y_hi, z1,  x1, y_hi, z1,
                                 x1, y_hi, z0,  x0, y_hi, z0,
@@ -1299,18 +1301,20 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
                         float au = (pts_x[pi] - x0) * invCW, av = (pts_z[pi] - z0) * invCH;
                         float bu = (pts_x[ni] - x0) * invCW, bv = (pts_z[ni] - z0) * invCH;
 
-                        /* Roof (facing up — reversed winding) */
-                        dng_draw_tri(fb_ptr, &mvp,
-                            centx, y_hi, centz, cu, cv,
-                            pts_x[pi], y_hi, pts_z[pi], au, av,
-                            pts_x[ni], y_hi, pts_z[ni], bu, bv,
-                            roof_tex, 0, 1, 0);
-                        /* Bottom plate (facing down — reversed winding) */
-                        dng_draw_tri(fb_ptr, &mvp,
-                            centx, y_lo, centz, cu, cv,
-                            pts_x[ni], y_lo, pts_z[ni], bu, bv,
-                            pts_x[pi], y_lo, pts_z[pi], au, av,
-                            roof_tex, 0, -1, 0);
+                        /* Roof (facing up) — skip for open cells (ceiling covers them) */
+                        if (!is_open)
+                            dng_draw_tri(fb_ptr, &mvp,
+                                centx, y_hi, centz, cu, cv,
+                                pts_x[pi], y_hi, pts_z[pi], au, av,
+                                pts_x[ni], y_hi, pts_z[ni], bu, bv,
+                                roof_tex, 0, 1, 0);
+                        /* Bottom plate (facing down) — skip for open cells (floor covers them) */
+                        if (!is_open)
+                            dng_draw_tri(fb_ptr, &mvp,
+                                centx, y_lo, centz, cu, cv,
+                                pts_x[ni], y_lo, pts_z[ni], bu, bv,
+                                pts_x[pi], y_lo, pts_z[pi], au, av,
+                                roof_tex, 0, -1, 0);
                     }
                 }
             }
@@ -1476,6 +1480,9 @@ static void draw_remote_ship_interior(sr_framebuffer *fb_ptr, const sr_mat4 *mvp
     }
 }
 
+/* Floor above pointer — set before calling draw_remote_ship_exterior to skip roof where floor exists above */
+static sr_dungeon *_remote_floor_above = NULL;
+
 /* Draw exterior hull of a remote dungeon at world offset (ox, oy, oz) */
 static void draw_remote_ship_exterior(sr_framebuffer *fb_ptr, const sr_mat4 *mvp,
                                        sr_dungeon *d, float ox, float oy, float oz,
@@ -1583,16 +1590,24 @@ static void draw_remote_ship_exterior(sr_framebuffer *fb_ptr, const sr_mat4 *mvp
 
             /* Roof + bottom (exact port of C# polygon fan with convex/concave corners) */
             {
+                /* Skip roof if there's a floor above with an open cell here */
+                bool has_floor_above = false;
+                if (_remote_floor_above) {
+                    sr_dungeon *fa = _remote_floor_above;
+                    if (gx >= 1 && gx <= fa->w && gy >= 1 && gy <= fa->h && fa->map[gy][gx] == 0)
+                        has_floor_above = true;
+                }
                 uint32_t unlit = 0xFF808080;
                 float cs = DNG_CELL_SIZE;
 
                 /* Simple case: no chamfer/inset (reversed winding for exterior view) */
                 if (ch <= 0 && f <= 0) {
-                    /* Roof */
-                    sr_draw_quad_indexed(fb_ptr,
-                        sr_vert_c(x0,y_hi,z0, 0,0, unlit), sr_vert_c(x1,y_hi,z0, 1,0, unlit),
-                        sr_vert_c(x1,y_hi,z1, 1,1, unlit), sr_vert_c(x0,y_hi,z1, 0,1, unlit),
-                        roof_tex, mvp);
+                    /* Roof (skip if floor above) */
+                    if (!has_floor_above)
+                        sr_draw_quad_indexed(fb_ptr,
+                            sr_vert_c(x0,y_hi,z0, 0,0, unlit), sr_vert_c(x1,y_hi,z0, 1,0, unlit),
+                            sr_vert_c(x1,y_hi,z1, 1,1, unlit), sr_vert_c(x0,y_hi,z1, 0,1, unlit),
+                            roof_tex, mvp);
                     /* Bottom */
                     sr_draw_quad_indexed(fb_ptr,
                         sr_vert_c(x0,y_lo,z1, 0,1, unlit), sr_vert_c(x1,y_lo,z1, 1,1, unlit),
@@ -1645,12 +1660,13 @@ static void draw_remote_ship_exterior(sr_framebuffer *fb_ptr, const sr_mat4 *mvp
                         float bxf = pts_x[(pi+1)%pc], bzf = pts_z[(pi+1)%pc];
                         float au = (ax2-x0)*inv_cw, av = (az2-z0)*inv_ch2;
                         float bu = (bxf-x0)*inv_cw, bv = (bzf-z0)*inv_ch2;
-                        /* Roof (top) — reversed winding for exterior */
-                        sr_draw_triangle_indexed(fb_ptr,
-                            sr_vert_c(centx,y_hi,centz, cent_u,cent_v, unlit),
-                            sr_vert_c(ax2,y_hi,az2, au,av, unlit),
-                            sr_vert_c(bxf,y_hi,bzf, bu,bv, unlit),
-                            roof_tex, mvp);
+                        /* Roof (top) — skip if floor above */
+                        if (!has_floor_above)
+                            sr_draw_triangle_indexed(fb_ptr,
+                                sr_vert_c(centx,y_hi,centz, cent_u,cent_v, unlit),
+                                sr_vert_c(ax2,y_hi,az2, au,av, unlit),
+                                sr_vert_c(bxf,y_hi,bzf, bu,bv, unlit),
+                                roof_tex, mvp);
                         /* Bottom — reversed winding for exterior */
                         sr_draw_triangle_indexed(fb_ptr,
                             sr_vert_c(centx,y_lo,centz, cent_u,cent_v, unlit),

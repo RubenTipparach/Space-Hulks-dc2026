@@ -716,7 +716,49 @@
           1,
           1,
           1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1
+        ],
+        [
           1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          1,
+          1,
+          1,
+          1,
+          0,
           1,
           0,
           0,
@@ -733,48 +775,6 @@
           1,
           1,
           1,
-          0,
-          0,
-          0,
-          0,
-          1,
-          1,
-          1,
-          1,
-          1,
-          1,
-          1,
-          1,
-          1,
-          1,
-          1,
-          1,
-          0,
-          0,
-          0,
-          0,
-          1,
-          1,
-          1,
-          1,
-          1,
-          1,
-          1,
-          0,
-          0,
-          0,
-          0,
-          1
-        ],
-        [
-          1,
-          1,
-          1,
-          1,
-          1,
-          1,
-          1,
-          1,
           1,
           1,
           0,
@@ -800,11 +800,11 @@
           1,
           1,
           1,
-          1,
-          1,
-          1,
-          1,
           0,
+          1,
+          1,
+          1,
+          1,
           1,
           1
         ],
@@ -1773,49 +1773,49 @@
           "gX": 9,
           "gY": 17,
           "enemyType": "Lurker",
-          "name": "VX\u0027ENT"
+          "name": "VX'ENT"
         },
         {
           "gX": 10,
           "gY": 15,
           "enemyType": "Lurker",
-          "name": "BL\u0027AAK"
+          "name": "BL'AAK"
         },
         {
           "gX": 16,
           "gY": 23,
           "enemyType": "Brute",
-          "name": "QZ\u0027ENT"
+          "name": "QZ'ENT"
         },
         {
           "gX": 28,
           "gY": 17,
           "enemyType": "Brute",
-          "name": "KR\u0027AAK"
+          "name": "KR'AAK"
         },
         {
           "gX": 33,
           "gY": 25,
           "enemyType": "Brute",
-          "name": "NX\u0027ORM"
+          "name": "NX'ORM"
         },
         {
           "gX": 33,
           "gY": 23,
           "enemyType": "Lurker",
-          "name": "NX\u0027IRE"
+          "name": "NX'IRE"
         },
         {
           "gX": 37,
           "gY": 17,
           "enemyType": "Lurker",
-          "name": "ZR\u0027IRE"
+          "name": "ZR'IRE"
         },
         {
           "gX": 38,
           "gY": 15,
           "enemyType": "Lurker",
-          "name": "NX\u0027IRE"
+          "name": "NX'IRE"
         }
       ],
       "consoles": [
@@ -1978,16 +1978,6 @@
           "gX": 37,
           "gY": 14,
           "dir": "South"
-        },
-        {
-          "gX": 35,
-          "gY": 16,
-          "dir": "East"
-        },
-        {
-          "gX": 35,
-          "gY": 17,
-          "dir": "East"
         },
         {
           "gX": 29,
@@ -3768,49 +3758,49 @@
           "gX": 10,
           "gY": 14,
           "enemyType": "Brute",
-          "name": "QZ\u0027IRE"
+          "name": "QZ'IRE"
         },
         {
           "gX": 17,
           "gY": 26,
           "enemyType": "Brute",
-          "name": "SK\u0027IRE"
+          "name": "SK'IRE"
         },
         {
           "gX": 20,
           "gY": 24,
           "enemyType": "Lurker",
-          "name": "XL\u0027ULL"
+          "name": "XL'ULL"
         },
         {
           "gX": 25,
           "gY": 17,
           "enemyType": "Brute",
-          "name": "TR\u0027ULL"
+          "name": "TR'ULL"
         },
         {
           "gX": 37,
           "gY": 24,
           "enemyType": "Lurker",
-          "name": "NX\u0027ASH"
+          "name": "NX'ASH"
         },
         {
           "gX": 36,
           "gY": 23,
           "enemyType": "Brute",
-          "name": "VX\u0027IKS"
+          "name": "VX'IKS"
         },
         {
           "gX": 39,
           "gY": 15,
           "enemyType": "Lurker",
-          "name": "QZ\u0027OKK"
+          "name": "QZ'OKK"
         },
         {
           "gX": 35,
           "gY": 16,
           "enemyType": "Brute",
-          "name": "KR\u0027OKK"
+          "name": "KR'OKK"
         }
       ],
       "consoles": [

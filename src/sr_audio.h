@@ -114,6 +114,8 @@ static void sr_audio_clip_free(sr_audio_clip *clip) {
 
 static int sr_audio_play(const sr_audio_clip *clip, float volume, bool loop) {
     if (!clip || !clip->samples) return -1;
+    /* Apply master volume to all sounds */
+    volume *= settings_master_vol;
     for (int i = 0; i < SR_AUDIO_MAX_VOICES; i++) {
         if (!audio_voices[i].active) {
             audio_voices[i].clip     = clip;

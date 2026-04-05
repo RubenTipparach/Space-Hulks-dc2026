@@ -91,17 +91,30 @@ static bool lvl_load_floor(sr_dungeon *d, const sr_json *j, int floor_token) {
     d->spawn_gy = sr_json_int(j, sr_json_find(j, floor_token, "spawnGY"), 10);
     d->spawn_dir = sr_json_int(j, sr_json_find(j, floor_token, "spawnDir"), 1);
 
-    /* Stairs up */
+    /* Stairs — single bidirectional set */
     d->has_up = sr_json_bool(j, sr_json_find(j, floor_token, "hasUp"), false);
     d->stairs_gx = sr_json_int(j, sr_json_find(j, floor_token, "stairsGX"), -1);
     d->stairs_gy = sr_json_int(j, sr_json_find(j, floor_token, "stairsGY"), -1);
     d->stairs_dir = sr_json_int(j, sr_json_find(j, floor_token, "stairsDir"), 1);
 
-    /* Stairs down */
     d->has_down = sr_json_bool(j, sr_json_find(j, floor_token, "hasDown"), false);
+    /* Down-stairs use same location as up-stairs (bidirectional) */
     d->down_gx = sr_json_int(j, sr_json_find(j, floor_token, "downGX"), -1);
     d->down_gy = sr_json_int(j, sr_json_find(j, floor_token, "downGY"), -1);
     d->down_dir = sr_json_int(j, sr_json_find(j, floor_token, "downDir"), 3);
+
+    /* If down-stairs has a separate position, merge to up-stairs location */
+    if (d->has_up && d->has_down && d->stairs_gx >= 0 && d->down_gx >= 0
+        && (d->stairs_gx != d->down_gx || d->stairs_gy != d->down_gy)) {
+        printf("[stairs] Floor merging down(%d,%d) -> up(%d,%d) (bidirectional)\n",
+               d->down_gx, d->down_gy, d->stairs_gx, d->stairs_gy);
+        d->down_gx = d->stairs_gx;
+        d->down_gy = d->stairs_gy;
+    }
+
+    printf("[stairs] Floor: has_up=%d up=(%d,%d) has_down=%d down=(%d,%d)\n",
+           d->has_up, d->stairs_gx, d->stairs_gy,
+           d->has_down, d->down_gx, d->down_gy);
 
     /* Rooms */
     int rooms_arr = sr_json_find(j, floor_token, "rooms");

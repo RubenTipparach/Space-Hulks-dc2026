@@ -263,10 +263,40 @@ static void sr_json_str(const sr_json *j, int token, char *out, int max_len) {
     if (token < 0 || token >= j->count) return;
     const sr_json_token *t = &j->tokens[token];
     if (t->type != SR_JSON_STRING) return;
-    int len = t->end - t->start;
-    if (len >= max_len) len = max_len - 1;
-    memcpy(out, j->src + t->start, len);
-    out[len] = '\0';
+    const char *src = j->src + t->start;
+    int src_len = t->end - t->start;
+    int di = 0;
+    for (int si = 0; si < src_len && di < max_len - 1; si++) {
+        if (src[si] == '\\' && si + 1 < src_len) {
+            si++;
+            switch (src[si]) {
+                case 'n': out[di++] = '\n'; break;
+                case 't': out[di++] = '\t'; break;
+                case '\\': out[di++] = '\\'; break;
+                case '"': out[di++] = '"'; break;
+                case '/': out[di++] = '/'; break;
+                case 'u': /* \uXXXX — decode to ASCII if possible */
+                    if (si + 4 < src_len) {
+                        unsigned cp = 0;
+                        for (int k = 1; k <= 4; k++) {
+                            char c = src[si + k];
+                            cp <<= 4;
+                            if (c >= '0' && c <= '9') cp |= (c - '0');
+                            else if (c >= 'a' && c <= 'f') cp |= (c - 'a' + 10);
+                            else if (c >= 'A' && c <= 'F') cp |= (c - 'A' + 10);
+                        }
+                        si += 4;
+                        if (cp < 128) out[di++] = (char)cp;
+                        else out[di++] = '?';
+                    }
+                    break;
+                default: out[di++] = src[si]; break;
+            }
+        } else {
+            out[di++] = src[si];
+        }
+    }
+    out[di] = '\0';
 }
 
 /* Get array length */

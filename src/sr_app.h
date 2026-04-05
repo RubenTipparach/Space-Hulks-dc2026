@@ -81,6 +81,7 @@ static int selected_class = 0;  /* 0=scout, 1=marine */
 static int class_select_cursor = 0;
 static bool skip_intro = false;
 static int title_cursor = 0;
+static bool title_confirm_new = false; /* show "delete save?" confirm */
 static bool save_exists = false;
 
 /* ── Mission flow tracking ─────────────────────────────────────── */
