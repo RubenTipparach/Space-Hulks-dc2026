@@ -2025,13 +2025,13 @@ static void init(void) {
     stextures[STEX_SPITTER]   = sr_texture_load("assets/sprites/spitter.png");
     stextures[STEX_HIVEGUARD] = sr_texture_load("assets/sprites/hiveguard.png");
     /* Evolved tier 2 — load specific sprites, fall back to tier 1 */
-    stextures[STEX_STALKER]      = sr_texture_load("assets/sprites/stalker.png");
+    stextures[STEX_STALKER]      = sr_texture_load("assets/sprites/jaycook/By-Tor.png");
     if (!stextures[STEX_STALKER].pixels) stextures[STEX_STALKER] = sr_texture_load("assets/sprites/lurker.png");
-    stextures[STEX_MAULER]       = sr_texture_load("assets/sprites/mauler.png");
+    stextures[STEX_MAULER]       = sr_texture_load("assets/sprites/jaycook/Xenodragon.png");
     if (!stextures[STEX_MAULER].pixels) stextures[STEX_MAULER] = sr_texture_load("assets/sprites/brute.png");
-    stextures[STEX_ACID_THROWER] = sr_texture_load("assets/sprites/acid_thrower.png");
+    stextures[STEX_ACID_THROWER] = sr_texture_load("assets/sprites/jaycook/Owlien.png");
     if (!stextures[STEX_ACID_THROWER].pixels) stextures[STEX_ACID_THROWER] = sr_texture_load("assets/sprites/spitter.png");
-    stextures[STEX_WARDEN]       = sr_texture_load("assets/sprites/warden.png");
+    stextures[STEX_WARDEN]       = sr_texture_load("assets/sprites/jaycook/Dragon.png");
     if (!stextures[STEX_WARDEN].pixels) stextures[STEX_WARDEN] = sr_texture_load("assets/sprites/hiveguard.png");
     stextures[STEX_SCOUT]     = sr_texture_load("assets/sprites/scout.png");
     stextures[STEX_MARINE]    = sr_texture_load("assets/sprites/marine.png");
@@ -2040,7 +2040,7 @@ static void init(void) {
     stextures[STEX_CREW_QUARTERMASTER] = sr_texture_load("assets/sprites/crew_quartermaster.png");
     stextures[STEX_CREW_PRIVATE]       = sr_texture_load("assets/sprites/crew_private.png");
     stextures[STEX_CREW_DOCTOR]        = sr_texture_load("assets/sprites/crew_doctor.png");
-    stextures[STEX_CREW_BYTOR]        = sr_texture_load("assets/sprites/crew_bytor.png");
+    stextures[STEX_CREW_BYTOR]        = sr_texture_load("assets/sprites/jaycook/Fireman.png");
     if (!stextures[STEX_CREW_BYTOR].pixels) /* fallback until sprite exists */
         stextures[STEX_CREW_BYTOR] = sr_texture_load("assets/sprites/crew_private.png");
     stextures[STEX_ICON_ICE]           = sr_texture_load("assets/sprites/icon_ice.png");
@@ -2925,7 +2925,7 @@ static void handle_screen_tap(float sx, float sy) {
                         }
                         break;
                     case DIALOG_ACTION_HEAL:
-                        if (!mission_medbay_done && mission_briefed && !mission_first_done) {
+                        if (!mission_medbay_done && mission_briefed && !mission_armory_done) {
                             /* First visit during prep: free heal + check off objective */
                             g_player.hp = g_player.hp_max;
                             mission_medbay_done = true;
@@ -3459,7 +3459,7 @@ static void event(const sapp_event *ev) {
                             }
                             break;
                         case DIALOG_ACTION_HEAL:
-                            if (!mission_medbay_done && mission_briefed && !mission_first_done) {
+                            if (!mission_medbay_done && mission_briefed && !mission_armory_done) {
                                 g_player.hp = g_player.hp_max;
                                 mission_medbay_done = true;
                                 snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "VITALS LOGGED. YOU'RE CLEAR.");

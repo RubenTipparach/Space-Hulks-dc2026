@@ -16,6 +16,14 @@
 #include <math.h>
 #include <string.h>
 
+/* ── Enemy type enum (needed by dungeon generation) ─────────────── */
+
+enum { ENEMY_LURKER, ENEMY_BRUTE, ENEMY_SPITTER, ENEMY_HIVEGUARD,
+       /* Evolved tier 2 — advanced dragon parasite */
+       ENEMY_STALKER, ENEMY_MAULER, ENEMY_ACID_THROWER, ENEMY_WARDEN,
+       ENEMY_BOSS_1, ENEMY_BOSS_2, ENEMY_BOSS_3,
+       ENEMY_TYPE_COUNT };
+
 /* ── Configuration ───────────────────────────────────────────────── */
 
 #define DNG_GRID_W       80

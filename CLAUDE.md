@@ -2,10 +2,9 @@
 
 ## Build & Validation
 
-- Do NOT try to install system dependencies (GL, X11, mesa, etc.) or run full native builds locally. The environment doesn't have them and they aren't needed.
-- Full compilation and validation is handled by **GitHub Actions CI**. Trust it.
-- For local syntax checking, use the **mock-header approach**: create a minimal C file with stubbed sokol/framework types and `#include` the project headers. This is fast and sufficient.
-- The web build uses emscripten and doesn't need GL/X11 headers at all.
+- This is a **Windows development environment**. You can run `build-run.bat` to compile and test the game locally (with user permission).
+- Full compilation and validation is also handled by **GitHub Actions CI**.
+- The web build uses emscripten and is built via `build-web.sh` or CI.
 
 ## Project Structure
 

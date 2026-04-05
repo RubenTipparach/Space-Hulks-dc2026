@@ -154,13 +154,7 @@ static const char_class char_classes[] = {
     },
 };
 
-/* ── Enemy types ─────────────────────────────────────────────────── */
-
-enum { ENEMY_LURKER, ENEMY_BRUTE, ENEMY_SPITTER, ENEMY_HIVEGUARD,
-       /* Evolved tier 2 — advanced dragon parasite */
-       ENEMY_STALKER, ENEMY_MAULER, ENEMY_ACID_THROWER, ENEMY_WARDEN,
-       ENEMY_BOSS_1, ENEMY_BOSS_2, ENEMY_BOSS_3,
-       ENEMY_TYPE_COUNT };
+/* ── Enemy types (defined in sr_dungeon.h) ───────────────────────── */
 
 /* Sprite size: 32 for bosses, 16 for normal enemies */
 static int spr_enemy_size(int enemy_type) {
