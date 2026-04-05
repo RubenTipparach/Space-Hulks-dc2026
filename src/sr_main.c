@@ -500,7 +500,6 @@ static void draw_title_screen(sr_framebuffer *fb_ptr) {
     for (int i = 0; i < W * H; i++) px[i] = 0xFF0D0D11;
 
     sr_draw_text_centered(px, W, H, 60, "DRAKE'S VOID", white, shadow);
-    sr_draw_text_centered(px, W, H, 80, "DUNGEON CRAWLER", gray, shadow);
 
     if (title_confirm_new) {
         /* Confirm dialog — hides buttons behind it */
@@ -3991,6 +3990,6 @@ sapp_desc sokol_main(int argc, char *argv[]) {
         .window_title = "Drake's Void",
         .high_dpi     = true,
         .logger.func  = slog_func,
-        .swap_interval = 0,
+        .swap_interval = 1,
     };
 }

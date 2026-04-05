@@ -577,6 +577,10 @@ static void hub_start_dialog(int npc_idx, int action) {
         if (!mission_briefed) {
             if (g_dlgd.loaded) dialog_from_block(&g_dlgd.crew_init[1]);
             action = DIALOG_ACTION_NONE;
+        } else if (!mission_medbay_done || !mission_armory_done) {
+            /* Block teleport until prep is done */
+            if (g_dlgd.loaded) dialog_from_block(&g_dlgd.post_reyes_blocked);
+            action = DIALOG_ACTION_NONE;
         } else {
             if (g_dlgd.loaded) dialog_from_block(&g_dlgd.crew_default[1]);
         }
@@ -2080,11 +2084,11 @@ static void hub_draw_hud(uint32_t *px, int W, int H) {
     /* Mission objectives */
     {
         int oy = 50;
-        if (mission_briefed && !(mission_medbay_done && mission_armory_done) && g_dlgd.loaded) {
-            /* Initial prep flow: medbay, armory, board derelict */
+        if (!(mission_briefed && mission_medbay_done && mission_armory_done) && g_dlgd.loaded) {
+            /* Initial prep flow: captain, medbay, armory */
             sr_draw_text_shadow(px, W, H, 4, oy, "OBJECTIVES:", 0xFFCC8822, shadow);
             oy += 10;
-            bool obj_done[3] = { mission_medbay_done, mission_armory_done, false };
+            bool obj_done[3] = { mission_briefed, mission_medbay_done, mission_armory_done };
             for (int i = 0; i < g_dlgd.objective_count && i < 3; i++) {
                 char obj_buf[DLGD_LINE_LEN + 8];
                 bool done = obj_done[i];

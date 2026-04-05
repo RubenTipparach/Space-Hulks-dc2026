@@ -132,9 +132,9 @@ crew_default:
 # ── Mission objectives ─────────────────────────────────────────
 
 objectives:
-  obj0: REPORT TO MEDBAY
-  obj1: VISIT THE ARMORY
-  obj2: BOARD THE DERELICT
+  obj0: REPORT TO CAPTAIN
+  obj1: REPORT TO MEDBAY
+  obj2: VISIT THE ARMORY
   count: 3
 
 # ── Game over epilogue (player loses) ─────────────────────────
