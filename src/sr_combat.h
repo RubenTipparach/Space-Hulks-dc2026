@@ -948,6 +948,7 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
 
         /* ── Class-specific cards ───────────────────────────── */
         case CARD_SNIPER: {
+            sr_audio_play_sfx(&audio_sfx_shoot);
             int t = cs->target;
             while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
             if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
@@ -967,6 +968,7 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
         }
 
         case CARD_SHOTGUN: {
+            sr_audio_play_sfx(&audio_sfx_burst);
             int t = cs->target;
             while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
             if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
@@ -1025,6 +1027,7 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
         }
 
         case CARD_LASER: {
+            sr_audio_play_sfx(&audio_sfx_laser);
             int t = cs->target;
             while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
             if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
@@ -1038,12 +1041,14 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
         }
 
         case CARD_DEFLECTOR:
+            sr_audio_play_sfx(&audio_sfx_deflector);
             cs->player_shield += 4;
             cs->player_deflect = true;
             combat_set_message(cs, "DEFLECTOR +4 SHIELD, REFLECT ON");
             break;
 
         case CARD_STUN_GUN: {
+            sr_audio_play_sfx(&audio_sfx_stun_gun);
             int t = cs->target;
             while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
             if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
@@ -1057,6 +1062,7 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
         }
 
         case CARD_MICROWAVE: {
+            sr_audio_play_sfx(&audio_sfx_microwave);
             int t = cs->target;
             while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
             if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
@@ -1084,6 +1090,7 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
         }
 
         case CARD_QUICKSTEP:
+            sr_audio_play_sfx(&audio_sfx_dash);
             if (cs->discard_count < COMBAT_DECK_MAX) {
                 cs->discard[cs->discard_count++] = CARD_MOVE;
             }
@@ -1203,6 +1210,7 @@ static void combat_begin_enemy_turn(combat_state *cs) {
         /* Advance if not yet in attack range */
         if (e->distance > e->attack_range) {
             e->distance--;
+            sr_audio_play_combat_step();
             combat_log(cs, "%s advances -> dist %d",
                        enemy_templates[e->type].name, e->distance);
         }
@@ -1419,6 +1427,7 @@ static void combat_action_move_forward(combat_state *cs) {
         return;
     }
     cs->player_move_pts--;
+    sr_audio_play_combat_step();
     for (int i = 0; i < cs->enemy_count; i++)
         if (cs->enemies[i].alive && cs->enemies[i].distance > 0)
             cs->enemies[i].distance--;
@@ -1436,6 +1445,7 @@ static void combat_action_move_back(combat_state *cs) {
         return;
     }
     cs->player_move_pts--;
+    sr_audio_play_combat_step();
     for (int i = 0; i < cs->enemy_count; i++)
         if (cs->enemies[i].alive && cs->enemies[i].distance < COMBAT_MAX_DISTANCE)
             cs->enemies[i].distance++;

@@ -9,13 +9,27 @@ movement:
   instant_step: 1
 
 # Hub ship as seen from enemy ship (south of player)
-hub_ship_remote:
+# One config per enemy ship size (hub looks different depending on where you are)
+hub_from_small:
   x_offset: 0.0
   y_offset: -2.0
   z_offset: 30.0
   hover_amplitude: 0.2
   hover_speed: 0.8
-  scale: 1.0
+
+hub_from_medium:
+  x_offset: 0.0
+  y_offset: -2.0
+  z_offset: 50.0
+  hover_amplitude: 0.2
+  hover_speed: 0.8
+
+hub_from_large:
+  x_offset: 0.0
+  y_offset: -2.0
+  z_offset: 80.0
+  hover_amplitude: 0.15
+  hover_speed: 0.6
 
 # Enemy ship position relative to hub (in world units)
 # Small ship (20x20)

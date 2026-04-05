@@ -111,9 +111,10 @@ static enemy_ship_cfg enemy_ship_small  = { 0.0f, -2.0f, -30.0f, 0.3f, 1.0f };
 static enemy_ship_cfg enemy_ship_medium = { 0.0f, -12.0f, -60.0f, 0.2f, 0.4f };
 static enemy_ship_cfg enemy_ship_large  = { 0.0f, -15.0f, -120.0f, 0.15f, 0.3f };
 
-/* Hub ship as seen from enemy ship */
-typedef struct { float x_off, y_off, z_off, hover_amp, hover_speed, scale; } hub_ship_cfg;
-static hub_ship_cfg hub_ship_remote = { 0.0f, -2.0f, 30.0f, 0.2f, 0.8f, 1.0f };
+/* Hub ship as seen from enemy ship (one per enemy ship size) */
+static enemy_ship_cfg hub_from_small  = { 0.0f, -2.0f, 30.0f, 0.2f, 0.8f };
+static enemy_ship_cfg hub_from_medium = { 0.0f, -2.0f, 50.0f, 0.2f, 0.8f };
+static enemy_ship_cfg hub_from_large  = { 0.0f, -2.0f, 80.0f, 0.15f, 0.6f };
 #include "sr_scene_ship_hub.h"
 #include "sr_menu.h"
 static void handle_screen_tap(float sx, float sy); /* forward decl */
@@ -1024,6 +1025,8 @@ static int count_remaining_aliens(void) {
 }
 
 static void mission_complete_return_to_hub(int base_reward, const char *msg, bool all_killed) {
+    sr_audio_stop_enemyship_music();
+    sr_audio_play_sfx(&audio_sfx_victory);
     /* Calculate dual rewards based on completion method */
     int scrap_reward, biomass_reward;
     if (all_killed) {
@@ -1878,13 +1881,24 @@ static void init(void) {
             enemy_ship_large.hover_amp  = sr_config_float(&gcfg, "enemy_ship_large.hover_amplitude", 0.15f);
             enemy_ship_large.hover_speed= sr_config_float(&gcfg, "enemy_ship_large.hover_speed", 0.3f);
 
-            /* Hub ship remote config */
-            hub_ship_remote.x_off       = sr_config_float(&gcfg, "hub_ship_remote.x_offset", 0.0f);
-            hub_ship_remote.y_off       = sr_config_float(&gcfg, "hub_ship_remote.y_offset", -2.0f);
-            hub_ship_remote.z_off       = sr_config_float(&gcfg, "hub_ship_remote.z_offset", 30.0f);
-            hub_ship_remote.hover_amp   = sr_config_float(&gcfg, "hub_ship_remote.hover_amplitude", 0.2f);
-            hub_ship_remote.hover_speed = sr_config_float(&gcfg, "hub_ship_remote.hover_speed", 0.8f);
-            hub_ship_remote.scale       = sr_config_float(&gcfg, "hub_ship_remote.scale", 1.0f);
+            /* Hub ship remote configs (per enemy ship size) */
+            hub_from_small.x_off       = sr_config_float(&gcfg, "hub_from_small.x_offset", 0.0f);
+            hub_from_small.y_off       = sr_config_float(&gcfg, "hub_from_small.y_offset", -2.0f);
+            hub_from_small.z_off       = sr_config_float(&gcfg, "hub_from_small.z_offset", 30.0f);
+            hub_from_small.hover_amp   = sr_config_float(&gcfg, "hub_from_small.hover_amplitude", 0.2f);
+            hub_from_small.hover_speed = sr_config_float(&gcfg, "hub_from_small.hover_speed", 0.8f);
+
+            hub_from_medium.x_off       = sr_config_float(&gcfg, "hub_from_medium.x_offset", 0.0f);
+            hub_from_medium.y_off       = sr_config_float(&gcfg, "hub_from_medium.y_offset", -2.0f);
+            hub_from_medium.z_off       = sr_config_float(&gcfg, "hub_from_medium.z_offset", 50.0f);
+            hub_from_medium.hover_amp   = sr_config_float(&gcfg, "hub_from_medium.hover_amplitude", 0.2f);
+            hub_from_medium.hover_speed = sr_config_float(&gcfg, "hub_from_medium.hover_speed", 0.8f);
+
+            hub_from_large.x_off       = sr_config_float(&gcfg, "hub_from_large.x_offset", 0.0f);
+            hub_from_large.y_off       = sr_config_float(&gcfg, "hub_from_large.y_offset", -2.0f);
+            hub_from_large.z_off       = sr_config_float(&gcfg, "hub_from_large.z_offset", 80.0f);
+            hub_from_large.hover_amp   = sr_config_float(&gcfg, "hub_from_large.hover_amplitude", 0.15f);
+            hub_from_large.hover_speed = sr_config_float(&gcfg, "hub_from_large.hover_speed", 0.6f);
 
             /* Movement mode */
             dng_instant_step = (int)sr_config_float(&gcfg, "movement.instant_step", 0) != 0;
@@ -2033,6 +2047,7 @@ static void frame(void) {
             check_random_encounter();
 
         dng_enemies_lerp_update((float)dt);
+        sr_audio_start_enemyship_music();
         draw_starfield(&fb, &dng_state.player);
 
         /* Render hub ship exterior (visible south through windows) */
@@ -2053,11 +2068,15 @@ static void frame(void) {
 
             sr_dungeon *hub_d = &g_hub.dungeon;
             sr_dungeon *cur_d = dng_state.dungeon;
+            /* Select config based on current enemy ship size */
+            enemy_ship_cfg *hcfg = (cur_d->w >= 80) ? &hub_from_large
+                                 : (cur_d->w >= 40) ? &hub_from_medium
+                                 : &hub_from_small;
             float center_x = -(hub_d->w * DNG_CELL_SIZE) * 0.5f + (cur_d->w * DNG_CELL_SIZE) * 0.5f;
-            float hover = sinf((float)dng_time * hub_ship_remote.hover_speed) * hub_ship_remote.hover_amp;
-            float hox = center_x + hub_ship_remote.x_off;
-            float hoy = hub_ship_remote.y_off + hover;
-            float hoz = hub_ship_remote.z_off;
+            float hover = sinf((float)dng_time * hcfg->hover_speed) * hcfg->hover_amp;
+            float hox = center_x + hcfg->x_off;
+            float hoy = hcfg->y_off + hover;
+            float hoz = hcfg->z_off;
             sr_set_pixel_light_fn(NULL);
             draw_remote_ship_exterior(&fb, &remote_mvp2, hub_d, hox, hoy, hoz, false);
         }
