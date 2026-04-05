@@ -538,7 +538,7 @@ static void hub_start_dialog(int npc_idx, int action) {
     snprintf(g_dialog.speaker, sizeof(g_dialog.speaker), "%s", npc->name);
 
     int did = npc->dialog_id;
-    if (did < 0 || did > 4) did = 0;
+    if (did < 0 || did > 5) did = 0;
 
     /* Captain (dialog_id 0) — complex state machine */
     if (did == 0) {
@@ -627,7 +627,7 @@ static void hub_start_dialog(int npc_idx, int action) {
             action = DIALOG_ACTION_MEDBAY_SHOP;
         }
     }
-    /* BY-TOR (dialog_id 5) — friendly alien, Kowalski's friend */
+    /* PVT FIREMANN (dialog_id 5) — friendly alien, Kowalski's friend */
     else if (did == 5) {
         if (!mission_briefed) {
             if (g_dlgd.loaded) dialog_from_block(&g_dlgd.bytor_init);
@@ -1776,6 +1776,7 @@ static void draw_starmap(uint32_t *px, int W, int H) {
                 app_state = STATE_SHIP_HUB;
                 snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "JUMPED TO %s", tgt->name);
                 g_hub.hud_msg_timer = 90;
+                game_save();
             }
             if (ui_button(px, W, H, dbx + dbw - 70, dby + dbh - 16, 60, 14, "NO",
                           0xFF221111, 0xFF332222, 0xFF882222)) {
@@ -1829,6 +1830,7 @@ static void starmap_handle_key(int key_code) {
                 app_state = STATE_SHIP_HUB;
                 snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "JUMPED TO %s", g_starmap.nodes[ct].name);
                 g_hub.hud_msg_timer = 90;
+                game_save();
             }
         } else if (key_code == SAPP_KEYCODE_N || key_code == SAPP_KEYCODE_ESCAPE) {
             g_starmap.confirm_active = false;

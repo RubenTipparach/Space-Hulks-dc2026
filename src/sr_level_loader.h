@@ -20,9 +20,10 @@ static const char *lvl_room_names[] = {
 #define LVL_ROOM_NAME_COUNT 10
 
 static const char *lvl_enemy_names[] = {
-    "None", "Lurker", "Brute", "Spitter", "Hiveguard"
+    "None", "Lurker", "Brute", "Spitter", "Hiveguard",
+    "Stalker", "Mauler", "AcidThrower", "Warden"
 };
-#define LVL_ENEMY_NAME_COUNT 5
+#define LVL_ENEMY_NAME_COUNT 9
 
 static const char *lvl_rank_names[] = {
     "Ensign", "Lieutenant", "Commander", "Captain"

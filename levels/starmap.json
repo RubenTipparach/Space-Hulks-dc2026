@@ -86,7 +86,7 @@
       "levelFile": "enemy_ship_medium_2_boss.json",
       "difficulty": 3,
       "isBoss": true,
-      "bossRoom": 0,
+      "bossRoom": 5,
       "x": 440,
       "y": 135,
       "next": []

@@ -706,6 +706,29 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
                             x1,y_hi,z0, x0,y_hi,z0,
                             0,1,1,0, ceil_tex, 0,-1,0);
                     }
+
+                    /* Enclose the OTHER floor's stair shaft so we don't see void.
+                     * Down-stairs: box below y_lo. Up-stairs: box above y_hi. */
+                    {
+                        float sh_top, sh_bot; /* shaft vertical extent */
+                        if (going_down) {
+                            sh_top = y_lo;
+                            sh_bot = y_lo - y_range;
+                        } else {
+                            sh_top = y_hi + y_range;
+                            sh_bot = y_hi;
+                        }
+                        /* All 4 walls around the shaft */
+                        dng_draw_wall(fb_ptr, &mvp, x0,sh_top,z0, x0,sh_top,z1, x0,sh_bot,z1, x0,sh_bot,z0, stex, 1,0,0);  /* W */
+                        dng_draw_wall(fb_ptr, &mvp, x1,sh_top,z1, x1,sh_top,z0, x1,sh_bot,z0, x1,sh_bot,z1, stex, -1,0,0); /* E */
+                        dng_draw_wall(fb_ptr, &mvp, x1,sh_top,z0, x0,sh_top,z0, x0,sh_bot,z0, x1,sh_bot,z0, stex, 0,0,1);  /* N */
+                        dng_draw_wall(fb_ptr, &mvp, x0,sh_top,z1, x1,sh_top,z1, x1,sh_bot,z1, x0,sh_bot,z1, stex, 0,0,-1); /* S */
+                        /* Floor/ceiling cap at the far end */
+                        float cap_y = going_down ? sh_bot : sh_top;
+                        dng_draw_hquad(fb_ptr, &mvp,
+                            x0,cap_y,z0, x1,cap_y,z0, x1,cap_y,z1, x0,cap_y,z1,
+                            0,0,1,1, stex, 0, going_down ? 1 : -1, 0);
+                    }
                 } else {
                     /* Normal floor + ceiling */
                     dng_draw_hquad(fb_ptr, &mvp,

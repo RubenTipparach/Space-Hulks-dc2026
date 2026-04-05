@@ -243,7 +243,7 @@ typedef struct {
     int attack_range;  /* distance at which this enemy attacks */
 } enemy_template;
 
-static const enemy_template enemy_templates[] = {
+static enemy_template enemy_templates[] = {
     [ENEMY_LURKER]       = { "LURKER",       8,  1,  3, 2 },
     [ENEMY_BRUTE]        = { "BRUTE",       18,  4,  6, 1 },
     [ENEMY_SPITTER]      = { "SPITTER",     10,  2,  4, 3 },
@@ -263,6 +263,46 @@ static int enemy_roll_damage(int type) {
     const enemy_template *t = &enemy_templates[type];
     int range = t->dmg_max - t->dmg_min + 1;
     return t->dmg_min + (int)(dng_rng_int(range));
+}
+
+/* ── Load enemy config from yaml ─────────────────────────────────── */
+static char enemy_name_buf[ENEMY_TYPE_COUNT][24]; /* persistent name storage */
+
+static void enemy_load_one(sr_config *cfg, const char *key, int idx) {
+    char buf[64];
+    snprintf(buf, sizeof(buf), "%s.name", key);
+    const char *name = sr_config_get(cfg, buf);
+    if (name) {
+        snprintf(enemy_name_buf[idx], 24, "%s", name);
+        enemy_templates[idx].name = enemy_name_buf[idx];
+    }
+    snprintf(buf, sizeof(buf), "%s.hp", key);
+    int hp = (int)sr_config_float(cfg, buf, (float)enemy_templates[idx].hp_max);
+    if (hp > 0) enemy_templates[idx].hp_max = hp;
+    snprintf(buf, sizeof(buf), "%s.dmg_min", key);
+    enemy_templates[idx].dmg_min = (int)sr_config_float(cfg, buf, (float)enemy_templates[idx].dmg_min);
+    snprintf(buf, sizeof(buf), "%s.dmg_max", key);
+    enemy_templates[idx].dmg_max = (int)sr_config_float(cfg, buf, (float)enemy_templates[idx].dmg_max);
+    snprintf(buf, sizeof(buf), "%s.range", key);
+    enemy_templates[idx].attack_range = (int)sr_config_float(cfg, buf, (float)enemy_templates[idx].attack_range);
+}
+
+static void enemy_load_config(void) {
+    sr_config cfg = sr_config_load("config/enemies.yaml");
+    if (cfg.count <= 0) return;
+    enemy_load_one(&cfg, "lurker",       ENEMY_LURKER);
+    enemy_load_one(&cfg, "brute",        ENEMY_BRUTE);
+    enemy_load_one(&cfg, "spitter",      ENEMY_SPITTER);
+    enemy_load_one(&cfg, "hiveguard",    ENEMY_HIVEGUARD);
+    enemy_load_one(&cfg, "stalker",      ENEMY_STALKER);
+    enemy_load_one(&cfg, "mauler",       ENEMY_MAULER);
+    enemy_load_one(&cfg, "acid_thrower", ENEMY_ACID_THROWER);
+    enemy_load_one(&cfg, "warden",       ENEMY_WARDEN);
+    enemy_load_one(&cfg, "boss_1",       ENEMY_BOSS_1);
+    enemy_load_one(&cfg, "boss_2",       ENEMY_BOSS_2);
+    enemy_load_one(&cfg, "boss_3",       ENEMY_BOSS_3);
+    printf("[enemies] Loaded config from enemies.yaml\n");
+    sr_config_free(&cfg);
 }
 
 /* ── Combat state ────────────────────────────────────────────────── */
@@ -789,12 +829,13 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
             int t = cs->target;
             while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
             if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
-            if (t >= 0 && cs->enemies[t].distance <= 0) {
+            if (t >= 0 && cs->enemies[t].distance <= 2) {
                 int dmg = 6 + cs->fire_atk_bonus;
                 combat_deal_damage_enemy(cs, t, dmg);
                 snprintf(buf, sizeof(buf), "MELEE %s -%dHP!", enemy_templates[cs->enemies[t].type].name, dmg);
                 combat_set_message(cs, buf);
             } else {
+                sr_audio_play_sfx(&audio_sfx_error);
                 int d = (t >= 0) ? cs->enemies[t].distance : 0;
                 snprintf(buf, sizeof(buf), "TOO FAR! DIST: %d", d);
                 combat_set_message(cs, buf);
@@ -981,6 +1022,7 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
                 snprintf(buf, sizeof(buf), "SNIPE %s -%dHP!", enemy_templates[cs->enemies[t].type].name, dmg);
                 combat_set_message(cs, buf);
             } else {
+                sr_audio_play_sfx(&audio_sfx_error);
                 int d = (t >= 0) ? cs->enemies[t].distance : 0;
                 snprintf(buf, sizeof(buf), "TOO CLOSE! DIST: %d (NEED 2+)", d);
                 combat_set_message(cs, buf);
@@ -1019,6 +1061,7 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
                 snprintf(buf, sizeof(buf), "WELD %s -%dHP +2SH!", enemy_templates[cs->enemies[t].type].name, dmg);
                 combat_set_message(cs, buf);
             } else {
+                sr_audio_play_sfx(&audio_sfx_error);
                 int d = (t >= 0) ? cs->enemies[t].distance : 0;
                 snprintf(buf, sizeof(buf), "TOO FAR! DIST: %d", d);
                 combat_set_message(cs, buf);
@@ -1040,6 +1083,7 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
                 snprintf(buf, sizeof(buf), "CHAINSAW %s -%dHP +3SH!!", enemy_templates[cs->enemies[t].type].name, dmg);
                 combat_set_message(cs, buf);
             } else {
+                sr_audio_play_sfx(&audio_sfx_error);
                 int d = (t >= 0) ? cs->enemies[t].distance : 0;
                 snprintf(buf, sizeof(buf), "TOO FAR! DIST: %d", d);
                 combat_set_message(cs, buf);
@@ -1992,7 +2036,7 @@ static const char *card_effect_text(int card_type) {
         case CARD_SHOOT:       return "3 DMG";
         case CARD_BURST:       return "2 DMG ALL";
         case CARD_MOVE:        return "+2 MOVE\nEXHAUST";
-        case CARD_MELEE:       return "6 DMG MELEE";
+        case CARD_MELEE:       return "6 DMG\nRANGE 2";
         case CARD_OVERCHARGE:  return "+2 ENERGY";
         case CARD_REPAIR:      return "+4 HP";
         case CARD_STUN:        return "SKIP ENEMY\nATTACKS";
@@ -2026,7 +2070,7 @@ static const char *card_description_text(int card_type) {
         case CARD_SHOOT:       return "BASIC RANGED ATTACK.\nWORKS AT ANY DISTANCE.";
         case CARD_BURST:       return "HITS ALL ENEMIES\nFOR REDUCED DAMAGE.";
         case CARD_MOVE:        return "GRANTS MOVEMENT\nPOINTS TO REPOSITION.\nEXHAUSTED AFTER USE.";
-        case CARD_MELEE:       return "POWERFUL CLOSE RANGE\nATTACK. MUST BE\nADJACENT TO TARGET.";
+        case CARD_MELEE:       return "POWERFUL CLOSE RANGE\nATTACK. RANGE 2.";
         case CARD_OVERCHARGE:  return "GAIN EXTRA ENERGY\nTHIS TURN. COSTS\nNOTHING TO PLAY.";
         case CARD_REPAIR:      return "RESTORE HIT POINTS.\nHEALING PERSISTS\nBETWEEN COMBATS.";
         case CARD_STUN:        return "ALL ENEMIES SKIP\nTHEIR NEXT ATTACK\nPHASE.";

@@ -222,5 +222,5 @@ public static class LevelGenerator
     };
 
     private static string GenerateAlienName() =>
-        $"{Prefixes[_rng.Next(Prefixes.Length)]}'{Suffixes[_rng.Next(Suffixes.Length)]}";
+        $"{Prefixes[_rng.Next(Prefixes.Length)]}-{Suffixes[_rng.Next(Suffixes.Length)]}";
 }

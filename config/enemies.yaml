@@ -1,0 +1,87 @@
+# Enemy configuration
+# Edit these values to tweak enemy stats and names
+
+# ── Tier 1 (Difficulty 0-1) ──────────────────────────
+lurker:
+  name: LURKER
+  hp: 8
+  dmg_min: 1
+  dmg_max: 3
+  range: 2
+
+brute:
+  name: BRUTE
+  hp: 18
+  dmg_min: 4
+  dmg_max: 6
+  range: 1
+
+spitter:
+  name: SPITTER
+  hp: 10
+  dmg_min: 2
+  dmg_max: 4
+  range: 3
+
+hiveguard:
+  name: HIVEGUARD
+  hp: 24
+  dmg_min: 3
+  dmg_max: 5
+  range: 2
+
+# ── Tier 2 (Difficulty 2+) ──────────────────────────
+stalker:
+  name: STALKER
+  hp: 14
+  dmg_min: 3
+  dmg_max: 5
+  range: 2
+
+mauler:
+  name: MAULER
+  hp: 28
+  dmg_min: 5
+  dmg_max: 8
+  range: 1
+
+acid_thrower:
+  name: ACID THROWER
+  hp: 16
+  dmg_min: 3
+  dmg_max: 6
+  range: 4
+
+warden:
+  name: WARDEN
+  hp: 32
+  dmg_min: 4
+  dmg_max: 6
+  range: 2
+
+# ── Bosses ───────────────────────────────────────────
+boss_1:
+  name: RAVAGER
+  hp: 115
+  dmg_min: 7
+  dmg_max: 12
+  range: 2
+
+boss_2:
+  name: VOID WYRM
+  hp: 130
+  dmg_min: 8
+  dmg_max: 14
+  range: 3
+
+boss_3:
+  name: HIVEMIND
+  hp: 150
+  dmg_min: 9
+  dmg_max: 16
+  range: 2
+
+# ── Name generation ─────────────────────────────────
+# Alien names are PREFIX-SUFFIX
+name_prefixes: ZR,KR,VX,GH,SK,BL,TR,NX,QZ,XL
+name_suffixes: AAK,IKS,ULL,ORM,AXE,ENT,IRE,OKK,URG,ASH

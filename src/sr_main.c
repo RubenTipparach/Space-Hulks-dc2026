@@ -115,6 +115,7 @@ static enemy_ship_cfg enemy_ship_large  = { 0.0f, -15.0f, -120.0f, 0.15f, 0.3f }
 static enemy_ship_cfg hub_from_small  = { 0.0f, -2.0f, 30.0f, 0.2f, 0.8f };
 static enemy_ship_cfg hub_from_medium = { 0.0f, -2.0f, 50.0f, 0.2f, 0.8f };
 static enemy_ship_cfg hub_from_large  = { 0.0f, -2.0f, 80.0f, 0.15f, 0.6f };
+static void game_save(void); /* forward decl */
 #include "sr_scene_ship_hub.h"
 #include "sr_menu.h"
 static void handle_screen_tap(float sx, float sy); /* forward decl */
@@ -304,8 +305,8 @@ static void game_delete_save(void) {
 /* ── Save ────────────────────────────────────────────────────────── */
 
 static void game_save(void) {
-    /* Only save while exploring or fighting */
-    if (app_state != STATE_RUNNING && app_state != STATE_COMBAT) return;
+    /* Only save while exploring, fighting, or on the hub */
+    if (app_state != STATE_RUNNING && app_state != STATE_COMBAT && app_state != STATE_SHIP_HUB) return;
 
     save_header hdr;
     memset(&hdr, 0, sizeof(hdr));
@@ -1056,6 +1057,7 @@ static void game_init_ship(void) {
                 }
             }
 
+            printf("[game_init_ship] Level file: %s\n", level_path);
             printf("[game_init_ship] Level loaded: %s (%d decks, %d rooms, %d officers)\n",
                    current_ship.name, current_ship.num_decks,
                    current_ship.room_count, current_ship.officer_count);
@@ -1063,6 +1065,35 @@ static void game_init_ship(void) {
                    (void*)dng_state.dungeon, dng_state.dungeon->w, dng_state.dungeon->h,
                    dng_state.dungeon->spawn_gx, dng_state.dungeon->spawn_gy);
             /* Initialize enemy AI entities for the starting floor */
+            /* Upgrade tier 1 enemies to tier 2 on difficulty >= 2 */
+            if (player_sector >= 2) {
+                /* Mapping: Lurker→Stalker, Brute→Mauler, Spitter→AcidThrower, Hiveguard→Warden */
+                static const uint8_t tier2_map[] = {
+                    [ENEMY_LURKER+1]    = ENEMY_STALKER+1,
+                    [ENEMY_BRUTE+1]     = ENEMY_MAULER+1,
+                    [ENEMY_SPITTER+1]   = ENEMY_ACID_THROWER+1,
+                    [ENEMY_HIVEGUARD+1] = ENEMY_WARDEN+1,
+                };
+                sr_dungeon *dd = dng_state.dungeon;
+                for (int gy2 = 1; gy2 <= dd->h; gy2++)
+                    for (int gx2 = 1; gx2 <= dd->w; gx2++) {
+                        uint8_t a = dd->aliens[gy2][gx2];
+                        if (a >= 1 && a <= ENEMY_HIVEGUARD+1)
+                            dd->aliens[gy2][gx2] = tier2_map[a];
+                    }
+                printf("[game_init_ship] Upgraded enemies to tier 2 (sector %d)\n", player_sector);
+                fflush(stdout);
+            }
+
+            /* Remove any enemies sitting on consoles */
+            {
+                sr_dungeon *dd = dng_state.dungeon;
+                for (int gy2 = 1; gy2 <= dd->h; gy2++)
+                    for (int gx2 = 1; gx2 <= dd->w; gx2++)
+                        if (dd->aliens[gy2][gx2] != 0 && dd->consoles[gy2][gx2] != 0)
+                            dd->aliens[gy2][gx2] = 0;
+            }
+
             printf("[game_init_ship] Calling dng_enemies_init...\n");
             fflush(stdout);
             dng_enemies_init(dng_state.dungeon);
@@ -1081,11 +1112,13 @@ static void game_init_ship(void) {
                 if (sn->boss_room >= 0 && sn->boss_room < dng_state.dungeon->room_count) {
                     sr_dungeon *dd = dng_state.dungeon;
                     int br = sn->boss_room;
-                    int bx = dd->room_cx[br], by = dd->room_cy[br];
-                    /* Pick boss type based on starmap progression */
-                    int boss_type = ENEMY_BOSS_1 + (player_starmap % 3);
-                    if (boss_type > ENEMY_BOSS_3) boss_type = ENEMY_BOSS_3;
-                    dd->aliens[by][bx] = (uint8_t)boss_type;
+                    /* Offset from room center so boss isn't on the console */
+                    int bx = dd->room_cx[br] + 1, by = dd->room_cy[br] + 1;
+                    if (bx > dd->w) bx = dd->room_cx[br];
+                    if (by > dd->h) by = dd->room_cy[br];
+                    /* Always use ENEMY_BOSS_1 (Ravager / astrozom) */
+                    int boss_type = ENEMY_BOSS_1;
+                    dd->aliens[by][bx] = (uint8_t)(boss_type + 1);
                     snprintf(dd->alien_names[by][bx], 16, "%s",
                              enemy_templates[boss_type].name);
                     printf("[game_init_ship] Boss %s placed in room %d at (%d,%d)\n",
@@ -1094,6 +1127,14 @@ static void game_init_ship(void) {
                 }
             }
 
+            /* Re-init player at the JSON floor's spawn point */
+            dng_player_init(&dng_state.player,
+                            dng_state.dungeon->spawn_gx,
+                            dng_state.dungeon->spawn_gy,
+                            dng_state.dungeon->spawn_dir);
+            printf("[game_init_ship] Player repositioned to (%d,%d) dir=%d\n",
+                   dng_state.player.gx, dng_state.player.gy, dng_state.player.dir);
+            fflush(stdout);
             printf("[game_init_ship] Ship init complete, returning to caller\n");
             fflush(stdout);
             return;
@@ -2068,6 +2109,7 @@ static void init(void) {
 
     dng_load_config();
     hub_load_config();
+    enemy_load_config();
     dlgd_load();
 
     /* Load game config (debug mode etc.) */
@@ -2153,6 +2195,10 @@ static void frame(void) {
     {
         static int prev_app_state = -1;
         if (app_state != prev_app_state) {
+            /* Stop enemy ship music when leaving dungeon */
+            if (prev_app_state == STATE_RUNNING || prev_app_state == STATE_COMBAT)
+                sr_audio_stop_enemyship_music();
+            /* Hub ambient */
             if (app_state == STATE_SHIP_HUB)
                 sr_audio_start_hub_ambient();
             else if (prev_app_state == STATE_SHIP_HUB && app_state != STATE_SHOP && app_state != STATE_DIALOG && app_state != STATE_STARMAP)
@@ -2692,6 +2738,7 @@ static void handle_screen_tap(float sx, float sy) {
 
     if (app_state == STATE_MISSION_SUMMARY) {
         app_state = STATE_SHIP_HUB;
+        game_save();
         return;
     }
 
@@ -3168,11 +3215,22 @@ static void event(const sapp_event *ev) {
         return;
     }
 
+    /* ── Debug: Ctrl+F9 = full heal in combat ────────────────── */
+    if (debug_mode && ev->key_code == SAPP_KEYCODE_F9 && (ev->modifiers & SAPP_MODIFIER_CTRL) &&
+        app_state == STATE_COMBAT) {
+        combat.player_hp = combat.player_hp_max;
+        g_player.hp = g_player.hp_max;
+        combat_log(&combat, "DEBUG: FULL HEAL");
+        combat_set_message(&combat, "DEBUG HEAL!");
+        return;
+    }
+
     /* ── Mission summary screen ─────────────────────────────── */
     if (app_state == STATE_MISSION_SUMMARY) {
         if (ev->key_code == SAPP_KEYCODE_SPACE || ev->key_code == SAPP_KEYCODE_ENTER ||
             ev->key_code == SAPP_KEYCODE_F) {
             app_state = STATE_SHIP_HUB;
+            game_save();
         }
         return;
     }
