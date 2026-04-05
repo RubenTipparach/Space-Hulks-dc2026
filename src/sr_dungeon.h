@@ -412,11 +412,11 @@ static void dng_generate_ex(sr_dungeon *d, int w, int h, bool has_down_stairs, b
         }
     }
 
-    /* Place 1-2 chests per floor in random rooms */
+    /* Place 1-2 chests per floor in random rooms (guaranteed at least 1) */
     {
         int num_chests = 1 + dng_rng_int(2); /* 1-2 */
         int placed = 0;
-        for (int attempt = 0; attempt < num_rooms * 3 && placed < num_chests; attempt++) {
+        for (int attempt = 0; attempt < num_rooms * 10 && placed < num_chests; attempt++) {
             int ri = dng_rng_int(num_rooms);
             int cx = rooms[ri].x + dng_rng_int(rooms[ri].w);
             int cy = rooms[ri].y + dng_rng_int(rooms[ri].h);
@@ -430,6 +430,20 @@ static void dng_generate_ex(sr_dungeon *d, int w, int h, bool has_down_stairs, b
             if (d->chests[cy][cx] != 0) continue;
             d->chests[cy][cx] = 1;
             placed++;
+        }
+        /* Fallback: brute-force scan to guarantee at least 1 chest */
+        if (placed == 0) {
+            for (int ri = 0; ri < num_rooms && placed == 0; ri++) {
+                for (int cy = rooms[ri].y; cy < rooms[ri].y + rooms[ri].h && placed == 0; cy++)
+                    for (int cx = rooms[ri].x; cx < rooms[ri].x + rooms[ri].w && placed == 0; cx++) {
+                        if (cx < 1 || cx > w || cy < 1 || cy > h) continue;
+                        if (d->map[cy][cx] != 0) continue;
+                        if (cx == d->spawn_gx && cy == d->spawn_gy) continue;
+                        if (d->consoles[cy][cx] != 0 || d->aliens[cy][cx] != 0) continue;
+                        d->chests[cy][cx] = 1;
+                        placed++;
+                    }
+            }
         }
     }
 }
@@ -476,12 +490,15 @@ static void dng_player_init(dng_player *p, int gx, int gy, int dir) {
 }
 
 #define DNG_MOVE_INTERVAL 0.2  /* seconds between moves (= 5 cells/sec) */
+#define DNG_MOVE_INTERVAL_INSTANT 0.05  /* faster rate for instant step mode */
 
 static double dng_time = 0; /* global time accumulator, updated each frame */
+static bool dng_instant_step = false; /* true = snap position, fast repeat */
 
 static void dng_player_try_move(dng_player *p, const sr_dungeon *d, int dir) {
     if (p->bounce_timer > 0) return; /* blocked during bounce-back */
-    if (dng_time - p->last_move_time < DNG_MOVE_INTERVAL) return; /* rate limited */
+    double interval = dng_instant_step ? DNG_MOVE_INTERVAL_INSTANT : DNG_MOVE_INTERVAL;
+    if (dng_time - p->last_move_time < interval) return; /* rate limited */
     int nx = p->gx + dng_dir_dx[dir];
     int ny = p->gy + dng_dir_dz[dir];
     if (dng_can_enter(d, p->gx, p->gy, nx, ny)) {

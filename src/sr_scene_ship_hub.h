@@ -1794,10 +1794,11 @@ static void hub_draw_scene(sr_framebuffer *fb_ptr) {
         enemy_ship_cfg *esc = (enemy_d->w >= 80) ? &enemy_ship_large
                             : (enemy_d->w >= 40) ? &enemy_ship_medium
                             : &enemy_ship_small;
-        float ship_ox = -(enemy_d->w * DNG_CELL_SIZE) * 0.5f + (d->w * DNG_CELL_SIZE) * 0.5f;
+        float center_x = -(enemy_d->w * DNG_CELL_SIZE) * 0.5f + (d->w * DNG_CELL_SIZE) * 0.5f;
         float hover = sinf((float)dng_time * esc->hover_speed) * esc->hover_amp;
-        float ship_oy = esc->vertical + hover;
-        float ship_oz = -esc->distance;
+        float ship_ox = center_x + esc->x_off;
+        float ship_oy = esc->y_off + hover;
+        float ship_oz = esc->z_off;
         static bool _rs_logged = false;
         if (!_rs_logged) {
             printf("_ship] w=%d h=%d ox=%.1f oz=%.1f\n",

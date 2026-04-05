@@ -237,8 +237,6 @@ static void rasterize_triangle(sr_framebuffer *fb,
             if (z >= fb->depth[idx])
                 continue;
 
-            fb->depth[idx] = z;
-
             /* Perspective-correct interpolation */
             float iw = inv_w0 * w0 + inv_w1 * w1 + inv_w2 * w2;
             float inv_iw = 1.0f / iw;
@@ -249,11 +247,13 @@ static void rasterize_triangle(sr_framebuffer *fb,
             uint32_t color;
             if (tex && tex->pixels) {
                 color = sr_texture_sample(tex, u, v);
-                /* Alpha test — skip transparent pixels */
+                /* Alpha test — skip transparent pixels (depth NOT written yet) */
                 if ((color >> 24) < 128) continue;
             } else {
                 color = 0xFFFFFFFF;
             }
+
+            fb->depth[idx] = z;
 
             /* Apply interpolated vertex color (Gouraud shading) */
             if (!all_white) {

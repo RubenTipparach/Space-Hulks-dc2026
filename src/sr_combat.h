@@ -723,6 +723,7 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
 
     switch (card) {
         case CARD_SHIELD:
+            sr_audio_play_sfx(&audio_sfx_fortify);
             cs->player_shield += 3;
             combat_set_message(cs, "SHIELD +3");
             break;
@@ -742,6 +743,7 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
         }
 
         case CARD_BURST: {
+            sr_audio_play_sfx(&audio_sfx_burst);
             int dmg = 2 + cs->fire_atk_bonus;
             for (int i = 0; i < cs->enemy_count; i++) {
                 if (cs->enemies[i].alive)
@@ -753,12 +755,14 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
         }
 
         case CARD_MOVE:
+            sr_audio_play_sfx(&audio_sfx_dash);
             cs->player_move_pts += 2;
             snprintf(buf, sizeof(buf), "+2 MOVE PTS (%d)", cs->player_move_pts);
             combat_set_message(cs, buf);
             break;
 
         case CARD_MELEE: {
+            sr_audio_play_sfx(&audio_sfx_shoot);
             int t = cs->target;
             while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
             if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
@@ -778,17 +782,20 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
         }
 
         case CARD_OVERCHARGE:
+            sr_audio_play_sfx(&audio_sfx_confirm);
             cs->energy += 2;
             combat_set_message(cs, "OVERCHARGE! +2 ENERGY");
             break;
 
         case CARD_REPAIR:
+            sr_audio_play_sfx(&audio_sfx_confirm);
             cs->player_hp += 4;
             if (cs->player_hp > cs->player_hp_max) cs->player_hp = cs->player_hp_max;
             combat_set_message(cs, "REPAIR +4HP");
             break;
 
         case CARD_STUN:
+            sr_audio_play_sfx(&audio_sfx_stun_gun);
             for (int i = 0; i < cs->enemy_count; i++)
                 if (cs->enemies[i].alive) {
                     cs->enemies[i].lightning_stun = 1;
@@ -799,6 +806,7 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
             break;
 
         case CARD_FORTIFY:
+            sr_audio_play_sfx(&audio_sfx_fortify);
             cs->player_shield += 6;
             combat_set_message(cs, "FORTIFY! SHIELD +6");
             break;
@@ -818,6 +826,7 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
         }
 
         case CARD_DASH:
+            sr_audio_play_sfx(&audio_sfx_dash);
             cs->player_move_pts += 3;
             {
                 int t = cs->target;
@@ -887,6 +896,7 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
         }
 
         case CARD_FIRE: {
+            sr_audio_play_sfx(&audio_sfx_burst); /* fire burst */
             int t = cs->target;
             while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
             if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
@@ -911,6 +921,7 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
         }
 
         case CARD_LIGHTNING: {
+            sr_audio_play_sfx(&audio_sfx_stun_gun);
             int t = cs->target;
             while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
             if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
@@ -1719,8 +1730,11 @@ static void combat_touch_ended(combat_state *cs, float fx, float fy) {
 
     bool played = false;
     if (target_type == TARGET_SELF) {
-        combat_play_card(cs, cs->drag_card);
-        played = true;
+        /* Self-target: play if dragged up at all, or dropped in player zone */
+        if (dy >= 10.0f || (fx < 100.0f && fy >= 130.0f && fy <= 230.0f)) {
+            combat_play_card(cs, cs->drag_card);
+            played = true;
+        }
     } else if (target_type == TARGET_ALL_ENEMIES) {
         if (fy < 130.0f) {
             combat_play_card(cs, cs->drag_card);

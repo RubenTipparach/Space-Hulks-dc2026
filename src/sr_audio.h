@@ -19,7 +19,7 @@ typedef struct {
     int    sample_rate;
 } sr_audio_clip;
 
-#define SR_AUDIO_MAX_VOICES 8
+#define SR_AUDIO_MAX_VOICES 12
 
 typedef struct {
     const sr_audio_clip *clip;
@@ -53,6 +53,20 @@ static sr_audio_clip audio_sfx_chainsaw;
 static sr_audio_clip audio_sfx_dblshot;
 static sr_audio_clip audio_sfx_dealcard;
 static sr_audio_clip audio_sfx_welder;
+static sr_audio_clip audio_sfx_burst;
+static sr_audio_clip audio_sfx_confirm;
+static sr_audio_clip audio_sfx_dash;
+static sr_audio_clip audio_sfx_deflector;
+static sr_audio_clip audio_sfx_error;
+static sr_audio_clip audio_sfx_fortify;
+static sr_audio_clip audio_sfx_laser;
+static sr_audio_clip audio_sfx_microwave;
+static sr_audio_clip audio_sfx_stun_gun;
+static sr_audio_clip audio_sfx_victory;
+
+/* Enemy ship music */
+static sr_audio_clip audio_enemyship_music;
+static int   audio_enemyship_voice = -1;
 
 static int   audio_drone_voice = -1;
 static int   audio_noise_voice = -1;
@@ -175,6 +189,26 @@ static void sr_audio_stop_hub_ambient(void) {
     audio_hub_ambient_active = false;
 }
 
+static void sr_audio_start_enemyship_music(void) {
+    if (!audio_initialized) return;
+    if (audio_enemyship_voice >= 0 && audio_voices[audio_enemyship_voice].active) return;
+    audio_enemyship_voice = sr_audio_play(&audio_enemyship_music, 0.4f, true);
+}
+
+static void sr_audio_stop_enemyship_music(void) {
+    if (audio_enemyship_voice >= 0) {
+        sr_audio_stop(audio_enemyship_voice);
+        audio_enemyship_voice = -1;
+    }
+}
+
+static void sr_audio_play_combat_step(void) {
+    if (!audio_initialized) return;
+    int idx = (int)(rng_float() * 6.0f);
+    if (idx > 5) idx = 5;
+    sr_audio_play(&audio_footsteps[idx], 0.25f, false);
+}
+
 static void sr_audio_update(float dt) {
     if (!audio_initialized || !audio_hub_ambient_active) return;
     audio_noise_timer -= dt;
@@ -215,6 +249,17 @@ static void sr_audio_init(void) {
     audio_sfx_dblshot    = sr_audio_load_mp3("assets/audio/dblshot.mp3");
     audio_sfx_dealcard   = sr_audio_load_mp3("assets/audio/dealcard.mp3");
     audio_sfx_welder     = sr_audio_load_mp3("assets/audio/welder.mp3");
+    audio_sfx_burst      = sr_audio_load_mp3("assets/audio/burst.mp3");
+    audio_sfx_confirm    = sr_audio_load_mp3("assets/audio/confirm.mp3");
+    audio_sfx_dash       = sr_audio_load_mp3("assets/audio/dash.mp3");
+    audio_sfx_deflector  = sr_audio_load_mp3("assets/audio/deflector.mp3");
+    audio_sfx_error      = sr_audio_load_mp3("assets/audio/error2.mp3");
+    audio_sfx_fortify    = sr_audio_load_mp3("assets/audio/fortify.mp3");
+    audio_sfx_laser      = sr_audio_load_mp3("assets/audio/laser.mp3");
+    audio_sfx_microwave  = sr_audio_load_mp3("assets/audio/microwave.mp3");
+    audio_sfx_stun_gun   = sr_audio_load_mp3("assets/audio/stun gun.mp3");
+    audio_sfx_victory    = sr_audio_load_mp3("assets/audio/victory.mp3");
+    audio_enemyship_music= sr_audio_load_mp3("assets/audio/enemyship_full.mp3");
 
     dng_on_move_callback = sr_audio_play_footstep;
     audio_initialized = true;
@@ -237,6 +282,17 @@ static void sr_audio_shutdown(void) {
     sr_audio_clip_free(&audio_sfx_dblshot);
     sr_audio_clip_free(&audio_sfx_dealcard);
     sr_audio_clip_free(&audio_sfx_welder);
+    sr_audio_clip_free(&audio_sfx_burst);
+    sr_audio_clip_free(&audio_sfx_confirm);
+    sr_audio_clip_free(&audio_sfx_dash);
+    sr_audio_clip_free(&audio_sfx_deflector);
+    sr_audio_clip_free(&audio_sfx_error);
+    sr_audio_clip_free(&audio_sfx_fortify);
+    sr_audio_clip_free(&audio_sfx_laser);
+    sr_audio_clip_free(&audio_sfx_microwave);
+    sr_audio_clip_free(&audio_sfx_stun_gun);
+    sr_audio_clip_free(&audio_sfx_victory);
+    sr_audio_clip_free(&audio_enemyship_music);
 }
 
 #endif /* SR_AUDIO_H */

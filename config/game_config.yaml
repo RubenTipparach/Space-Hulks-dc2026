@@ -4,24 +4,40 @@
 debug:
   enabled: 1
 
+# Movement mode: 0 = smooth (step must resolve before next), 1 = instant (spam-friendly)
+movement:
+  instant_step: 1
+
+# Hub ship as seen from enemy ship (south of player)
+hub_ship_remote:
+  x_offset: 0.0
+  y_offset: -2.0
+  z_offset: 30.0
+  hover_amplitude: 0.2
+  hover_speed: 0.8
+  scale: 1.0
+
 # Enemy ship position relative to hub (in world units)
 # Small ship (20x20)
 enemy_ship_small:
-  distance: 20.0
-  vertical: -2.0
+  x_offset: 0.0
+  y_offset: -2.0
+  z_offset: -30.0
   hover_amplitude: 0.3
-  hover_speed: 0.5
+  hover_speed: 1.0
 
 # Medium ship (40x40)
 enemy_ship_medium:
-  distance: 40.0
-  vertical: -12.0
+  x_offset: 0.0
+  y_offset: -12.0
+  z_offset: -60.0
   hover_amplitude: 0.2
   hover_speed: 0.4
 
 # Large ship (80x80)
 enemy_ship_large:
-  distance: 80.0
-  vertical: -15.0
+  x_offset: 0.0
+  y_offset: -15.0
+  z_offset: -120.0
   hover_amplitude: 0.15
   hover_speed: 0.3

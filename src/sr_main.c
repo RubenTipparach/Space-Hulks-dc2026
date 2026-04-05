@@ -106,10 +106,14 @@ static void game_init_ship(void); /* forward decl */
 static void game_pregen_enemy_ship(void); /* forward decl */
 
 /* Enemy ship exterior position per size (loaded from game_config.yaml) */
-typedef struct { float distance, vertical, hover_amp, hover_speed; } enemy_ship_cfg;
-static enemy_ship_cfg enemy_ship_small  = { 20.0f, -10.0f, 0.3f, 0.5f };
-static enemy_ship_cfg enemy_ship_medium = { 40.0f, -12.0f, 0.2f, 0.4f };
-static enemy_ship_cfg enemy_ship_large  = { 80.0f, -15.0f, 0.15f, 0.3f };
+typedef struct { float x_off, y_off, z_off, hover_amp, hover_speed; } enemy_ship_cfg;
+static enemy_ship_cfg enemy_ship_small  = { 0.0f, -2.0f, -30.0f, 0.3f, 1.0f };
+static enemy_ship_cfg enemy_ship_medium = { 0.0f, -12.0f, -60.0f, 0.2f, 0.4f };
+static enemy_ship_cfg enemy_ship_large  = { 0.0f, -15.0f, -120.0f, 0.15f, 0.3f };
+
+/* Hub ship as seen from enemy ship */
+typedef struct { float x_off, y_off, z_off, hover_amp, hover_speed, scale; } hub_ship_cfg;
+static hub_ship_cfg hub_ship_remote = { 0.0f, -2.0f, 30.0f, 0.2f, 0.8f, 1.0f };
 #include "sr_scene_ship_hub.h"
 #include "sr_menu.h"
 static void handle_screen_tap(float sx, float sy); /* forward decl */
@@ -126,6 +130,35 @@ static void game_ship_size(int sector, int *out_w, int *out_h) {
 static void game_pregen_enemy_ship(void) {
     if (dng_state.floor_generated[0]) return; /* already generated */
 
+    /* Try JSON level first (has windows, hand-placed layout) */
+    const char *level_path = "levels/sample_enemy_ship.json";
+    if (lvl_file_exists(level_path)) {
+        lvl_loaded lvl = lvl_load(level_path);
+        if (lvl.valid && !lvl.is_hub) {
+            lvl_load_ship(&current_ship, &lvl.json, lvl.root);
+            dng_state.max_floors = current_ship.num_decks;
+            for (int dk = 0; dk < current_ship.num_decks && dk < DNG_MAX_FLOORS; dk++)
+                dng_state.deck_room_counts[dk] = current_ship.deck_room_count[dk];
+            lvl_load_all_floors(&lvl, dng_state.floors,
+                                dng_state.floor_generated, DNG_MAX_FLOORS);
+            dng_state.grid_w = dng_state.floors[0].w;
+            dng_state.grid_h = dng_state.floors[0].h;
+            dng_state.current_floor = 0;
+            dng_state.dungeon = &dng_state.floors[0];
+            /* Count windows loaded */
+            int win_count = 0;
+            sr_dungeon *ed = &dng_state.floors[0];
+            for (int gy = 1; gy <= ed->h; gy++)
+                for (int gx = 1; gx <= ed->w; gx++)
+                    if (ed->win_faces[gy][gx]) win_count++;
+            printf("[pregen] Enemy ship loaded from %s (%dx%d, %d window cells)\n",
+                   level_path, dng_state.grid_w, dng_state.grid_h, win_count);
+            /* lvl goes out of scope — JSON data is stack/static, no free needed */
+            return;
+        }
+    }
+
+    /* Fallback: procedural generation */
     int gw, gh;
     game_ship_size(player_sector, &gw, &gh);
     dng_state.grid_w = gw;
@@ -138,7 +171,6 @@ static void game_pregen_enemy_ship(void) {
     for (int dk = 0; dk < current_ship.num_decks && dk < DNG_MAX_FLOORS; dk++)
         dng_state.deck_room_counts[dk] = current_ship.deck_room_count[dk];
 
-    /* Generate first floor only (enough for exterior rendering) */
     bool is_last = (current_ship.num_decks <= 1);
     int deck_rooms = current_ship.deck_room_count[0];
     dng_generate_ex(&dng_state.floors[0], gw, gh, false, !is_last,
@@ -146,7 +178,7 @@ static void game_pregen_enemy_ship(void) {
     dng_state.floor_generated[0] = true;
     dng_state.current_floor = 0;
     dng_state.dungeon = &dng_state.floors[0];
-    printf("[pregen] Enemy ship floor 0 generated (%dx%d)\n", gw, gh);
+    printf("[pregen] Enemy ship procedurally generated (%dx%d)\n", gw, gh);
 }
 
 /* ── Save / Load ─────────────────────────────────────────────────── */
@@ -1801,6 +1833,7 @@ static void init(void) {
     stextures[STEX_ICON_ACID]          = sr_texture_load("assets/sprites/icon_acid.png");
     stextures[STEX_ICON_FIRE]          = sr_texture_load("assets/sprites/icon_fire.png");
     stextures[STEX_ICON_LIGHTNING]     = sr_texture_load("assets/sprites/icon_lightning.png");
+    stextures[STEX_LOOT_CHEST]         = sr_texture_load("assets/sprites/loot_chest.png");
 
     /* Build console textures from embedded sprite data for 3D billboard rendering */
     for (int rt = 1; rt < CONSOLE_TEX_COUNT && rt < ROOM_TYPE_COUNT; rt++) {
@@ -1827,20 +1860,35 @@ static void init(void) {
             if (debug_mode) printf("[game] DEBUG MODE ENABLED\n");
 
             /* Enemy ship position per size */
-            enemy_ship_small.distance   = sr_config_float(&gcfg, "enemy_ship_small.distance", 20.0f);
-            enemy_ship_small.vertical   = sr_config_float(&gcfg, "enemy_ship_small.vertical", -10.0f);
+            enemy_ship_small.x_off      = sr_config_float(&gcfg, "enemy_ship_small.x_offset", 0.0f);
+            enemy_ship_small.y_off      = sr_config_float(&gcfg, "enemy_ship_small.y_offset", -2.0f);
+            enemy_ship_small.z_off      = sr_config_float(&gcfg, "enemy_ship_small.z_offset", -30.0f);
             enemy_ship_small.hover_amp  = sr_config_float(&gcfg, "enemy_ship_small.hover_amplitude", 0.3f);
-            enemy_ship_small.hover_speed= sr_config_float(&gcfg, "enemy_ship_small.hover_speed", 0.5f);
+            enemy_ship_small.hover_speed= sr_config_float(&gcfg, "enemy_ship_small.hover_speed", 1.0f);
 
-            enemy_ship_medium.distance   = sr_config_float(&gcfg, "enemy_ship_medium.distance", 40.0f);
-            enemy_ship_medium.vertical   = sr_config_float(&gcfg, "enemy_ship_medium.vertical", -12.0f);
+            enemy_ship_medium.x_off      = sr_config_float(&gcfg, "enemy_ship_medium.x_offset", 0.0f);
+            enemy_ship_medium.y_off      = sr_config_float(&gcfg, "enemy_ship_medium.y_offset", -12.0f);
+            enemy_ship_medium.z_off      = sr_config_float(&gcfg, "enemy_ship_medium.z_offset", -60.0f);
             enemy_ship_medium.hover_amp  = sr_config_float(&gcfg, "enemy_ship_medium.hover_amplitude", 0.2f);
             enemy_ship_medium.hover_speed= sr_config_float(&gcfg, "enemy_ship_medium.hover_speed", 0.4f);
 
-            enemy_ship_large.distance   = sr_config_float(&gcfg, "enemy_ship_large.distance", 80.0f);
-            enemy_ship_large.vertical   = sr_config_float(&gcfg, "enemy_ship_large.vertical", -15.0f);
+            enemy_ship_large.x_off      = sr_config_float(&gcfg, "enemy_ship_large.x_offset", 0.0f);
+            enemy_ship_large.y_off      = sr_config_float(&gcfg, "enemy_ship_large.y_offset", -15.0f);
+            enemy_ship_large.z_off      = sr_config_float(&gcfg, "enemy_ship_large.z_offset", -120.0f);
             enemy_ship_large.hover_amp  = sr_config_float(&gcfg, "enemy_ship_large.hover_amplitude", 0.15f);
             enemy_ship_large.hover_speed= sr_config_float(&gcfg, "enemy_ship_large.hover_speed", 0.3f);
+
+            /* Hub ship remote config */
+            hub_ship_remote.x_off       = sr_config_float(&gcfg, "hub_ship_remote.x_offset", 0.0f);
+            hub_ship_remote.y_off       = sr_config_float(&gcfg, "hub_ship_remote.y_offset", -2.0f);
+            hub_ship_remote.z_off       = sr_config_float(&gcfg, "hub_ship_remote.z_offset", 30.0f);
+            hub_ship_remote.hover_amp   = sr_config_float(&gcfg, "hub_ship_remote.hover_amplitude", 0.2f);
+            hub_ship_remote.hover_speed = sr_config_float(&gcfg, "hub_ship_remote.hover_speed", 0.8f);
+            hub_ship_remote.scale       = sr_config_float(&gcfg, "hub_ship_remote.scale", 1.0f);
+
+            /* Movement mode */
+            dng_instant_step = (int)sr_config_float(&gcfg, "movement.instant_step", 0) != 0;
+            if (dng_instant_step) printf("[game] INSTANT STEP MODE ENABLED\n");
 
             sr_config_free(&gcfg);
         }
@@ -1878,7 +1926,7 @@ static void frame(void) {
         if (app_state != prev_app_state) {
             if (app_state == STATE_SHIP_HUB)
                 sr_audio_start_hub_ambient();
-            else if (prev_app_state == STATE_SHIP_HUB)
+            else if (prev_app_state == STATE_SHIP_HUB && app_state != STATE_SHOP && app_state != STATE_DIALOG)
                 sr_audio_stop_hub_ambient();
             prev_app_state = app_state;
         }
@@ -1986,6 +2034,34 @@ static void frame(void) {
 
         dng_enemies_lerp_update((float)dt);
         draw_starfield(&fb, &dng_state.player);
+
+        /* Render hub ship exterior (visible south through windows) */
+        if (g_hub.initialized && g_hub.dungeon.w > 0) {
+            dng_player *ep = &dng_state.player;
+            float cam_angle = ep->angle * 6.28318f;
+            float ca_cos = cosf(cam_angle), ca_sin = sinf(cam_angle);
+            sr_vec3 eye = { ep->x, ep->y, ep->z };
+            sr_vec3 fwd = { ca_sin, 0, -ca_cos };
+            sr_vec3 target2 = { eye.x + fwd.x, eye.y + fwd.y, eye.z + fwd.z };
+            sr_vec3 up = { 0, 1, 0 };
+            sr_mat4 view2 = sr_mat4_lookat(eye, target2, up);
+            sr_mat4 proj2 = sr_mat4_perspective(
+                70.0f * 3.14159f / 180.0f,
+                (float)fb.width / (float)fb.height,
+                0.05f, 500.0f);
+            sr_mat4 remote_mvp2 = sr_mat4_mul(proj2, view2);
+
+            sr_dungeon *hub_d = &g_hub.dungeon;
+            sr_dungeon *cur_d = dng_state.dungeon;
+            float center_x = -(hub_d->w * DNG_CELL_SIZE) * 0.5f + (cur_d->w * DNG_CELL_SIZE) * 0.5f;
+            float hover = sinf((float)dng_time * hub_ship_remote.hover_speed) * hub_ship_remote.hover_amp;
+            float hox = center_x + hub_ship_remote.x_off;
+            float hoy = hub_ship_remote.y_off + hover;
+            float hoz = hub_ship_remote.z_off;
+            sr_set_pixel_light_fn(NULL);
+            draw_remote_ship_exterior(&fb, &remote_mvp2, hub_d, hox, hoy, hoz, false);
+        }
+
         draw_dungeon_scene(&fb, &vp);
         draw_dungeon_minimap(&fb);
 

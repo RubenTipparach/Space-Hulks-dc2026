@@ -621,6 +621,20 @@
           "combatType": "Brute"
         }
       ],
+      "windows": [
+        { "gX": 3, "gY": 4, "dir": "South" },
+        { "gX": 4, "gY": 4, "dir": "South" },
+        { "gX": 9, "gY": 4, "dir": "South" },
+        { "gX": 10, "gY": 4, "dir": "South" },
+        { "gX": 14, "gY": 4, "dir": "South" },
+        { "gX": 15, "gY": 4, "dir": "South" },
+        { "gX": 5, "gY": 15, "dir": "North" },
+        { "gX": 6, "gY": 15, "dir": "North" },
+        { "gX": 11, "gY": 15, "dir": "North" },
+        { "gX": 12, "gY": 15, "dir": "North" },
+        { "gX": 15, "gY": 15, "dir": "North" },
+        { "gX": 16, "gY": 15, "dir": "North" }
+      ],
       "npcs": []
     }
   ]
