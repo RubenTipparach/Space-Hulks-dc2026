@@ -64,7 +64,7 @@ jobs:
       - name: Upload web artifact
         uses: actions/upload-artifact@v4
         with:
-          name: spacehulks-web
+          name: drakesvoid-web
           path: build/web/
 
       - name: Upload Pages artifact
@@ -96,6 +96,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p build
+          windres resources.rc -o build/resources.o
           gcc -O2 -std=c99 \
             -I src \
             -I third_party \
@@ -103,24 +104,25 @@ jobs:
             src/sr_raster.c \
             src/sr_texture.c \
             src/sr_gif.c \
-            -o build/spacehulks.exe \
+            build/resources.o \
+            -o build/drakesvoid.exe \
             -lopengl32 -lgdi32 -luser32 -lkernel32 -lshell32 -lwinmm -lole32 -lm
 
       - name: Package Windows zip
         shell: bash
         run: |
-          mkdir -p spacehulks-win
-          cp build/spacehulks.exe spacehulks-win/
-          cp -r assets spacehulks-win/assets
-          cp -r config spacehulks-win/config
-          cp -r levels spacehulks-win/levels
-          cd spacehulks-win && 7z a -tzip ../spacehulks-windows.zip . && cd ..
+          mkdir -p drakesvoid-win
+          cp build/drakesvoid.exe drakesvoid-win/
+          cp -r assets drakesvoid-win/assets
+          cp -r config drakesvoid-win/config
+          cp -r levels drakesvoid-win/levels
+          cd drakesvoid-win && 7z a -tzip ../drakesvoid-windows.zip . && cd ..
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
         with:
-          name: spacehulks-windows
-          path: spacehulks-windows.zip
+          name: drakesvoid-windows
+          path: drakesvoid-windows.zip
 
   deploy-itch:
     name: Deploy to itch.io
@@ -130,13 +132,13 @@ jobs:
       - name: Download web build
         uses: actions/download-artifact@v4
         with:
-          name: spacehulks-web
+          name: drakesvoid-web
           path: web-build/
 
       - name: Download Windows build
         uses: actions/download-artifact@v4
         with:
-          name: spacehulks-windows
+          name: drakesvoid-windows
           path: win-build/
 
       - name: Deploy web to itch.io
@@ -150,7 +152,7 @@ jobs:
       - name: Deploy Windows to itch.io
         uses: robpc/itchio-upload-action@v1
         with:
-          path: win-build/spacehulks-windows.zip
+          path: win-build/drakesvoid-windows.zip
           project: ruben-tipparach/drakes-void
           channel: windows
           api-key: ${{ secrets.BUTLER_API_KEY }}

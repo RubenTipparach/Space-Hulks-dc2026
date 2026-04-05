@@ -1,7 +1,7 @@
 @echo off
 setlocal
 
-echo [BUILD] StarRaster (WASM)...
+echo [BUILD] Drake's Void (WASM)...
 
 :: Check for emcc
 where emcc >nul 2>&1
@@ -30,7 +30,7 @@ emcc -O2 -std=gnu99 ^
     src/sr_raster.c ^
     src/sr_texture.c ^
     src/sr_gif.c ^
-    -o build/web/starraster.html ^
+    -o build/web/drakesvoid.html ^
     --shell-file web/shell.html
 
 if %errorlevel% neq 0 (

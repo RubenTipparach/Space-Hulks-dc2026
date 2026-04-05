@@ -2241,6 +2241,19 @@ static void init(void) {
 
     sr_fog_set(FOG_COLOR, FOG_NEAR, FOG_FAR);
 
+    /* Set window icon from Fireman sprite */
+    if (stextures[STEX_CREW_BYTOR].pixels) {
+        sr_texture *icon_tex = &stextures[STEX_CREW_BYTOR];
+        sapp_set_icon(&(sapp_icon_desc){
+            .images[0] = {
+                .width = icon_tex->width,
+                .height = icon_tex->height,
+                .pixels = { .ptr = icon_tex->pixels,
+                             .size = (size_t)(icon_tex->width * icon_tex->height * 4) },
+            },
+        });
+    }
+
     dng_load_config();
     hub_load_config();
     enemy_load_config();

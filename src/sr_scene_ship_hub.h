@@ -294,6 +294,12 @@ static void hub_generate(hub_state *hub) {
                     if (npc->gx >= 1 && npc->gx <= d->w && npc->gy >= 1 && npc->gy <= d->h) {
                         d->aliens[npc->gy][npc->gx] = (uint8_t)(stex + 1);
                         snprintf(d->alien_names[npc->gy][npc->gx], 16, "%s", npc->name);
+                        printf("[hub] NPC %d '%s' at (%d,%d) stex=%d aliens_val=%d pixels=%p\n",
+                               i, npc->name, npc->gx, npc->gy, stex, stex+1,
+                               (void*)stextures[stex].pixels);
+                    } else {
+                        printf("[hub] NPC %d '%s' OUT OF BOUNDS at (%d,%d) w=%d h=%d\n",
+                               i, npc->name, npc->gx, npc->gy, d->w, d->h);
                     }
                 }
             }
@@ -1956,6 +1962,11 @@ static void hub_draw_scene(sr_framebuffer *fb_ptr) {
     dng_player save_player = dng_state.player;
     dng_state.dungeon = d;
     dng_state.player = *p;
+
+    /* Hub: all cells visible (no fog of war on your own ship) */
+    for (int gy = 1; gy <= d->h; gy++)
+        for (int gx = 1; gx <= d->w; gx++)
+            dng_vis[gy][gx] = true;
 
     /* Use fog mode (mode 1) for hub with hub-specific fog function */
     int save_light_mode = dng_light_mode;

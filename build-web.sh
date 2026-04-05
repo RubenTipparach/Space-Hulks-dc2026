@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "[BUILD] StarRaster (WASM)..."
+echo "[BUILD] Drake's Void (WASM)..."
 
 # Check for emcc
 if ! command -v emcc &>/dev/null; then
