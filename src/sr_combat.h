@@ -833,7 +833,7 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
                 while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
                 if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
                 if (t >= 0) {
-                    int dmg = 4 + cs->fire_atk_bonus;
+                    int dmg = 2 + cs->fire_atk_bonus;
                     combat_deal_damage_enemy(cs, t, dmg);
                     snprintf(buf, sizeof(buf), "DASH +3MP %s -%dHP!", enemy_templates[cs->enemies[t].type].name, dmg);
                     combat_set_message(cs, buf);
@@ -1920,7 +1920,7 @@ static const char *card_effect_text(int card_type) {
         case CARD_STUN:        return "SKIP ENEMY\nATTACKS";
         case CARD_FORTIFY:     return "+6 SHIELD";
         case CARD_DOUBLE_SHOT: return "5 DMG";
-        case CARD_DASH:        return "+3 MOVE\n4 DMG";
+        case CARD_DASH:        return "+3 MOVE\n2 DMG";
         case CARD_ICE:         return "FREEZE 3T\nSLOW+DMG";
         case CARD_ACID:        return "STACK DOT\n1/STACK";
         case CARD_FIRE:        return "BURN 3T\nSPREADS";

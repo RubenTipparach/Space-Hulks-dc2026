@@ -1806,6 +1806,7 @@ static void hub_draw_scene(sr_framebuffer *fb_ptr) {
             _rs_logged = true;
         }
         sr_set_pixel_light_fn(NULL);
+        draw_remote_ship_interior(fb_ptr, &remote_mvp, enemy_d, ship_ox, ship_oy, ship_oz, true);
         draw_remote_ship_exterior(fb_ptr, &remote_mvp, enemy_d, ship_ox, ship_oy, ship_oz, true);
     }
 
@@ -1821,6 +1822,7 @@ static void hub_draw_scene(sr_framebuffer *fb_ptr) {
     dng_floor_texture = -1;
     dng_ceiling_texture = -1;
     dng_skip_pillars = false;
+    dng_alien_exterior = false;
     dng_cfg.ambient_brightness = save_ambient;
     dng_cfg.light_brightness = save_torch;
     memcpy(dng_cfg.room_light_color, save_rl_color, sizeof(dng_cfg.room_light_color));

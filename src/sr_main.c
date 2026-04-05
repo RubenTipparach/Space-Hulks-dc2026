@@ -184,7 +184,7 @@ static void game_pregen_enemy_ship(void) {
 
 /* ── Save / Load ─────────────────────────────────────────────────── */
 
-#define SAVE_VERSION 5
+#define SAVE_VERSION 6  /* bumped: added card_angle_offsets to combat_state */
 
 /*  Save header — fixed-size portion written first.
  *  After the header, each generated dungeon floor (sr_dungeon) is
@@ -1820,6 +1820,8 @@ static void init(void) {
     itextures[ITEX_EXT_WINDOW]   = sr_indexed_load("assets/indexed/exerior_window.idx");
     itextures[ITEX_ALIEN_EXT]    = sr_indexed_load("assets/indexed/alien_exterior.idx");
     itextures[ITEX_ALIEN_EXT_WIN]= sr_indexed_load("assets/indexed/alien_exterior_window.idx");
+    itextures[ITEX_ALIEN_WALL]   = sr_indexed_load("assets/indexed/alien_interior_wall.idx");
+    itextures[ITEX_ALIEN_CORRIDOR]= sr_indexed_load("assets/indexed/alien_corridor.idx");
 
     stextures[STEX_LURKER]    = sr_texture_load("assets/sprites/lurker.png");
     stextures[STEX_BRUTE]     = sr_texture_load("assets/sprites/brute.png");
@@ -1956,9 +1958,13 @@ static void frame(void) {
         /* Handle continue button click (signaled from ui_button in draw) */
         if (title_cursor == 99) {
             title_cursor = 1;
+            printf("[title] Continue clicked, save_exists=%d\n", save_exists);
             if (save_exists && game_load()) {
                 last_player_gx = dng_state.player.gx;
                 last_player_gy = dng_state.player.gy;
+                printf("[title] Game loaded, state=%d\n", app_state);
+            } else {
+                printf("[title] Load failed or no save\n");
             }
         }
     } else if (app_state == STATE_INTRO) {
@@ -2014,6 +2020,7 @@ static void frame(void) {
         sr_mat4 vp;
         (void)vp;
         sr_fog_disable();
+        dng_alien_exterior = true; /* enemy ship uses alien exterior textures */
 
         /* Update dungeon game state */
         if (dng_play_state == DNG_STATE_CLIMBING) {
@@ -2078,10 +2085,26 @@ static void frame(void) {
             float hoy = hcfg->y_off + hover;
             float hoz = hcfg->z_off;
             sr_set_pixel_light_fn(NULL);
+            draw_remote_ship_interior(&fb, &remote_mvp2, hub_d, hox, hoy, hoz, false);
             draw_remote_ship_exterior(&fb, &remote_mvp2, hub_d, hox, hoy, hoz, false);
         }
 
+        /* Set alien ship textures: no pillars, alien walls, hub floor/ceiling reused */
+        dng_wall_texture = ITEX_ALIEN_CORRIDOR;
+        dng_room_wall_texture = ITEX_ALIEN_WALL;
+        dng_floor_texture = ITEX_HUB_FLOOR;
+        dng_ceiling_texture = ITEX_HUB_CEILING;
+        dng_skip_pillars = true;
+
         draw_dungeon_scene(&fb, &vp);
+
+        /* Reset to defaults */
+        dng_wall_texture = -1;
+        dng_room_wall_texture = -1;
+        dng_floor_texture = -1;
+        dng_ceiling_texture = -1;
+        dng_skip_pillars = false;
+
         draw_dungeon_minimap(&fb);
 
         /* Ship HUD overlay (ship simulation disabled) */
@@ -2204,7 +2227,7 @@ static void frame(void) {
             {
                 int map_scale = 2;
                 int map_bottom = 28 + dng_state.dungeon->h * map_scale + 4;
-                int hx = fb.width - dng_state.dungeon->w * map_scale - 18;
+                int hx = fb.width - dng_state.dungeon->w * map_scale - 28;
                 int hy = map_bottom;
                 uint32_t dim = 0xFF888888;
                 uint32_t shadow = 0xFF000000;
@@ -2655,7 +2678,7 @@ static void handle_screen_tap(float sx, float sy) {
                             g_hub.hud_msg_timer = 60;
                         } else if (player_biomass >= 10) {
                             player_biomass -= 10;
-                            int heal = g_player.hp_max / 5; /* 20% of max HP */
+                            int heal = (g_player.hp_max * 3) / 10; /* 30% of max HP */
                             if (heal < 1) heal = 1;
                             g_player.hp += heal;
                             if (g_player.hp > g_player.hp_max) g_player.hp = g_player.hp_max;

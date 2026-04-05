@@ -92,6 +92,7 @@ static int  dng_floor_texture = -1;    /* -1 = default ITEX_TILE, else override 
 static int  dng_ceiling_texture = -1;  /* -1 = default ITEX_WOOD, else override */
 static bool dng_skip_pillars = false;  /* true = don't draw corner pillars */
 static bool dng_skip_exterior = false; /* true = don't draw exterior hull */
+static bool dng_alien_exterior = false; /* true = use alien textures for exterior */
 static float dng_hull_padding = 0.25f; /* hull expansion padding (in cells) */
 static float dng_hull_corner = 0.25f; /* chamfer corner size (in cells, matches C# editor default) */
 static float (*dng_fog_fn)(float, float, float) = NULL; /* override for fog vertex intensity */
@@ -934,8 +935,8 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
     if (!dng_skip_exterior) {
         if (!dng_hull_computed || dng_hull_for != d) dng_compute_hull_mask(d);
 
-        const sr_indexed_texture *ext_tex = &itextures[ITEX_EXT_WALL];
-        const sr_indexed_texture *ext_win_tex = &itextures[ITEX_EXT_WINDOW];
+        const sr_indexed_texture *ext_tex = dng_alien_exterior ? &itextures[ITEX_ALIEN_EXT] : &itextures[ITEX_EXT_WALL];
+        const sr_indexed_texture *ext_win_tex = dng_alien_exterior ? &itextures[ITEX_ALIEN_EXT_WIN] : &itextures[ITEX_EXT_WINDOW];
         const sr_indexed_texture *roof_tex = &itextures[ITEX_ROOF];
 
         float ch = dng_hull_corner * DNG_CELL_SIZE; /* chamfer offset */
@@ -1391,6 +1392,65 @@ static void remote_compute_hull_mask(sr_dungeon *d) {
     remote_hull_for = d;
 }
 
+/* Draw simplified interior of a remote dungeon at world offset (ox, oy, oz).
+ * Renders walls, floors, ceilings — no stairs, sprites, pillars, or visibility. */
+static void draw_remote_ship_interior(sr_framebuffer *fb_ptr, const sr_mat4 *mvp,
+                                       sr_dungeon *d, float ox, float oy, float oz,
+                                       bool alien) {
+    if (!d || d->w <= 0 || d->h <= 0) return;
+
+    const sr_indexed_texture *wall_tex = alien ? &itextures[ITEX_BRICK] : &itextures[ITEX_HUB_CORRIDOR];
+    const sr_indexed_texture *floor_tex = &itextures[ITEX_TILE];
+    const sr_indexed_texture *ceil_tex = &itextures[ITEX_WOOD];
+    const sr_indexed_texture *win_tex = &itextures[ITEX_WALL_A_WIN];
+
+    float y_lo = oy - DNG_HALF_CELL;
+    float y_hi = oy + DNG_HALF_CELL;
+
+    sr_set_pixel_light_fn(NULL);
+
+    for (int gy = 1; gy <= d->h; gy++) {
+        for (int gx = 1; gx <= d->w; gx++) {
+            float x0 = ox + (gx - 1) * DNG_CELL_SIZE;
+            float x1 = ox + gx * DNG_CELL_SIZE;
+            float z0 = oz + (gy - 1) * DNG_CELL_SIZE;
+            float z1 = oz + gy * DNG_CELL_SIZE;
+
+            if (d->map[gy][gx] == 1) {
+                /* Wall cell — draw faces toward adjacent open cells */
+                uint8_t wf = d->win_faces[gy][gx];
+                if (gy < d->h && d->map[gy+1][gx] != 1) {
+                    const sr_indexed_texture *ft = (wf & DNG_WIN_S) ? win_tex : wall_tex;
+                    dng_draw_wall(fb_ptr, mvp, x0,y_hi,z1, x1,y_hi,z1, x1,y_lo,z1, x0,y_lo,z1, ft, 0,0,1);
+                }
+                if (gy > 1 && d->map[gy-1][gx] != 1) {
+                    const sr_indexed_texture *ft = (wf & DNG_WIN_N) ? win_tex : wall_tex;
+                    dng_draw_wall(fb_ptr, mvp, x1,y_hi,z0, x0,y_hi,z0, x0,y_lo,z0, x1,y_lo,z0, ft, 0,0,-1);
+                }
+                if (gx < d->w && d->map[gy][gx+1] != 1) {
+                    const sr_indexed_texture *ft = (wf & DNG_WIN_E) ? win_tex : wall_tex;
+                    dng_draw_wall(fb_ptr, mvp, x1,y_hi,z1, x1,y_hi,z0, x1,y_lo,z0, x1,y_lo,z1, ft, 1,0,0);
+                }
+                if (gx > 1 && d->map[gy][gx-1] != 1) {
+                    const sr_indexed_texture *ft = (wf & DNG_WIN_W) ? win_tex : wall_tex;
+                    dng_draw_wall(fb_ptr, mvp, x0,y_hi,z0, x0,y_hi,z1, x0,y_lo,z1, x0,y_lo,z0, ft, -1,0,0);
+                }
+            } else {
+                /* Open cell — floor + ceiling */
+                uint32_t unlit = 0xFF606060;
+                sr_draw_quad_indexed(fb_ptr,
+                    sr_vert_c(x0,y_lo,z0, 0,0, unlit), sr_vert_c(x1,y_lo,z0, 1,0, unlit),
+                    sr_vert_c(x1,y_lo,z1, 1,1, unlit), sr_vert_c(x0,y_lo,z1, 0,1, unlit),
+                    floor_tex, mvp);
+                sr_draw_quad_indexed(fb_ptr,
+                    sr_vert_c(x0,y_hi,z1, 0,1, unlit), sr_vert_c(x1,y_hi,z1, 1,1, unlit),
+                    sr_vert_c(x1,y_hi,z0, 1,0, unlit), sr_vert_c(x0,y_hi,z0, 0,0, unlit),
+                    ceil_tex, mvp);
+            }
+        }
+    }
+}
+
 /* Draw exterior hull of a remote dungeon at world offset (ox, oy, oz) */
 static void draw_remote_ship_exterior(sr_framebuffer *fb_ptr, const sr_mat4 *mvp,
                                        sr_dungeon *d, float ox, float oy, float oz,
@@ -1399,8 +1459,8 @@ static void draw_remote_ship_exterior(sr_framebuffer *fb_ptr, const sr_mat4 *mvp
     if (!remote_hull_computed || remote_hull_for != d) remote_compute_hull_mask(d);
 
     const sr_indexed_texture *ext_tex = alien ? &itextures[ITEX_ALIEN_EXT] : &itextures[ITEX_EXT_WALL];
-    /* Use solid wall texture for windows on remote ships (no transparency) */
-    const sr_indexed_texture *ext_win_tex = ext_tex;
+    const sr_indexed_texture *ext_win_tex = alien ? &itextures[ITEX_ALIEN_EXT_WIN]
+                                                  : ext_tex; /* human ships: solid walls (no window transparency) */
     const sr_indexed_texture *roof_tex = &itextures[ITEX_ROOF];
 
     static bool _remote_logged = false;
