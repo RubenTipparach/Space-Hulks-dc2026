@@ -873,22 +873,43 @@ static int  chest_choices[3];        /* 3 elemental card choices */
 static int  chest_gx, chest_gy;     /* position of opened chest */
 
 static void game_init_ship(void) {
+    printf("[game_init_ship] Starting ship initialization\n");
+    printf("[game_init_ship] current_floor=%d, seed_base=%u, grid=%dx%d\n",
+           dng_state.current_floor, dng_state.seed_base, dng_state.grid_w, dng_state.grid_h);
+
     /* Try to load a hand-designed level file first */
     const char *level_path = "levels/sample_enemy_ship.json";
     if (lvl_file_exists(level_path)) {
+        printf("[game_init_ship] Found %s, attempting load...\n", level_path);
         lvl_loaded lvl = lvl_load(level_path);
+        printf("[game_init_ship] lvl_load result: valid=%d, is_hub=%d, num_floors=%d\n",
+               lvl.valid, lvl.is_hub, lvl.num_floors);
         if (lvl.valid && !lvl.is_hub) {
-            printf("[game] Loading level from %s (%d floors)\n", level_path, lvl.num_floors);
+            printf("[game_init_ship] Loading level from %s (%d floors)\n", level_path, lvl.num_floors);
 
             /* Populate ship state from JSON */
             lvl_load_ship(&current_ship, &lvl.json, lvl.root);
+            printf("[game_init_ship] Ship: '%s' decks=%d rooms=%d officers=%d\n",
+                   current_ship.name, current_ship.num_decks,
+                   current_ship.room_count, current_ship.officer_count);
             dng_state.max_floors = current_ship.num_decks;
-            for (int dk = 0; dk < current_ship.num_decks && dk < DNG_MAX_FLOORS; dk++)
+            for (int dk = 0; dk < current_ship.num_decks && dk < DNG_MAX_FLOORS; dk++) {
                 dng_state.deck_room_counts[dk] = current_ship.deck_room_count[dk];
+                printf("[game_init_ship]   deck %d: %d rooms (start=%d)\n",
+                       dk, current_ship.deck_room_count[dk], current_ship.deck_room_start[dk]);
+            }
 
             /* Load all floors directly from JSON */
+            printf("[game_init_ship] Loading floors into dng_state...\n");
             lvl_load_all_floors(&lvl, dng_state.floors,
                                 dng_state.floor_generated, DNG_MAX_FLOORS);
+            printf("[game_init_ship] current_floor=%d, floor_generated[0]=%d\n",
+                   dng_state.current_floor, dng_state.floor_generated[0]);
+            if (dng_state.current_floor >= current_ship.num_decks) {
+                printf("[game_init_ship] WARNING: current_floor %d >= num_decks %d, clamping to 0\n",
+                       dng_state.current_floor, current_ship.num_decks);
+                dng_state.current_floor = 0;
+            }
             dng_state.dungeon = &dng_state.floors[dng_state.current_floor];
 
             /* Set grid size from first floor */
@@ -930,12 +951,25 @@ static void game_init_ship(void) {
                 }
             }
 
-            printf("[game] Level loaded: %s (%d decks, %d rooms, %d officers)\n",
+            printf("[game_init_ship] Level loaded: %s (%d decks, %d rooms, %d officers)\n",
                    current_ship.name, current_ship.num_decks,
                    current_ship.room_count, current_ship.officer_count);
+            printf("[game_init_ship] Dungeon ptr=%p, w=%d, h=%d, spawn=(%d,%d)\n",
+                   (void*)dng_state.dungeon, dng_state.dungeon->w, dng_state.dungeon->h,
+                   dng_state.dungeon->spawn_gx, dng_state.dungeon->spawn_gy);
             /* Initialize enemy AI entities for the starting floor */
+            printf("[game_init_ship] Calling dng_enemies_init...\n");
+            fflush(stdout);
             dng_enemies_init(dng_state.dungeon);
+            printf("[game_init_ship] dng_enemies_init done, enemy_count=%d\n", dng_enemy_count);
+            fflush(stdout);
+            printf("[game_init_ship] Calling dng_spawn_hallway_enemies...\n");
+            fflush(stdout);
             dng_spawn_hallway_enemies(dng_state.dungeon, dng_state.current_floor);
+            printf("[game_init_ship] dng_spawn_hallway_enemies done, enemy_count=%d\n", dng_enemy_count);
+            fflush(stdout);
+            printf("[game_init_ship] Ship init complete, returning to caller\n");
+            fflush(stdout);
             return;
         }
     }
@@ -1822,6 +1856,7 @@ static void init(void) {
     itextures[ITEX_ALIEN_EXT_WIN]= sr_indexed_load("assets/indexed/alien_exterior_window.idx");
     itextures[ITEX_ALIEN_WALL]   = sr_indexed_load("assets/indexed/alien_interior_wall.idx");
     itextures[ITEX_ALIEN_CORRIDOR]= sr_indexed_load("assets/indexed/alien_corridor.idx");
+    itextures[ITEX_ALIEN_WIN]    = sr_indexed_load("assets/indexed/alien_interior_window.idx");
 
     stextures[STEX_LURKER]    = sr_texture_load("assets/sprites/lurker.png");
     stextures[STEX_BRUTE]     = sr_texture_load("assets/sprites/brute.png");
@@ -2022,6 +2057,18 @@ static void frame(void) {
         sr_fog_disable();
         dng_alien_exterior = true; /* enemy ship uses alien exterior textures */
 
+        {
+            static bool _dng_first_frame = true;
+            if (_dng_first_frame) {
+                printf("[dungeon_render] First frame: dungeon=%p w=%d h=%d player=(%d,%d)\n",
+                       (void*)dng_state.dungeon, dng_state.dungeon ? dng_state.dungeon->w : -1,
+                       dng_state.dungeon ? dng_state.dungeon->h : -1,
+                       dng_state.player.gx, dng_state.player.gy);
+                fflush(stdout);
+                _dng_first_frame = false;
+            }
+        }
+
         /* Update dungeon game state */
         if (dng_play_state == DNG_STATE_CLIMBING) {
             if (dng_update_climb(&dng_state)) {
@@ -2058,7 +2105,7 @@ static void frame(void) {
         draw_starfield(&fb, &dng_state.player);
 
         /* Render hub ship exterior (visible south through windows) */
-        if (g_hub.initialized && g_hub.dungeon.w > 0) {
+        if (0 && g_hub.initialized && g_hub.dungeon.w > 0) { /* DISABLED for crash debugging */
             dng_player *ep = &dng_state.player;
             float cam_angle = ep->angle * 6.28318f;
             float ca_cos = cosf(cam_angle), ca_sin = sinf(cam_angle);
@@ -2085,8 +2132,20 @@ static void frame(void) {
             float hoy = hcfg->y_off + hover;
             float hoz = hcfg->z_off;
             sr_set_pixel_light_fn(NULL);
+            {
+                static bool _hub_remote_logged = false;
+                if (!_hub_remote_logged) {
+                    printf("[dungeon_render] Hub remote: hub_d=%p w=%d h=%d offset=(%.1f,%.1f,%.1f)\n",
+                           (void*)hub_d, hub_d->w, hub_d->h, hox, hoy, hoz);
+                    fflush(stdout);
+                    _hub_remote_logged = true;
+                }
+            }
+            printf("[dungeon_render] draw_remote_ship_interior...\n"); fflush(stdout);
             draw_remote_ship_interior(&fb, &remote_mvp2, hub_d, hox, hoy, hoz, false);
+            printf("[dungeon_render] draw_remote_ship_exterior...\n"); fflush(stdout);
             draw_remote_ship_exterior(&fb, &remote_mvp2, hub_d, hox, hoy, hoz, false);
+            printf("[dungeon_render] hub remote done\n"); fflush(stdout);
         }
 
         /* Set alien ship textures: no pillars, alien walls, hub floor/ceiling reused */
@@ -2094,6 +2153,7 @@ static void frame(void) {
         dng_room_wall_texture = ITEX_ALIEN_WALL;
         dng_floor_texture = ITEX_HUB_FLOOR;
         dng_ceiling_texture = ITEX_HUB_CEILING;
+        dng_window_texture = ITEX_ALIEN_WIN;
         dng_skip_pillars = true;
 
         draw_dungeon_scene(&fb, &vp);
@@ -2103,6 +2163,7 @@ static void frame(void) {
         dng_room_wall_texture = -1;
         dng_floor_texture = -1;
         dng_ceiling_texture = -1;
+        dng_window_texture = -1;
         dng_skip_pillars = false;
 
         draw_dungeon_minimap(&fb);
@@ -2557,13 +2618,24 @@ static void handle_screen_tap(float sx, float sy) {
                     g_dialog.active = false;
                     g_dialog.confirm_mode = false;
                     if (action == DIALOG_ACTION_TELEPORT_GO && g_hub.mission_available) {
+                        printf("[teleport] Initiating teleport, sector=%d\n", player_sector);
+                        fflush(stdout);
                         { int sw, sh; game_ship_size(player_sector, &sw, &sh);
+                        printf("[teleport] Ship size: %dx%d\n", sw, sh);
+                        fflush(stdout);
                         dng_game_init_sized(&dng_state, sw, sh); }
+                        printf("[teleport] dng_game_init_sized done, calling game_init_ship\n");
+                        fflush(stdout);
                         game_init_ship();
+                        printf("[teleport] game_init_ship done\n");
+                        fflush(stdout);
                         dng_initialized = true;
-    dng_hull_computed = false;
+                        dng_hull_computed = false;
                         last_player_gx = dng_state.player.gx;
                         last_player_gy = dng_state.player.gy;
+                        printf("[teleport] Player at (%d,%d), entering beam state\n",
+                               last_player_gx, last_player_gy);
+                        fflush(stdout);
                         g_hub.mission_available = false;
                         beam_timer = 0;
                         app_state = STATE_BEAM;

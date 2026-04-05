@@ -90,6 +90,7 @@ static int  dng_wall_texture = -1;      /* -1 = default ITEX_BRICK, else overrid
 static int  dng_room_wall_texture = -1; /* -1 = same as wall_texture; wall faces facing room cells */
 static int  dng_floor_texture = -1;    /* -1 = default ITEX_TILE, else override */
 static int  dng_ceiling_texture = -1;  /* -1 = default ITEX_WOOD, else override */
+static int  dng_window_texture = -1;  /* -1 = default ITEX_WALL_A_WIN, else override */
 static bool dng_skip_pillars = false;  /* true = don't draw corner pillars */
 static bool dng_skip_exterior = false; /* true = don't draw exterior hull */
 static bool dng_alien_exterior = false; /* true = use alien textures for exterior */
@@ -525,7 +526,8 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
                 /* Wall cell — draw faces toward open cells.
                  * Pick texture per-face: room faces get room_wall_tex, corridor faces get wall_tex.
                  * Window faces get a window texture (wall_A_window). */
-                const sr_indexed_texture *win_tex_ptr = &itextures[ITEX_WALL_A_WIN];
+                const sr_indexed_texture *win_tex_ptr = (dng_window_texture >= 0)
+                    ? &itextures[dng_window_texture] : &itextures[ITEX_WALL_A_WIN];
                 uint8_t wf = d->win_faces[gy][gx];
                 /* Window faces use no pillar padding (flush with cell edge) */
                 if (gy < d->h && d->map[gy+1][gx] != 1 && dng_vis[gy+1][gx]) {
@@ -1399,10 +1401,10 @@ static void draw_remote_ship_interior(sr_framebuffer *fb_ptr, const sr_mat4 *mvp
                                        bool alien) {
     if (!d || d->w <= 0 || d->h <= 0) return;
 
-    const sr_indexed_texture *wall_tex = alien ? &itextures[ITEX_BRICK] : &itextures[ITEX_HUB_CORRIDOR];
-    const sr_indexed_texture *floor_tex = &itextures[ITEX_TILE];
-    const sr_indexed_texture *ceil_tex = &itextures[ITEX_WOOD];
-    const sr_indexed_texture *win_tex = &itextures[ITEX_WALL_A_WIN];
+    const sr_indexed_texture *wall_tex = alien ? &itextures[ITEX_ALIEN_CORRIDOR] : &itextures[ITEX_HUB_CORRIDOR];
+    const sr_indexed_texture *floor_tex = &itextures[ITEX_HUB_FLOOR];
+    const sr_indexed_texture *ceil_tex = &itextures[ITEX_HUB_CEILING];
+    const sr_indexed_texture *win_tex = alien ? &itextures[ITEX_ALIEN_WIN] : &itextures[ITEX_WALL_A_WIN];
 
     float y_lo = oy - DNG_HALF_CELL;
     float y_hi = oy + DNG_HALF_CELL;
@@ -1417,26 +1419,26 @@ static void draw_remote_ship_interior(sr_framebuffer *fb_ptr, const sr_mat4 *mvp
             float z1 = oz + gy * DNG_CELL_SIZE;
 
             if (d->map[gy][gx] == 1) {
-                /* Wall cell — draw faces toward adjacent open cells */
+                /* Wall cell — draw faces toward adjacent open (0) cells only, NOT void (2) */
                 uint8_t wf = d->win_faces[gy][gx];
-                if (gy < d->h && d->map[gy+1][gx] != 1) {
+                if (gy < d->h && d->map[gy+1][gx] == 0) {
                     const sr_indexed_texture *ft = (wf & DNG_WIN_S) ? win_tex : wall_tex;
                     dng_draw_wall(fb_ptr, mvp, x0,y_hi,z1, x1,y_hi,z1, x1,y_lo,z1, x0,y_lo,z1, ft, 0,0,1);
                 }
-                if (gy > 1 && d->map[gy-1][gx] != 1) {
+                if (gy > 1 && d->map[gy-1][gx] == 0) {
                     const sr_indexed_texture *ft = (wf & DNG_WIN_N) ? win_tex : wall_tex;
                     dng_draw_wall(fb_ptr, mvp, x1,y_hi,z0, x0,y_hi,z0, x0,y_lo,z0, x1,y_lo,z0, ft, 0,0,-1);
                 }
-                if (gx < d->w && d->map[gy][gx+1] != 1) {
+                if (gx < d->w && d->map[gy][gx+1] == 0) {
                     const sr_indexed_texture *ft = (wf & DNG_WIN_E) ? win_tex : wall_tex;
                     dng_draw_wall(fb_ptr, mvp, x1,y_hi,z1, x1,y_hi,z0, x1,y_lo,z0, x1,y_lo,z1, ft, 1,0,0);
                 }
-                if (gx > 1 && d->map[gy][gx-1] != 1) {
+                if (gx > 1 && d->map[gy][gx-1] == 0) {
                     const sr_indexed_texture *ft = (wf & DNG_WIN_W) ? win_tex : wall_tex;
                     dng_draw_wall(fb_ptr, mvp, x0,y_hi,z0, x0,y_hi,z1, x0,y_lo,z1, x0,y_lo,z0, ft, -1,0,0);
                 }
-            } else {
-                /* Open cell — floor + ceiling */
+            } else if (d->map[gy][gx] == 0) {
+                /* Open cell — floor + ceiling (skip void cells) */
                 uint32_t unlit = 0xFF606060;
                 sr_draw_quad_indexed(fb_ptr,
                     sr_vert_c(x0,y_lo,z0, 0,0, unlit), sr_vert_c(x1,y_lo,z0, 1,0, unlit),
@@ -1465,12 +1467,19 @@ static void draw_remote_ship_exterior(sr_framebuffer *fb_ptr, const sr_mat4 *mvp
 
     static bool _remote_logged = false;
     if (!_remote_logged) {
-        int wc = 0;
+        int wc = 0, hull_win = 0;
         for (int gy2 = 1; gy2 <= d->h; gy2++)
-            for (int gx2 = 1; gx2 <= d->w; gx2++)
+            for (int gx2 = 1; gx2 <= d->w; gx2++) {
                 if (d->win_faces[gy2][gx2]) wc++;
-        printf("[remote_ship] rendering %dx%d, %d window cells, ext_tex=%p ext_win=%p\n",
-               d->w, d->h, wc, (void*)ext_tex->indices, (void*)ext_win_tex->indices);
+                if (remote_hull_inside[gy2][gx2] && d->win_faces[gy2][gx2]) {
+                    bool bN = gy2 <= 1 || !remote_hull_inside[gy2-1][gx2];
+                    bool bS = gy2 >= d->h || !remote_hull_inside[gy2+1][gx2];
+                    if (bN || bS) hull_win++;
+                }
+            }
+        printf("[remote_ext] %dx%d, %d win cells, %d hull boundary wins, ext_win=%p (w=%d h=%d)\n",
+               d->w, d->h, wc, hull_win,
+               (void*)ext_win_tex->indices, ext_win_tex->width, ext_win_tex->height);
         _remote_logged = true;
     }
 
@@ -1508,11 +1517,14 @@ static void draw_remote_ship_exterior(sr_framebuffer *fb_ptr, const sr_mat4 *mvp
             float ez0 = oN ? z0 + f : z0;
             float ez1 = oS ? z1 - f : z1;
 
-            /* Per-face window texture: check if adjacent wall cell has a window facing us */
-            bool winN = oN && gy > 1 && dng_has_win_face(d, gx, gy-1, DNG_WIN_S);
-            bool winS = oS && gy < h && dng_has_win_face(d, gx, gy+1, DNG_WIN_N);
-            bool winW = oW && gx > 1 && dng_has_win_face(d, gx-1, gy, DNG_WIN_E);
-            bool winE = oE && gx < w && dng_has_win_face(d, gx+1, gy, DNG_WIN_W);
+            /* Per-face window texture: a window pierces the entire wall cell, so check
+             * this cell for ANY window flag, OR adjacent outside cell for a facing window.
+             * A cell with DNG_WIN_S (interior-facing) should also show on the exterior north face. */
+            uint8_t wf = d->win_faces[gy][gx];
+            bool winN = oN && (wf || (gy > 1 && d->win_faces[gy-1][gx]));
+            bool winS = oS && (wf || (gy < h && d->win_faces[gy+1][gx]));
+            bool winW = oW && (wf || (gx > 1 && d->win_faces[gy][gx-1]));
+            bool winE = oE && (wf || (gx < w && d->win_faces[gy][gx+1]));
 
             /* Cardinal walls */
             if (oN) {
