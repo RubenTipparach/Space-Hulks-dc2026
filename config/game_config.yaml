@@ -19,7 +19,7 @@ hub_from_small:
 
 hub_from_medium:
   x_offset: 0.0
-  y_offset: 1.0
+  y_offset: -2.0
   z_offset: 60.0
   hover_amplitude: 0.2
   hover_speed: 0.8
@@ -36,7 +36,7 @@ hub_from_large:
 enemy_ship_small:
   x_offset: 0.0
   y_offset: -2.0
-  z_offset: -30.0
+  z_offset: -40.0
   hover_amplitude: 0.3
   hover_speed: 1.0
 

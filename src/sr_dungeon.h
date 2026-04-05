@@ -24,6 +24,10 @@ enum { ENEMY_LURKER, ENEMY_BRUTE, ENEMY_SPITTER, ENEMY_HIVEGUARD,
        ENEMY_BOSS_1, ENEMY_BOSS_2, ENEMY_BOSS_3,
        ENEMY_TYPE_COUNT };
 
+/* Map enemy type -> sprite texture index (STEX_*). Declared here, defined after STEX enum exists. */
+static int enemy_to_stex[ENEMY_TYPE_COUNT];
+static bool enemy_to_stex_init = false;
+
 /* ── Configuration ───────────────────────────────────────────────── */
 
 #define DNG_GRID_W       80

@@ -838,9 +838,11 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
                 uint8_t alien_type = d->aliens[bgy][bgx];
                 if (alien_type == 0) continue;
 
-                int type_idx = alien_type - 1;
-                if (type_idx < 0 || type_idx >= STEX_COUNT) continue;
-                const sr_texture *stex = &stextures[type_idx];
+                int raw_idx = alien_type - 1;
+                if (raw_idx < 0 || raw_idx >= STEX_COUNT) continue;
+                int stex_idx = raw_idx;
+                if (stex_idx < 0 || stex_idx >= STEX_COUNT) continue;
+                const sr_texture *stex = &stextures[stex_idx];
                 if (!stex->pixels) continue;
 
                 /* Use lerp position if available for smooth movement */
@@ -853,14 +855,18 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
                         break;
                     }
                 }
+                /* Boss sprites are double-sized in dungeon */
+                float sh = sprite_half;
+                if (stex_idx >= STEX_BOSS_FRAME_0 && stex_idx <= STEX_BOSS_FRAME_2)
+                    sh *= 2.0f;
                 float bot_y = -DNG_HALF_CELL;
-                float top_y = bot_y + sprite_half * 2.0f;
+                float top_y = bot_y + sh * 2.0f;
 
                 /* Quad corners: left-bottom, right-bottom, right-top, left-top */
-                float lx = cx - right_x * sprite_half;
-                float lz = cz - right_z * sprite_half;
-                float rx2 = cx + right_x * sprite_half;
-                float rz = cz + right_z * sprite_half;
+                float lx = cx - right_x * sh;
+                float lz = cz - right_z * sh;
+                float rx2 = cx + right_x * sh;
+                float rz = cz + right_z * sh;
 
                 /* Compute fog/light tint based on distance to player */
                 uint32_t tint;

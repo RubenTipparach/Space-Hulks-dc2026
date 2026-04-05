@@ -1182,7 +1182,7 @@ static void game_init_ship(void) {
                         int by = dd->room_cy[r] + 1;
                         if (bx < 1 || bx > dd->w) bx = dd->room_cx[r];
                         if (by < 1 || by > dd->h) by = dd->room_cy[r];
-                        dd->aliens[by][bx] = (uint8_t)(boss_type + 1);
+                        dd->aliens[by][bx] = (uint8_t)(STEX_BOSS_FRAME_0 + 1);
                         snprintf(dd->alien_names[by][bx], 16, "%s",
                                  enemy_templates[boss_type].name);
                         printf("[BOSS] %s placed on floor %d, reactor room %d at gx=%d gy=%d\n",
@@ -1202,7 +1202,7 @@ static void game_init_ship(void) {
                             int bx = dd->room_cx[r] + 1, by = dd->room_cy[r] + 1;
                             if (bx < 1 || bx > dd->w) bx = dd->room_cx[r];
                             if (by < 1 || by > dd->h) by = dd->room_cy[r];
-                            dd->aliens[by][bx] = (uint8_t)(boss_type + 1);
+                            dd->aliens[by][bx] = (uint8_t)(STEX_BOSS_FRAME_0 + 1);
                             snprintf(dd->alien_names[by][bx], 16, "%s",
                                      enemy_templates[boss_type].name);
                         }
@@ -2206,6 +2206,21 @@ static void init(void) {
     stextures[STEX_BOSS_FRAME_0]       = sr_texture_load("assets/sprites/final_boss/astrozom_side00.png");
     stextures[STEX_BOSS_FRAME_1]       = sr_texture_load("assets/sprites/final_boss/astrozom_side01.png");
     stextures[STEX_BOSS_FRAME_2]       = sr_texture_load("assets/sprites/final_boss/astrozom_side02.png");
+
+    /* Map enemy types to sprite texture indices (-1 = use raw index) */
+    memset(enemy_to_stex, -1, sizeof(enemy_to_stex));
+    enemy_to_stex[ENEMY_LURKER]       = STEX_LURKER;
+    enemy_to_stex[ENEMY_BRUTE]        = STEX_BRUTE;
+    enemy_to_stex[ENEMY_SPITTER]      = STEX_SPITTER;
+    enemy_to_stex[ENEMY_HIVEGUARD]    = STEX_HIVEGUARD;
+    enemy_to_stex[ENEMY_STALKER]      = STEX_STALKER;
+    enemy_to_stex[ENEMY_MAULER]       = STEX_MAULER;
+    enemy_to_stex[ENEMY_ACID_THROWER] = STEX_ACID_THROWER;
+    enemy_to_stex[ENEMY_WARDEN]       = STEX_WARDEN;
+    enemy_to_stex[ENEMY_BOSS_1]       = STEX_BOSS_FRAME_0;
+    enemy_to_stex[ENEMY_BOSS_2]       = STEX_BOSS_FRAME_0;
+    enemy_to_stex[ENEMY_BOSS_3]       = STEX_BOSS_FRAME_0;
+    enemy_to_stex_init = true;
 
     /* Build console textures from embedded sprite data for 3D billboard rendering */
     for (int rt = 1; rt < CONSOLE_TEX_COUNT && rt < ROOM_TYPE_COUNT; rt++) {

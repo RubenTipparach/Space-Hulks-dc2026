@@ -2309,14 +2309,17 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
                     int frame = ((combat.frame_counter / 12) % 3);
                     sr_texture *ft = &stextures[STEX_BOSS_FRAME_0 + frame];
                     if (ft->pixels) {
-                        int bw = (int)(ft->width * fscale);
-                        int bh = (int)(ft->height * fscale);
+                        float boss_scale = fscale * 0.5f; /* boss sprites are large, render at half */
+                        int bw = (int)(ft->width * boss_scale);
+                        int bh = (int)(ft->height * boss_scale);
                         int bx = sprite_x + anim_x + spr_sz / 2 - bw / 2;
                         int by = sprite_y + spr_sz - bh;
                         if (e->flash_timer > 0 && (e->flash_timer & 2))
-                            spr_draw_flash_nf(px, W, H, ft->pixels, ft->width, ft->height, bx, by, fscale);
+                            spr_draw_flash_nf(px, W, H, ft->pixels, ft->width, ft->height, bx, by, boss_scale);
                         else
-                            spr_draw_nf(px, W, H, ft->pixels, ft->width, ft->height, bx, by, fscale);
+                            spr_draw_nf(px, W, H, ft->pixels, ft->width, ft->height, bx, by, boss_scale);
+                        /* Override sprite bounds for highlight */
+                        sprite_x = bx; sprite_y = by; spr_sz = bw > bh ? bw : bh;
                         drew_boss_anim = true;
                     }
                 }
@@ -2328,11 +2331,7 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
                         spr_draw_nf(px, W, H, sprite, src_sz, src_sz, sprite_x + anim_x, sprite_y, fscale);
                 }
 
-                /* Target highlight (yellow border around selected enemy) */
-                if (i == combat.target && combat.phase == CPHASE_PLAYER_TURN) {
-                    combat_draw_rect_outline(px, W, H,
-                        sprite_x - 2, sprite_y - 2, spr_sz + 4, spr_sz + 4, yellow);
-                }
+                /* Target highlight removed — drag-to-target provides the highlight */
 
                 /* Intent indicator (above sprite) */
                 if (combat.phase == CPHASE_PLAYER_TURN || combat.phase == CPHASE_DRAW) {
@@ -2675,6 +2674,8 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
                 if (!combat.enemies[i].alive) continue;
                 int ecx = espacing * (i + 1);
                 float efs = combat.enemies[i].visual_scale;
+                bool is_boss_e = (combat.enemies[i].type >= ENEMY_BOSS_1 && combat.enemies[i].type <= ENEMY_BOSS_3);
+                if (is_boss_e) efs *= 0.5f;
                 int esz = (int)(16.0f * efs + 0.5f);
                 int esy = 10 + combat.enemies[i].distance * 8;
                 if (combat.drag_x >= ecx - esz && combat.drag_x <= ecx + esz && combat.drag_y < esy + esz + 40) {
