@@ -839,10 +839,8 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
                 if (alien_type == 0) continue;
 
                 int raw_idx = alien_type - 1;
-                if (raw_idx < 0 || raw_idx >= ENEMY_TYPE_COUNT) continue;
-                int stex_idx = enemy_to_stex[raw_idx];
-                if (stex_idx < 0 || stex_idx >= STEX_COUNT) continue;
-                const sr_texture *stex = &stextures[stex_idx];
+                if (raw_idx < 0 || raw_idx >= STEX_COUNT) continue;
+                const sr_texture *stex = &stextures[raw_idx];
                 if (!stex->pixels) continue;
 
                 /* Use lerp position if available for smooth movement */
@@ -857,7 +855,7 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
                 }
                 /* Boss sprites are double-sized in dungeon */
                 float sh = sprite_half;
-                if (stex_idx >= STEX_BOSS_FRAME_0 && stex_idx <= STEX_BOSS_FRAME_2)
+                if (raw_idx >= STEX_BOSS_FRAME_0 && raw_idx <= STEX_BOSS_FRAME_2)
                     sh *= 2.0f;
                 float bot_y = -DNG_HALF_CELL;
                 float top_y = bot_y + sh * 2.0f;
