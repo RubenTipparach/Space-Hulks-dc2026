@@ -68,6 +68,12 @@ typedef struct {
     int room_w[DNG_MAX_ROOMS], room_h[DNG_MAX_ROOMS];
     int room_ship_idx[DNG_MAX_ROOMS];
     bool room_light_on[DNG_MAX_ROOMS];
+    /* Window faces: bitmask per wall cell (bit0=N, bit1=S, bit2=E, bit3=W) */
+    #define DNG_WIN_N 1
+    #define DNG_WIN_S 2
+    #define DNG_WIN_E 4
+    #define DNG_WIN_W 8
+    uint8_t win_faces[DNG_GRID_H + 1][DNG_GRID_W + 1];
 } sr_dungeon;
 
 /* ── Simple RNG for dungeon generation ───────────────────────────── */
@@ -353,6 +359,39 @@ static void dng_generate_ex(sr_dungeon *d, int w, int h, bool has_down_stairs, b
         d->room_light_on[i] = true;  /* lights start on */
     }
 
+    /* Place a pair of windows per room on the outer wall, facing toward the room.
+     * Avoid corner tiles (first/last column of the room wall). */
+    for (int i = 0; i < num_rooms; i++) {
+        int rx = rooms[i].x, ry = rooms[i].y;
+        int rw = rooms[i].w, rh = rooms[i].h;
+        int cx = rx + rw / 2;
+        int wx1 = cx, wx2 = cx - 1; /* pair: center and one left */
+        /* Avoid corners: clamp to [rx+1, rx+rw-2] */
+        if (wx1 > rx + rw - 2) wx1 = rx + rw - 2;
+        if (wx1 < rx + 1) wx1 = rx + 1;
+        if (wx2 > rx + rw - 2) wx2 = rx + rw - 2;
+        if (wx2 < rx + 1) wx2 = rx + 1;
+        if (ry + rh <= mid_y) {
+            /* Room above corridor — S window on wall above (faces room) */
+            int wy = ry - 1;
+            if (wy >= 1 && wy <= h) {
+                if (wx1 >= 1 && wx1 <= w && d->map[wy][wx1] == 1)
+                    d->win_faces[wy][wx1] |= DNG_WIN_S;
+                if (wx2 >= 1 && wx2 <= w && wx2 != wx1 && d->map[wy][wx2] == 1)
+                    d->win_faces[wy][wx2] |= DNG_WIN_S;
+            }
+        } else if (ry > mid_y) {
+            /* Room below corridor — N window on wall below (faces room) */
+            int wy = ry + rh;
+            if (wy >= 1 && wy <= h) {
+                if (wx1 >= 1 && wx1 <= w && d->map[wy][wx1] == 1)
+                    d->win_faces[wy][wx1] |= DNG_WIN_N;
+                if (wx2 >= 1 && wx2 <= w && wx2 != wx1 && d->map[wy][wx2] == 1)
+                    d->win_faces[wy][wx2] |= DNG_WIN_N;
+            }
+        }
+    }
+
     /* Place alien entities (not spawn, not stairs) — ~half the rooms get aliens */
     for (int i = 0; i < num_rooms; i++) {
         if (dng_rng_int(2) == 0) continue; /* skip ~half the rooms */
@@ -373,11 +412,11 @@ static void dng_generate_ex(sr_dungeon *d, int w, int h, bool has_down_stairs, b
         }
     }
 
-    /* Place 1-2 chests per floor in random rooms */
+    /* Place 1-2 chests per floor in random rooms (guaranteed at least 1) */
     {
         int num_chests = 1 + dng_rng_int(2); /* 1-2 */
         int placed = 0;
-        for (int attempt = 0; attempt < num_rooms * 3 && placed < num_chests; attempt++) {
+        for (int attempt = 0; attempt < num_rooms * 10 && placed < num_chests; attempt++) {
             int ri = dng_rng_int(num_rooms);
             int cx = rooms[ri].x + dng_rng_int(rooms[ri].w);
             int cy = rooms[ri].y + dng_rng_int(rooms[ri].h);
@@ -391,6 +430,20 @@ static void dng_generate_ex(sr_dungeon *d, int w, int h, bool has_down_stairs, b
             if (d->chests[cy][cx] != 0) continue;
             d->chests[cy][cx] = 1;
             placed++;
+        }
+        /* Fallback: brute-force scan to guarantee at least 1 chest */
+        if (placed == 0) {
+            for (int ri = 0; ri < num_rooms && placed == 0; ri++) {
+                for (int cy = rooms[ri].y; cy < rooms[ri].y + rooms[ri].h && placed == 0; cy++)
+                    for (int cx = rooms[ri].x; cx < rooms[ri].x + rooms[ri].w && placed == 0; cx++) {
+                        if (cx < 1 || cx > w || cy < 1 || cy > h) continue;
+                        if (d->map[cy][cx] != 0) continue;
+                        if (cx == d->spawn_gx && cy == d->spawn_gy) continue;
+                        if (d->consoles[cy][cx] != 0 || d->aliens[cy][cx] != 0) continue;
+                        d->chests[cy][cx] = 1;
+                        placed++;
+                    }
+            }
         }
     }
 }
@@ -437,12 +490,15 @@ static void dng_player_init(dng_player *p, int gx, int gy, int dir) {
 }
 
 #define DNG_MOVE_INTERVAL 0.2  /* seconds between moves (= 5 cells/sec) */
+#define DNG_MOVE_INTERVAL_INSTANT 0.05  /* faster rate for instant step mode */
 
 static double dng_time = 0; /* global time accumulator, updated each frame */
+static bool dng_instant_step = false; /* true = snap position, fast repeat */
 
 static void dng_player_try_move(dng_player *p, const sr_dungeon *d, int dir) {
     if (p->bounce_timer > 0) return; /* blocked during bounce-back */
-    if (dng_time - p->last_move_time < DNG_MOVE_INTERVAL) return; /* rate limited */
+    double interval = dng_instant_step ? DNG_MOVE_INTERVAL_INSTANT : DNG_MOVE_INTERVAL;
+    if (dng_time - p->last_move_time < interval) return; /* rate limited */
     int nx = p->gx + dng_dir_dx[dir];
     int ny = p->gy + dng_dir_dz[dir];
     if (dng_can_enter(d, p->gx, p->gy, nx, ny)) {

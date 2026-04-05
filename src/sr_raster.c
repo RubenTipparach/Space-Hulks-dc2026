@@ -237,8 +237,6 @@ static void rasterize_triangle(sr_framebuffer *fb,
             if (z >= fb->depth[idx])
                 continue;
 
-            fb->depth[idx] = z;
-
             /* Perspective-correct interpolation */
             float iw = inv_w0 * w0 + inv_w1 * w1 + inv_w2 * w2;
             float inv_iw = 1.0f / iw;
@@ -249,11 +247,13 @@ static void rasterize_triangle(sr_framebuffer *fb,
             uint32_t color;
             if (tex && tex->pixels) {
                 color = sr_texture_sample(tex, u, v);
-                /* Alpha test — skip transparent pixels */
+                /* Alpha test — skip transparent pixels (depth NOT written yet) */
                 if ((color >> 24) < 128) continue;
             } else {
                 color = 0xFFFFFFFF;
             }
+
+            fb->depth[idx] = z;
 
             /* Apply interpolated vertex color (Gouraud shading) */
             if (!all_white) {
@@ -415,7 +415,6 @@ static void rasterize_triangle_indexed(sr_framebuffer *fb,
             float z = nz0 * w0 + nz1 * w1 + nz2 * w2;
             int idx = py * W + px;
             if (z >= fb->depth[idx]) continue;
-            fb->depth[idx] = z;
 
             float iw = inv_w0 * w0 + inv_w1 * w1 + inv_w2 * w2;
             float inv_iw = 1.0f / iw;
@@ -426,6 +425,12 @@ static void rasterize_triangle_indexed(sr_framebuffer *fb,
             uint8_t pal_idx = 0;
             if (tex && tex->indices)
                 pal_idx = sr_indexed_sample(tex, u, v);
+
+            /* Alpha test — palette index PAL_TRANSPARENT is transparent
+               (depth NOT written yet, so geometry behind remains visible) */
+            if (pal_idx == PAL_TRANSPARENT) continue;
+
+            fb->depth[idx] = z;
 
             /* Interpolate light intensity and map to dithered shade row */
             float li = (li0_w * w0 + li1_w * w1 + li2_w * w2) * inv_iw;
@@ -561,7 +566,6 @@ static void rasterize_triangle_indexed_pixellit(sr_framebuffer *fb,
             float z = nz0 * w0 + nz1 * w1 + nz2 * w2;
             int idx = py * W + px;
             if (z >= fb->depth[idx]) continue;
-            fb->depth[idx] = z;
 
             float iw = inv_w0 * w0 + inv_w1 * w1 + inv_w2 * w2;
             float inv_iw = 1.0f / iw;
@@ -572,6 +576,12 @@ static void rasterize_triangle_indexed_pixellit(sr_framebuffer *fb,
             uint8_t pal_idx = 0;
             if (tex && tex->indices)
                 pal_idx = sr_indexed_sample(tex, u, v);
+
+            /* Alpha test — palette index PAL_TRANSPARENT is transparent
+               (depth NOT written yet, so geometry behind remains visible) */
+            if (pal_idx == PAL_TRANSPARENT) continue;
+
+            fb->depth[idx] = z;
 
             /* Interpolate world position and normal (perspective-correct) */
             float wpx = (wx0_w * w0 + wx1_w * w1 + wx2_w * w2) * inv_iw;

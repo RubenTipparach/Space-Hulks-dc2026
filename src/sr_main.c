@@ -102,12 +102,23 @@ static bool ui_row_hover(int bx, int by, int bw, int bh, bool *out_hovered) {
 #include "sr_ship.h"
 #include "sr_level_loader.h"
 #include "sr_dialog_data.h"
+static void game_init_ship(void); /* forward decl */
+static void game_pregen_enemy_ship(void); /* forward decl */
+
+/* Enemy ship exterior position per size (loaded from game_config.yaml) */
+typedef struct { float x_off, y_off, z_off, hover_amp, hover_speed; } enemy_ship_cfg;
+static enemy_ship_cfg enemy_ship_small  = { 0.0f, -2.0f, -30.0f, 0.3f, 1.0f };
+static enemy_ship_cfg enemy_ship_medium = { 0.0f, -12.0f, -60.0f, 0.2f, 0.4f };
+static enemy_ship_cfg enemy_ship_large  = { 0.0f, -15.0f, -120.0f, 0.15f, 0.3f };
+
+/* Hub ship as seen from enemy ship (one per enemy ship size) */
+static enemy_ship_cfg hub_from_small  = { 0.0f, -2.0f, 30.0f, 0.2f, 0.8f };
+static enemy_ship_cfg hub_from_medium = { 0.0f, -2.0f, 50.0f, 0.2f, 0.8f };
+static enemy_ship_cfg hub_from_large  = { 0.0f, -2.0f, 80.0f, 0.15f, 0.6f };
 #include "sr_scene_ship_hub.h"
 #include "sr_menu.h"
 static void handle_screen_tap(float sx, float sy); /* forward decl */
 #include "sr_mobile_input.h"
-
-static void game_init_ship(void); /* forward decl */
 
 /* Ship grid size based on sector difficulty: small(20), medium(40), large(80) */
 static void game_ship_size(int sector, int *out_w, int *out_h) {
@@ -116,9 +127,64 @@ static void game_ship_size(int sector, int *out_w, int *out_h) {
     else { *out_w = 20; *out_h = 20; }
 }
 
+/* Pre-generate enemy ship layout for exterior rendering (no enemies/player setup) */
+static void game_pregen_enemy_ship(void) {
+    if (dng_state.floor_generated[0]) return; /* already generated */
+
+    /* Try JSON level first (has windows, hand-placed layout) */
+    const char *level_path = "levels/sample_enemy_ship.json";
+    if (lvl_file_exists(level_path)) {
+        lvl_loaded lvl = lvl_load(level_path);
+        if (lvl.valid && !lvl.is_hub) {
+            lvl_load_ship(&current_ship, &lvl.json, lvl.root);
+            dng_state.max_floors = current_ship.num_decks;
+            for (int dk = 0; dk < current_ship.num_decks && dk < DNG_MAX_FLOORS; dk++)
+                dng_state.deck_room_counts[dk] = current_ship.deck_room_count[dk];
+            lvl_load_all_floors(&lvl, dng_state.floors,
+                                dng_state.floor_generated, DNG_MAX_FLOORS);
+            dng_state.grid_w = dng_state.floors[0].w;
+            dng_state.grid_h = dng_state.floors[0].h;
+            dng_state.current_floor = 0;
+            dng_state.dungeon = &dng_state.floors[0];
+            /* Count windows loaded */
+            int win_count = 0;
+            sr_dungeon *ed = &dng_state.floors[0];
+            for (int gy = 1; gy <= ed->h; gy++)
+                for (int gx = 1; gx <= ed->w; gx++)
+                    if (ed->win_faces[gy][gx]) win_count++;
+            printf("[pregen] Enemy ship loaded from %s (%dx%d, %d window cells)\n",
+                   level_path, dng_state.grid_w, dng_state.grid_h, win_count);
+            /* lvl goes out of scope — JSON data is stack/static, no free needed */
+            return;
+        }
+    }
+
+    /* Fallback: procedural generation */
+    int gw, gh;
+    game_ship_size(player_sector, &gw, &gh);
+    dng_state.grid_w = gw;
+    dng_state.grid_h = gh;
+    dng_state.seed_base = (uint32_t)(time(NULL) ^ (player_sector * 12345));
+
+    uint32_t ship_seed = dng_state.seed_base + 9999;
+    ship_generate(&current_ship, player_sector, ship_seed);
+    dng_state.max_floors = current_ship.num_decks;
+    for (int dk = 0; dk < current_ship.num_decks && dk < DNG_MAX_FLOORS; dk++)
+        dng_state.deck_room_counts[dk] = current_ship.deck_room_count[dk];
+
+    bool is_last = (current_ship.num_decks <= 1);
+    int deck_rooms = current_ship.deck_room_count[0];
+    dng_generate_ex(&dng_state.floors[0], gw, gh, false, !is_last,
+                    dng_state.seed_base, 0, deck_rooms);
+    dng_state.floor_generated[0] = true;
+    dng_state.current_floor = 0;
+    dng_state.dungeon = &dng_state.floors[0];
+    printf("[pregen] Enemy ship procedurally generated (%dx%d)\n", gw, gh);
+}
+
 /* ── Save / Load ─────────────────────────────────────────────────── */
 
-#define SAVE_VERSION 5
+#define SAVE_VERSION 6  /* bumped: added card_angle_offsets to combat_state */
 
 /*  Save header — fixed-size portion written first.
  *  After the header, each generated dungeon floor (sr_dungeon) is
@@ -326,6 +392,7 @@ static bool game_load(void) {
     dng_player_init(&dng_state.player,
                     hdr.player_gx, hdr.player_gy, hdr.player_dir);
     dng_initialized = true;
+    dng_hull_computed = false;
 
     /* Restore weakness table */
     g_weakness = hdr.weakness;
@@ -384,23 +451,27 @@ static void draw_title_screen(sr_framebuffer *fb_ptr) {
     {
         int bw = 100, bh = 22;
         int bx = (W - bw) / 2, by = 120;
-        bool sel = (title_cursor == 0);
-        combat_draw_rect(px, W, H, bx, by, bw, bh, sel ? 0xFF222244 : 0xFF111122);
-        combat_draw_rect_outline(px, W, H, bx, by, bw, bh, sel ? yellow : gray);
-        int tx = bx + (bw - sr_text_width("NEW GAME")) / 2;
-        sr_draw_text_shadow(px, W, H, tx, by + 7, "NEW GAME", sel ? yellow : white, shadow);
+        if (ui_button(px, W, H, bx, by, bw, bh, "NEW GAME",
+                      0xFF111122, 0xFF222244, 0xFF333366)) {
+            app_state = STATE_CLASS_SELECT;
+        }
     }
 
     /* Continue button */
     {
         int bw = 100, bh = 22;
         int bx = (W - bw) / 2, by = 150;
-        bool sel = (title_cursor == 1);
-        uint32_t col = save_exists ? (sel ? yellow : white) : 0xFF444444;
-        combat_draw_rect(px, W, H, bx, by, bw, bh, sel ? 0xFF222244 : 0xFF111122);
-        combat_draw_rect_outline(px, W, H, bx, by, bw, bh, sel ? yellow : gray);
-        int tx = bx + (bw - sr_text_width("CONTINUE")) / 2;
-        sr_draw_text_shadow(px, W, H, tx, by + 7, "CONTINUE", col, shadow);
+        if (save_exists) {
+            if (ui_button(px, W, H, bx, by, bw, bh, "CONTINUE",
+                          0xFF111122, 0xFF222244, 0xFF333366)) {
+                title_cursor = 99; /* signal continue was clicked */
+            }
+        } else {
+            combat_draw_rect(px, W, H, bx, by, bw, bh, 0xFF111122);
+            combat_draw_rect_outline(px, W, H, bx, by, bw, bh, 0xFF333333);
+            int tx = bx + (bw - sr_text_width("CONTINUE")) / 2;
+            sr_draw_text_shadow(px, W, H, tx, by + 7, "CONTINUE", 0xFF444444, shadow);
+        }
     }
 }
 
@@ -954,6 +1025,8 @@ static int count_remaining_aliens(void) {
 }
 
 static void mission_complete_return_to_hub(int base_reward, const char *msg, bool all_killed) {
+    sr_audio_stop_enemyship_music();
+    sr_audio_play_sfx(&audio_sfx_victory);
     /* Calculate dual rewards based on completion method */
     int scrap_reward, biomass_reward;
     if (all_killed) {
@@ -1368,6 +1441,92 @@ static void draw_class_select(sr_framebuffer *fb_ptr) {
 
 /* ── Pause menu overlay ─────────────────────────────────────────── */
 
+/* ── Starfield background (visible through windows) ─────────────── */
+
+/* ── Starfield: fixed 3D points on a sphere, projected to screen ── */
+
+#define STAR_COUNT 300
+static float star_positions[STAR_COUNT * 3]; /* x, y, z on unit sphere */
+static uint32_t star_colors[STAR_COUNT];
+static bool stars_initialized = false;
+
+static void stars_init(void) {
+    /* Deterministic seed for reproducible star positions */
+    uint32_t seed = 42;
+    for (int i = 0; i < STAR_COUNT; i++) {
+        /* Generate uniformly distributed points on unit sphere */
+        seed = seed * 1103515245u + 12345u;
+        float u = (float)(seed >> 8 & 0xFFFF) / 65535.0f;
+        seed = seed * 1103515245u + 12345u;
+        float v = (float)(seed >> 8 & 0xFFFF) / 65535.0f;
+
+        float theta = u * 2.0f * 3.14159265f;
+        float phi = acosf(2.0f * v - 1.0f);
+
+        star_positions[i * 3 + 0] = sinf(phi) * cosf(theta);
+        star_positions[i * 3 + 1] = sinf(phi) * sinf(theta);
+        star_positions[i * 3 + 2] = cosf(phi);
+
+        /* Random brightness */
+        seed = seed * 1103515245u + 12345u;
+        int brightness = 100 + (int)(seed >> 16 & 0x9F);
+        if (brightness > 255) brightness = 255;
+        star_colors[i] = 0xFF000000 | (uint32_t)(brightness << 16 | brightness << 8 | brightness);
+    }
+    stars_initialized = true;
+}
+
+static void draw_starfield(sr_framebuffer *fb_ptr, const dng_player *p) {
+    if (!stars_initialized) stars_init();
+
+    uint32_t *px = fb_ptr->color;
+    int W = fb_ptr->width, H = fb_ptr->height;
+    float angle = p->angle * 6.28318f;
+    float ca = cosf(angle), sa = sinf(angle);
+
+    float fov = 70.0f * 3.14159265f / 180.0f;
+    float aspect = (float)W / (float)H;
+    float f = 1.0f / tanf(fov * 0.5f);
+
+    float star_radius = 30.0f; /* sphere radius (inside near/far clip) */
+
+    for (int i = 0; i < STAR_COUNT; i++) {
+        /* World position on sphere centered at camera */
+        float wx = star_positions[i * 3 + 0] * star_radius;
+        float wy = star_positions[i * 3 + 1] * star_radius;
+        float wz = star_positions[i * 3 + 2] * star_radius;
+
+        /* Transform to camera space (Y-axis rotation only, camera at origin) */
+        float cx = ca * wx + sa * wz;    /* right component */
+        float cy = wy;                    /* up component */
+        float cz = -sa * wx + ca * wz;   /* forward component (negative = in front) */
+
+        /* Behind camera? */
+        if (cz >= -0.1f) continue;
+
+        /* Project to screen */
+        float inv_z = -1.0f / cz;
+        float sx = (cx * f * inv_z / aspect + 1.0f) * 0.5f * W;
+        float sy = (-cy * f * inv_z + 1.0f) * 0.5f * H;
+
+        int ix = (int)sx, iy = (int)sy;
+        if (ix < 0 || ix >= W || iy < 0 || iy >= H) continue;
+
+        /* Shimmer: vary brightness per star using sin wave with unique phase */
+        uint32_t base = star_colors[i] & 0xFF;
+        float phase = (float)i * 1.7f + (float)dng_time * (1.5f + (i & 3) * 0.5f);
+        float flicker = 0.75f + 0.25f * sinf(phase);
+        int b = (int)(base * flicker);
+        if (b > 255) b = 255;
+        uint32_t col = 0xFF000000 | (uint32_t)(b << 16 | b << 8 | b);
+
+        px[iy * W + ix] = col;
+        if (ix + 1 < W) px[iy * W + ix + 1] = col;
+        if (iy + 1 < H) px[(iy + 1) * W + ix] = col;
+        if (ix + 1 < W && iy + 1 < H) px[(iy + 1) * W + ix + 1] = col;
+    }
+}
+
 static void draw_pause_menu(sr_framebuffer *fb_ptr) {
     int W = fb_ptr->width, H = fb_ptr->height;
     uint32_t *px = fb_ptr->color;
@@ -1656,6 +1815,13 @@ static void init(void) {
     itextures[ITEX_HUB_FLOOR]    = sr_indexed_load("assets/indexed/hub_floor.idx");
     itextures[ITEX_HUB_CEILING]  = sr_indexed_load("assets/indexed/hub_ceiling.idx");
     itextures[ITEX_HUB_CORRIDOR] = sr_indexed_load("assets/indexed/hub_corridor_wall.idx");
+    itextures[ITEX_WALL_A_WIN]   = sr_indexed_load("assets/indexed/wall_A_window.idx");
+    itextures[ITEX_EXT_WALL]     = sr_indexed_load("assets/indexed/exterior_ship_wall.idx");
+    itextures[ITEX_EXT_WINDOW]   = sr_indexed_load("assets/indexed/exerior_window.idx");
+    itextures[ITEX_ALIEN_EXT]    = sr_indexed_load("assets/indexed/alien_exterior.idx");
+    itextures[ITEX_ALIEN_EXT_WIN]= sr_indexed_load("assets/indexed/alien_exterior_window.idx");
+    itextures[ITEX_ALIEN_WALL]   = sr_indexed_load("assets/indexed/alien_interior_wall.idx");
+    itextures[ITEX_ALIEN_CORRIDOR]= sr_indexed_load("assets/indexed/alien_corridor.idx");
 
     stextures[STEX_LURKER]    = sr_texture_load("assets/sprites/lurker.png");
     stextures[STEX_BRUTE]     = sr_texture_load("assets/sprites/brute.png");
@@ -1672,6 +1838,7 @@ static void init(void) {
     stextures[STEX_ICON_ACID]          = sr_texture_load("assets/sprites/icon_acid.png");
     stextures[STEX_ICON_FIRE]          = sr_texture_load("assets/sprites/icon_fire.png");
     stextures[STEX_ICON_LIGHTNING]     = sr_texture_load("assets/sprites/icon_lightning.png");
+    stextures[STEX_LOOT_CHEST]         = sr_texture_load("assets/sprites/loot_chest.png");
 
     /* Build console textures from embedded sprite data for 3D billboard rendering */
     for (int rt = 1; rt < CONSOLE_TEX_COUNT && rt < ROOM_TYPE_COUNT; rt++) {
@@ -1696,6 +1863,49 @@ static void init(void) {
         if (gcfg.count > 0) {
             debug_mode = (int)sr_config_float(&gcfg, "debug.enabled", 0) != 0;
             if (debug_mode) printf("[game] DEBUG MODE ENABLED\n");
+
+            /* Enemy ship position per size */
+            enemy_ship_small.x_off      = sr_config_float(&gcfg, "enemy_ship_small.x_offset", 0.0f);
+            enemy_ship_small.y_off      = sr_config_float(&gcfg, "enemy_ship_small.y_offset", -2.0f);
+            enemy_ship_small.z_off      = sr_config_float(&gcfg, "enemy_ship_small.z_offset", -30.0f);
+            enemy_ship_small.hover_amp  = sr_config_float(&gcfg, "enemy_ship_small.hover_amplitude", 0.3f);
+            enemy_ship_small.hover_speed= sr_config_float(&gcfg, "enemy_ship_small.hover_speed", 1.0f);
+
+            enemy_ship_medium.x_off      = sr_config_float(&gcfg, "enemy_ship_medium.x_offset", 0.0f);
+            enemy_ship_medium.y_off      = sr_config_float(&gcfg, "enemy_ship_medium.y_offset", -12.0f);
+            enemy_ship_medium.z_off      = sr_config_float(&gcfg, "enemy_ship_medium.z_offset", -60.0f);
+            enemy_ship_medium.hover_amp  = sr_config_float(&gcfg, "enemy_ship_medium.hover_amplitude", 0.2f);
+            enemy_ship_medium.hover_speed= sr_config_float(&gcfg, "enemy_ship_medium.hover_speed", 0.4f);
+
+            enemy_ship_large.x_off      = sr_config_float(&gcfg, "enemy_ship_large.x_offset", 0.0f);
+            enemy_ship_large.y_off      = sr_config_float(&gcfg, "enemy_ship_large.y_offset", -15.0f);
+            enemy_ship_large.z_off      = sr_config_float(&gcfg, "enemy_ship_large.z_offset", -120.0f);
+            enemy_ship_large.hover_amp  = sr_config_float(&gcfg, "enemy_ship_large.hover_amplitude", 0.15f);
+            enemy_ship_large.hover_speed= sr_config_float(&gcfg, "enemy_ship_large.hover_speed", 0.3f);
+
+            /* Hub ship remote configs (per enemy ship size) */
+            hub_from_small.x_off       = sr_config_float(&gcfg, "hub_from_small.x_offset", 0.0f);
+            hub_from_small.y_off       = sr_config_float(&gcfg, "hub_from_small.y_offset", -2.0f);
+            hub_from_small.z_off       = sr_config_float(&gcfg, "hub_from_small.z_offset", 30.0f);
+            hub_from_small.hover_amp   = sr_config_float(&gcfg, "hub_from_small.hover_amplitude", 0.2f);
+            hub_from_small.hover_speed = sr_config_float(&gcfg, "hub_from_small.hover_speed", 0.8f);
+
+            hub_from_medium.x_off       = sr_config_float(&gcfg, "hub_from_medium.x_offset", 0.0f);
+            hub_from_medium.y_off       = sr_config_float(&gcfg, "hub_from_medium.y_offset", -2.0f);
+            hub_from_medium.z_off       = sr_config_float(&gcfg, "hub_from_medium.z_offset", 50.0f);
+            hub_from_medium.hover_amp   = sr_config_float(&gcfg, "hub_from_medium.hover_amplitude", 0.2f);
+            hub_from_medium.hover_speed = sr_config_float(&gcfg, "hub_from_medium.hover_speed", 0.8f);
+
+            hub_from_large.x_off       = sr_config_float(&gcfg, "hub_from_large.x_offset", 0.0f);
+            hub_from_large.y_off       = sr_config_float(&gcfg, "hub_from_large.y_offset", -2.0f);
+            hub_from_large.z_off       = sr_config_float(&gcfg, "hub_from_large.z_offset", 80.0f);
+            hub_from_large.hover_amp   = sr_config_float(&gcfg, "hub_from_large.hover_amplitude", 0.15f);
+            hub_from_large.hover_speed = sr_config_float(&gcfg, "hub_from_large.hover_speed", 0.6f);
+
+            /* Movement mode */
+            dng_instant_step = (int)sr_config_float(&gcfg, "movement.instant_step", 0) != 0;
+            if (dng_instant_step) printf("[game] INSTANT STEP MODE ENABLED\n");
+
             sr_config_free(&gcfg);
         }
     }
@@ -1732,7 +1942,7 @@ static void frame(void) {
         if (app_state != prev_app_state) {
             if (app_state == STATE_SHIP_HUB)
                 sr_audio_start_hub_ambient();
-            else if (prev_app_state == STATE_SHIP_HUB)
+            else if (prev_app_state == STATE_SHIP_HUB && app_state != STATE_SHOP && app_state != STATE_DIALOG)
                 sr_audio_stop_hub_ambient();
             prev_app_state = app_state;
         }
@@ -1745,6 +1955,18 @@ static void frame(void) {
 
     if (app_state == STATE_TITLE) {
         draw_title_screen(&fb);
+        /* Handle continue button click (signaled from ui_button in draw) */
+        if (title_cursor == 99) {
+            title_cursor = 1;
+            printf("[title] Continue clicked, save_exists=%d\n", save_exists);
+            if (save_exists && game_load()) {
+                last_player_gx = dng_state.player.gx;
+                last_player_gy = dng_state.player.gy;
+                printf("[title] Game loaded, state=%d\n", app_state);
+            } else {
+                printf("[title] Load failed or no save\n");
+            }
+        }
     } else if (app_state == STATE_INTRO) {
         draw_intro_screen(&fb);
     } else if (app_state == STATE_EPILOGUE) {
@@ -1766,6 +1988,7 @@ static void frame(void) {
         draw_combat_scene(&fb);
     } else if (app_state == STATE_SHIP_HUB) {
         dng_player_update(&g_hub.player);
+        draw_starfield(&fb, &g_hub.player);
         hub_draw_scene(&fb);
         hub_draw_hud(fb.color, fb.width, fb.height);
         hub_draw_minimap(&fb);
@@ -1797,6 +2020,7 @@ static void frame(void) {
         sr_mat4 vp;
         (void)vp;
         sr_fog_disable();
+        dng_alien_exterior = true; /* enemy ship uses alien exterior textures */
 
         /* Update dungeon game state */
         if (dng_play_state == DNG_STATE_CLIMBING) {
@@ -1830,7 +2054,57 @@ static void frame(void) {
             check_random_encounter();
 
         dng_enemies_lerp_update((float)dt);
+        sr_audio_start_enemyship_music();
+        draw_starfield(&fb, &dng_state.player);
+
+        /* Render hub ship exterior (visible south through windows) */
+        if (g_hub.initialized && g_hub.dungeon.w > 0) {
+            dng_player *ep = &dng_state.player;
+            float cam_angle = ep->angle * 6.28318f;
+            float ca_cos = cosf(cam_angle), ca_sin = sinf(cam_angle);
+            sr_vec3 eye = { ep->x, ep->y, ep->z };
+            sr_vec3 fwd = { ca_sin, 0, -ca_cos };
+            sr_vec3 target2 = { eye.x + fwd.x, eye.y + fwd.y, eye.z + fwd.z };
+            sr_vec3 up = { 0, 1, 0 };
+            sr_mat4 view2 = sr_mat4_lookat(eye, target2, up);
+            sr_mat4 proj2 = sr_mat4_perspective(
+                70.0f * 3.14159f / 180.0f,
+                (float)fb.width / (float)fb.height,
+                0.05f, 500.0f);
+            sr_mat4 remote_mvp2 = sr_mat4_mul(proj2, view2);
+
+            sr_dungeon *hub_d = &g_hub.dungeon;
+            sr_dungeon *cur_d = dng_state.dungeon;
+            /* Select config based on current enemy ship size */
+            enemy_ship_cfg *hcfg = (cur_d->w >= 80) ? &hub_from_large
+                                 : (cur_d->w >= 40) ? &hub_from_medium
+                                 : &hub_from_small;
+            float center_x = -(hub_d->w * DNG_CELL_SIZE) * 0.5f + (cur_d->w * DNG_CELL_SIZE) * 0.5f;
+            float hover = sinf((float)dng_time * hcfg->hover_speed) * hcfg->hover_amp;
+            float hox = center_x + hcfg->x_off;
+            float hoy = hcfg->y_off + hover;
+            float hoz = hcfg->z_off;
+            sr_set_pixel_light_fn(NULL);
+            draw_remote_ship_interior(&fb, &remote_mvp2, hub_d, hox, hoy, hoz, false);
+            draw_remote_ship_exterior(&fb, &remote_mvp2, hub_d, hox, hoy, hoz, false);
+        }
+
+        /* Set alien ship textures: no pillars, alien walls, hub floor/ceiling reused */
+        dng_wall_texture = ITEX_ALIEN_CORRIDOR;
+        dng_room_wall_texture = ITEX_ALIEN_WALL;
+        dng_floor_texture = ITEX_HUB_FLOOR;
+        dng_ceiling_texture = ITEX_HUB_CEILING;
+        dng_skip_pillars = true;
+
         draw_dungeon_scene(&fb, &vp);
+
+        /* Reset to defaults */
+        dng_wall_texture = -1;
+        dng_room_wall_texture = -1;
+        dng_floor_texture = -1;
+        dng_ceiling_texture = -1;
+        dng_skip_pillars = false;
+
         draw_dungeon_minimap(&fb);
 
         /* Ship HUD overlay (ship simulation disabled) */
@@ -1953,7 +2227,7 @@ static void frame(void) {
             {
                 int map_scale = 2;
                 int map_bottom = 28 + dng_state.dungeon->h * map_scale + 4;
-                int hx = fb.width - dng_state.dungeon->w * map_scale - 18;
+                int hx = fb.width - dng_state.dungeon->w * map_scale - 28;
                 int hy = map_bottom;
                 uint32_t dim = 0xFF888888;
                 uint32_t shadow = 0xFF000000;
@@ -2181,28 +2455,14 @@ static void handle_screen_tap(float sx, float sy) {
     }
 
     if (app_state == STATE_TITLE) {
-        /* New Game button */
-        int bx = FB_WIDTH/2 - 50, bw = 100, bh = 22;
-        if (fx >= bx && fx <= bx + bw && fy >= 120 && fy <= 120 + bh) {
-            app_state = STATE_CLASS_SELECT;
-            return;
-        }
-        /* Continue button */
-        if (fx >= bx && fx <= bx + bw && fy >= 150 && fy <= 150 + bh && save_exists) {
-            if (game_load()) {
-                last_player_gx = dng_state.player.gx;
-                last_player_gy = dng_state.player.gy;
-                /* app_state restored by game_load() */
-            }
-            return;
-        }
+        /* Buttons handled by ui_button in draw_title_screen */
         return;
     }
 
     if (app_state == STATE_CLASS_SELECT) {
         /* Skip intro checkbox */
         {
-            int sx = FB_WIDTH/2 - 40;
+            int sx = FB_WIDTH/2 - 70;
             int sy = FB_HEIGHT - 28;
             if (fx >= sx && fx <= sx + 80 && fy >= sy && fy <= sy + 10) {
                 skip_intro = !skip_intro;
@@ -2301,6 +2561,7 @@ static void handle_screen_tap(float sx, float sy) {
                         dng_game_init_sized(&dng_state, sw, sh); }
                         game_init_ship();
                         dng_initialized = true;
+    dng_hull_computed = false;
                         last_player_gx = dng_state.player.gx;
                         last_player_gy = dng_state.player.gy;
                         g_hub.mission_available = false;
@@ -2392,6 +2653,7 @@ static void handle_screen_tap(float sx, float sy) {
                             dng_game_init_sized(&dng_state, sw, sh); }
                             game_init_ship();
                             dng_initialized = true;
+    dng_hull_computed = false;
                             last_player_gx = dng_state.player.gx;
                             last_player_gy = dng_state.player.gy;
                             g_hub.mission_available = false;
@@ -2416,7 +2678,7 @@ static void handle_screen_tap(float sx, float sy) {
                             g_hub.hud_msg_timer = 60;
                         } else if (player_biomass >= 10) {
                             player_biomass -= 10;
-                            int heal = g_player.hp_max / 5; /* 20% of max HP */
+                            int heal = (g_player.hp_max * 3) / 10; /* 30% of max HP */
                             if (heal < 1) heal = 1;
                             g_player.hp += heal;
                             if (g_player.hp > g_player.hp_max) g_player.hp = g_player.hp_max;
@@ -2635,6 +2897,18 @@ static void event(const sapp_event *ev) {
     }
     if (game_paused) return; /* block all other input while paused */
 
+    /* ── Debug: Ctrl+F6 = toggle window segments ─────────── */
+    if (debug_mode && ev->key_code == SAPP_KEYCODE_F6 && (ev->modifiers & SAPP_MODIFIER_CTRL)) {
+        dng_hide_windows = !dng_hide_windows;
+        return;
+    }
+
+    /* ── Debug: Ctrl+F7 = toggle interior geometry ──────────── */
+    if (debug_mode && ev->key_code == SAPP_KEYCODE_F7 && (ev->modifiers & SAPP_MODIFIER_CTRL)) {
+        dng_hide_interior = !dng_hide_interior;
+        return;
+    }
+
     /* ── Debug: Ctrl+F5 = instant win dungeon ──────────────── */
     if (debug_mode && ev->key_code == SAPP_KEYCODE_F5 && (ev->modifiers & SAPP_MODIFIER_CTRL) &&
         app_state == STATE_RUNNING && current_ship.initialized) {
@@ -2827,6 +3101,7 @@ static void event(const sapp_event *ev) {
                                 dng_game_init_sized(&dng_state, sw, sh); }
                                 game_init_ship();
                                 dng_initialized = true;
+    dng_hull_computed = false;
                                 last_player_gx = dng_state.player.gx;
                                 last_player_gy = dng_state.player.gy;
                                 g_hub.mission_available = false;
@@ -2916,6 +3191,7 @@ static void event(const sapp_event *ev) {
                                 dng_game_init_sized(&dng_state, sw, sh); }
                                 game_init_ship();
                                 dng_initialized = true;
+    dng_hull_computed = false;
                                 last_player_gx = dng_state.player.gx;
                                 last_player_gy = dng_state.player.gy;
                                 g_hub.mission_available = false;

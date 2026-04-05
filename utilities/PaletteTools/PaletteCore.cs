@@ -182,20 +182,30 @@ public static class PaletteCore
     /// Convert image to indexed palette, returning per-pixel palette indices.
     /// Optionally applies Floyd-Steinberg dithering.
     /// </summary>
+    public const byte TRANSPARENT_INDEX = 65;
+
     public static byte[] ConvertToIndices(Bitmap source, Color[] palette, bool dither)
     {
         int w = source.Width, h = source.Height;
         float[,] bufR = new float[h, w];
         float[,] bufG = new float[h, w];
         float[,] bufB = new float[h, w];
+        bool[,] bufTransparent = new bool[h, w];
+
+        /* Force convert to 32bpp ARGB so paletted PNGs with tRNS chunks
+           correctly report alpha via GetPixel */
+        using var argb = new Bitmap(w, h, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        using (var g = Graphics.FromImage(argb))
+            g.DrawImage(source, 0, 0, w, h);
 
         for (int y = 0; y < h; y++)
         for (int x = 0; x < w; x++)
         {
-            Color px = source.GetPixel(x, y);
+            Color px = argb.GetPixel(x, y);
             bufR[y, x] = px.R;
             bufG[y, x] = px.G;
             bufB[y, x] = px.B;
+            bufTransparent[y, x] = px.A < 128;
         }
 
         var indices = new byte[w * h];
@@ -203,6 +213,13 @@ public static class PaletteCore
         for (int y = 0; y < h; y++)
         for (int x = 0; x < w; x++)
         {
+            /* Alpha test — transparent pixels get index 65 */
+            if (bufTransparent[y, x])
+            {
+                indices[y * w + x] = TRANSPARENT_INDEX;
+                continue;
+            }
+
             float r = Clamp(bufR[y, x]);
             float g = Clamp(bufG[y, x]);
             float b = Clamp(bufB[y, x]);

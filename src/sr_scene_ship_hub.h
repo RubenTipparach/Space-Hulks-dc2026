@@ -294,6 +294,7 @@ static void hub_generate(hub_state *hub) {
 
             hub->mission_available = true;
             hub->initialized = true;
+            game_pregen_enemy_ship();
             printf("[hub] Loaded: %d rooms, %d NPCs\n", d->room_count, hub->crew_count);
             return;
         }
@@ -444,6 +445,7 @@ static void hub_generate(hub_state *hub) {
 
     hub->mission_available = true;
     hub->initialized = true;
+    game_pregen_enemy_ship();
 }
 
 /* ── Hub lighting (60% ambient, depth-based, no point lights) ───── */
@@ -1768,6 +1770,46 @@ static void hub_draw_scene(sr_framebuffer *fb_ptr) {
     sr_mat4 vp;
     draw_dungeon_scene(fb_ptr, &vp);
 
+
+    /* Render enemy ship exterior visible outside windows (100 units north) */
+    if (current_ship.initialized && g_hub.mission_available &&
+        dng_state.floor_generated[0] && dng_state.floors[0].w > 0) {
+        sr_dungeon *enemy_d = &dng_state.floors[0];
+        /* Build a separate MVP with extended far plane to reach the enemy ship */
+        float cam_angle = p->angle * 6.28318f;
+        float cam_x = p->x, cam_y = p->y, cam_z = p->z;
+        float ca_cos = cosf(cam_angle), ca_sin = sinf(cam_angle);
+        sr_vec3 eye = { cam_x, cam_y, cam_z };
+        sr_vec3 fwd = { ca_sin, 0, -ca_cos };
+        sr_vec3 target = { eye.x + fwd.x, eye.y + fwd.y, eye.z + fwd.z };
+        sr_vec3 up = { 0, 1, 0 };
+        sr_mat4 view = sr_mat4_lookat(eye, target, up);
+        sr_mat4 proj = sr_mat4_perspective(
+            70.0f * 3.14159f / 180.0f,
+            (float)fb_ptr->width / (float)fb_ptr->height,
+            0.05f, 500.0f); /* far plane extended for remote ship */
+        sr_mat4 remote_mvp = sr_mat4_mul(proj, view);
+
+        /* Select config based on enemy ship grid size */
+        enemy_ship_cfg *esc = (enemy_d->w >= 80) ? &enemy_ship_large
+                            : (enemy_d->w >= 40) ? &enemy_ship_medium
+                            : &enemy_ship_small;
+        float center_x = -(enemy_d->w * DNG_CELL_SIZE) * 0.5f + (d->w * DNG_CELL_SIZE) * 0.5f;
+        float hover = sinf((float)dng_time * esc->hover_speed) * esc->hover_amp;
+        float ship_ox = center_x + esc->x_off;
+        float ship_oy = esc->y_off + hover;
+        float ship_oz = esc->z_off;
+        static bool _rs_logged = false;
+        if (!_rs_logged) {
+            printf("_ship] w=%d h=%d ox=%.1f oz=%.1f\n",
+                   enemy_d->w, enemy_d->h, ship_ox, ship_oz);
+            _rs_logged = true;
+        }
+        sr_set_pixel_light_fn(NULL);
+        draw_remote_ship_interior(fb_ptr, &remote_mvp, enemy_d, ship_ox, ship_oy, ship_oz, true);
+        draw_remote_ship_exterior(fb_ptr, &remote_mvp, enemy_d, ship_ox, ship_oy, ship_oz, true);
+    }
+
     /* Restore */
     dng_state.dungeon = save_dungeon;
     dng_state.player = save_player;
@@ -1780,6 +1822,7 @@ static void hub_draw_scene(sr_framebuffer *fb_ptr) {
     dng_floor_texture = -1;
     dng_ceiling_texture = -1;
     dng_skip_pillars = false;
+    dng_alien_exterior = false;
     dng_cfg.ambient_brightness = save_ambient;
     dng_cfg.light_brightness = save_torch;
     memcpy(dng_cfg.room_light_color, save_rl_color, sizeof(dng_cfg.room_light_color));
