@@ -1186,7 +1186,7 @@ static void game_init_ship(void) {
                         int by = dd->room_cy[r] + 1;
                         if (bx < 1 || bx > dd->w) bx = dd->room_cx[r];
                         if (by < 1 || by > dd->h) by = dd->room_cy[r];
-                        dd->aliens[by][bx] = (uint8_t)(STEX_BOSS_FRAME_0 + 1);
+                        dd->aliens[by][bx] = (uint8_t)(boss_type + 1);
                         snprintf(dd->alien_names[by][bx], 16, "%s",
                                  enemy_templates[boss_type].name);
                         printf("[BOSS] %s placed on floor %d, reactor room %d at gx=%d gy=%d\n",
@@ -1206,7 +1206,7 @@ static void game_init_ship(void) {
                             int bx = dd->room_cx[r] + 1, by = dd->room_cy[r] + 1;
                             if (bx < 1 || bx > dd->w) bx = dd->room_cx[r];
                             if (by < 1 || by > dd->h) by = dd->room_cy[r];
-                            dd->aliens[by][bx] = (uint8_t)(STEX_BOSS_FRAME_0 + 1);
+                            dd->aliens[by][bx] = (uint8_t)(boss_type + 1);
                             snprintf(dd->alien_names[by][bx], 16, "%s",
                                      enemy_templates[boss_type].name);
                         }
