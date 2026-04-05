@@ -52,6 +52,34 @@ public static class LevelSerializer
 
     public static string Serialize(LevelData level)
     {
+        /* Auto-propagate stairs: floor N's up-stairs → floor N+1's down-stairs */
+        for (int i = 0; i < level.Floors.Count - 1; i++)
+        {
+            var cur = level.Floors[i];
+            var next = level.Floors[i + 1];
+            if (cur.HasUp && cur.StairsGX >= 0)
+            {
+                next.HasDown = true;
+                next.DownGX = cur.StairsGX;
+                next.DownGY = cur.StairsGY;
+                next.DownDir = (cur.StairsDir + 2) % 4; /* face opposite direction */
+                Console.WriteLine($"[Serialize] Floor {i} up({cur.StairsGX},{cur.StairsGY}) -> Floor {i+1} down({next.DownGX},{next.DownGY})");
+            }
+            else
+            {
+                next.HasDown = false;
+                next.DownGX = -1;
+                next.DownGY = -1;
+            }
+        }
+        /* Bottom floor never has down-stairs */
+        if (level.Floors.Count > 0)
+        {
+            level.Floors[0].HasDown = false;
+            level.Floors[0].DownGX = -1;
+            level.Floors[0].DownGY = -1;
+        }
+
         var dto = new LevelDto
         {
             ShipName = level.ShipName,

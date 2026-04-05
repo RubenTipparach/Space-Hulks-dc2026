@@ -2523,9 +2523,21 @@ static void frame(void) {
                 dng_state.player.y = save_y - (fl - cur) * floor_height;
                 dng_hull_computed = false;
                 dng_skip_stairs = (fl != cur);
+                /* Skip interior floor/ceiling that overlaps with adjacent floor */
+                dng_skip_floor = (fl > cur);   /* upper floor: skip bottom plate */
+                dng_skip_ceiling = (fl < cur); /* lower floor: skip top plate */
+                /* Skip exterior roof/bottom between adjacent floors */
+                bool has_floor_above = (fl + 1 < dng_state.max_floors && dng_state.floor_generated[fl + 1]);
+                bool has_floor_below = (fl > 0 && dng_state.floor_generated[fl - 1]);
+                dng_skip_roof = has_floor_above;
+                dng_skip_bottom = has_floor_below;
                 draw_dungeon_scene(&fb, &vp);
             }
             dng_skip_stairs = false;
+            dng_skip_floor = false;
+            dng_skip_ceiling = false;
+            dng_skip_roof = false;
+            dng_skip_bottom = false;
 
             dng_state.dungeon = save_dng;
             dng_state.player.y = save_y;

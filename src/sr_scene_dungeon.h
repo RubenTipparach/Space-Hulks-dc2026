@@ -94,6 +94,10 @@ static int  dng_window_texture = -1;  /* -1 = default ITEX_WALL_A_WIN, else over
 static bool dng_skip_pillars = false;  /* true = don't draw corner pillars */
 static bool dng_skip_exterior = false; /* true = don't draw exterior hull */
 static bool dng_skip_stairs = false;  /* true = render stair cells as flat floor */
+static bool dng_skip_floor = false;  /* true = don't draw floor quads */
+static bool dng_skip_ceiling = false;/* true = don't draw ceiling quads */
+static bool dng_skip_roof = false;   /* true = don't draw exterior roof */
+static bool dng_skip_bottom = false; /* true = don't draw exterior bottom */
 static bool dng_alien_exterior = false; /* true = use alien textures for exterior */
 static float dng_hull_padding = 0.25f; /* hull expansion padding (in cells) */
 static float dng_hull_corner = 0.25f; /* chamfer corner size (in cells, matches C# editor default) */
@@ -730,15 +734,22 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
                     /* Other floors rendered separately — no shaft walls needed */
                 } else {
                     /* Normal floor + ceiling */
-                    dng_draw_hquad(fb_ptr, &mvp,
-                        x0,y_lo,z0, x1,y_lo,z0,
-                        x1,y_lo,z1, x0,y_lo,z1,
-                        0,0,1,1, floor_tex, 0,1,0);
+                    /* Skip floor at down-stairs position (hole for stairs from below) */
+                    bool hole_floor = (d->has_down && gx == d->down_gx && gy == d->down_gy);
+                    /* Skip ceiling at up-stairs position (hole for stairs going up) */
+                    bool hole_ceil = (d->has_up && gx == d->stairs_gx && gy == d->stairs_gy);
 
-                    dng_draw_hquad(fb_ptr, &mvp,
-                        x0,y_hi,z1, x1,y_hi,z1,
-                        x1,y_hi,z0, x0,y_hi,z0,
-                        0,1,1,0, ceil_tex, 0,-1,0);
+                    if (!dng_skip_floor && !hole_floor)
+                        dng_draw_hquad(fb_ptr, &mvp,
+                            x0,y_lo,z0, x1,y_lo,z0,
+                            x1,y_lo,z1, x0,y_lo,z1,
+                            0,0,1,1, floor_tex, 0,1,0);
+
+                    if (!dng_skip_ceiling && !hole_ceil)
+                        dng_draw_hquad(fb_ptr, &mvp,
+                            x0,y_hi,z1, x1,y_hi,z1,
+                            x1,y_hi,z0, x0,y_hi,z0,
+                            0,1,1,0, ceil_tex, 0,-1,0);
                 }
             }
         }
@@ -1216,14 +1227,16 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
                     /* Simple case: no chamfer/inset */
                     if (ch <= 0 && f <= 0) {
                         if (!is_open) {
-                            dng_draw_hquad(fb_ptr, &mvp,
-                                x0, y_hi, z1,  x1, y_hi, z1,
-                                x1, y_hi, z0,  x0, y_hi, z0,
-                                0, 1, 1, 0, roof_tex, 0, 1, 0);
-                            dng_draw_hquad(fb_ptr, &mvp,
-                                x0, y_lo, z0,  x1, y_lo, z0,
-                                x1, y_lo, z1,  x0, y_lo, z1,
-                                0, 0, 1, 1, roof_tex, 0, -1, 0);
+                            if (!dng_skip_roof)
+                                dng_draw_hquad(fb_ptr, &mvp,
+                                    x0, y_hi, z1,  x1, y_hi, z1,
+                                    x1, y_hi, z0,  x0, y_hi, z0,
+                                    0, 1, 1, 0, roof_tex, 0, 1, 0);
+                            if (!dng_skip_bottom)
+                                dng_draw_hquad(fb_ptr, &mvp,
+                                    x0, y_lo, z0,  x1, y_lo, z0,
+                                    x1, y_lo, z1,  x0, y_lo, z1,
+                                    0, 0, 1, 1, roof_tex, 0, -1, 0);
                         }
                         continue;
                     }
@@ -1301,15 +1314,15 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
                         float au = (pts_x[pi] - x0) * invCW, av = (pts_z[pi] - z0) * invCH;
                         float bu = (pts_x[ni] - x0) * invCW, bv = (pts_z[ni] - z0) * invCH;
 
-                        /* Roof (facing up) — skip for open cells (ceiling covers them) */
-                        if (!is_open)
+                        /* Roof (facing up) — skip for open cells or when another floor is above */
+                        if (!is_open && !dng_skip_roof)
                             dng_draw_tri(fb_ptr, &mvp,
                                 centx, y_hi, centz, cu, cv,
                                 pts_x[pi], y_hi, pts_z[pi], au, av,
                                 pts_x[ni], y_hi, pts_z[ni], bu, bv,
                                 roof_tex, 0, 1, 0);
-                        /* Bottom plate (facing down) — skip for open cells (floor covers them) */
-                        if (!is_open)
+                        /* Bottom plate (facing down) — skip for open cells or when another floor is below */
+                        if (!is_open && !dng_skip_bottom)
                             dng_draw_tri(fb_ptr, &mvp,
                                 centx, y_lo, centz, cu, cv,
                                 pts_x[ni], y_lo, pts_z[ni], bu, bv,

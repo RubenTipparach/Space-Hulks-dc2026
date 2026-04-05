@@ -224,7 +224,7 @@ public class GridPanel : Panel
         if (Floor.HasUp)
             DrawMarker(g, Floor.StairsGX, Floor.StairsGY, Color.Green, "UP");
         if (Floor.HasDown)
-            DrawMarker(g, Floor.DownGX, Floor.DownGY, Color.Blue, "DN");
+            DrawMarker(g, Floor.DownGX, Floor.DownGY, Color.FromArgb(100, 80, 80, 255), "DN*");
 
         foreach (var c in Floor.Consoles)
         {
@@ -879,8 +879,7 @@ public class GridPanel : Panel
                 Floor.Windows.RemoveAll(w => w.GX == gx && w.GY == gy);
                 if (Floor.HasUp && Floor.StairsGX == gx && Floor.StairsGY == gy)
                     Floor.HasUp = false;
-                if (Floor.HasDown && Floor.DownGX == gx && Floor.DownGY == gy)
-                    Floor.HasDown = false;
+                /* Down-stairs auto-managed from previous floor's up-stairs on save */
                 break;
         }
 

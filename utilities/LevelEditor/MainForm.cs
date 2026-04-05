@@ -315,9 +315,7 @@ public class MainForm : Form
         btnStairsUp.Click += (_, _) => { _grid.Tool = EditTool.StairsUp; UpdateStatus(); };
         toolFlow.Controls.Add(btnStairsUp);
 
-        var btnStairsDown = MakeButton("Place Stairs Down", 200);
-        btnStairsDown.Click += (_, _) => { _grid.Tool = EditTool.StairsDown; UpdateStatus(); };
-        toolFlow.Controls.Add(btnStairsDown);
+        /* Stairs Down auto-generated from previous floor's Stairs Up on save */
 
         // Stairs direction
         toolFlow.Controls.Add(MakeLabel("Stairs Dir:"));
