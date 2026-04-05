@@ -143,7 +143,7 @@ jobs:
         uses: robpc/itchio-upload-action@v1
         with:
           path: web-build/
-          project: ruben-tipparach/space-hulks-dc-2026
+          project: ruben-tipparach/drakes-void
           channel: html5
           api-key: ${{ secrets.BUTLER_API_KEY }}
 
@@ -151,7 +151,7 @@ jobs:
         uses: robpc/itchio-upload-action@v1
         with:
           path: win-build/spacehulks-windows.zip
-          project: ruben-tipparach/space-hulks-dc-2026
+          project: ruben-tipparach/drakes-void
           channel: windows
           api-key: ${{ secrets.BUTLER_API_KEY }}
 
