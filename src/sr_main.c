@@ -3182,9 +3182,10 @@ static void handle_screen_tap(float sx, float sy) {
                 }
                 return;
             }
-            /* Normal dialog — advance teletype, then dismiss */
-            if (!dialog_teletype_advance()) {
-                /* Teletype still going — don't dismiss yet */
+            /* Normal dialog — first click finishes teletype, second click dismisses */
+            if (!g_dialog.tt_all_done) {
+                g_dialog.tt_all_done = true;
+                g_dialog.tt_timer = 9999;
                 return;
             }
             int action = g_dialog.pending_action;
@@ -3747,9 +3748,11 @@ static void event(const sapp_event *ev) {
                 }
             } else if (ev->key_code == SAPP_KEYCODE_F || ev->key_code == SAPP_KEYCODE_ENTER ||
                 ev->key_code == SAPP_KEYCODE_SPACE || ev->key_code == SAPP_KEYCODE_ESCAPE) {
-                /* Advance teletype first (ESC skips to dismiss) */
-                if (ev->key_code != SAPP_KEYCODE_ESCAPE && !dialog_teletype_advance()) {
-                    return; /* still advancing text */
+                /* First press finishes teletype, second press dismisses (ESC always dismisses) */
+                if (ev->key_code != SAPP_KEYCODE_ESCAPE && !g_dialog.tt_all_done) {
+                    g_dialog.tt_all_done = true;
+                    g_dialog.tt_timer = 9999;
+                    return;
                 }
                 int action = g_dialog.pending_action;
                 g_dialog.active = false;
