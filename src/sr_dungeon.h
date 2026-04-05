@@ -48,7 +48,7 @@ static const int dng_dir_dz[4] = {-1,  0,  1,  0 };
 typedef struct {
     uint8_t map[DNG_GRID_H + 1][DNG_GRID_W + 1]; /* 1=wall, 0=open (1-indexed) */
     int w, h;
-    int spawn_gx, spawn_gy;
+    int spawn_gx, spawn_gy, spawn_dir;
     int stairs_gx, stairs_gy, stairs_dir;   /* up-stairs */
     bool has_up;
     int down_gx, down_gy, down_dir;         /* down-stairs (-1 if none) */
@@ -322,6 +322,7 @@ static void dng_generate_ex(sr_dungeon *d, int w, int h, bool has_down_stairs, b
     /* Spawn at leftmost corridor (airlock entry) */
     d->spawn_gx = ship_left;
     d->spawn_gy = mid_y;
+    d->spawn_dir = 1; /* face east into the ship */
 
     /* Up-stairs at the far end (rightmost corridor) */
     if (has_up_stairs) {
@@ -635,7 +636,7 @@ static void dng_game_init_sized(dng_game *g, int gw, int gh) {
     g->floor_generated[0] = true;
     g->dungeon = &g->floors[0];
 
-    dng_player_init(&g->player, g->dungeon->spawn_gx, g->dungeon->spawn_gy, 2);
+    dng_player_init(&g->player, g->dungeon->spawn_gx, g->dungeon->spawn_gy, g->dungeon->spawn_dir);
 }
 
 static void dng_game_init(dng_game *g) {

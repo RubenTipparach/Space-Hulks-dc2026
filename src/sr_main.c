@@ -413,7 +413,6 @@ static bool game_load(void) {
     mission_briefed = true;
     mission_medbay_done = true;
     mission_armory_done = true;
-    mission_first_done = true;
 
     return true;
 }
@@ -866,6 +865,7 @@ static int last_player_gx = -1, last_player_gy = -1;
 /* current_combat_room and console_combat declared above save/load section */
 static char dng_hud_msg[64];         /* temporary HUD message for dungeon scene */
 static int  dng_hud_msg_timer = 0;   /* frames remaining to show message */
+static int  console_confirm_gx = -1, console_confirm_gy = -1; /* pending console confirm */
 
 /* Chest overlay state */
 static bool chest_overlay_active = false;
@@ -878,7 +878,19 @@ static void game_init_ship(void) {
            dng_state.current_floor, dng_state.seed_base, dng_state.grid_w, dng_state.grid_h);
 
     /* Try to load a hand-designed level file first */
-    const char *level_path = "levels/sample_enemy_ship.json";
+    /* Check starmap node for a specific level file */
+    const char *level_path = NULL;
+    if (g_starmap.active && g_starmap.current_node >= 0 &&
+        g_starmap.current_node < g_starmap.node_count) {
+        const char *lf = g_starmap.nodes[g_starmap.current_node].level_file;
+        if (lf[0]) {
+            static char level_path_buf[128];
+            snprintf(level_path_buf, sizeof(level_path_buf), "levels/%s", lf);
+            level_path = level_path_buf;
+            printf("[game_init_ship] Starmap node specifies level: %s\n", level_path);
+        }
+    }
+    if (!level_path) level_path = "levels/sample_enemy_ship.json";
     if (lvl_file_exists(level_path)) {
         printf("[game_init_ship] Found %s, attempting load...\n", level_path);
         lvl_loaded lvl = lvl_load(level_path);
@@ -968,6 +980,27 @@ static void game_init_ship(void) {
             dng_spawn_hallway_enemies(dng_state.dungeon, dng_state.current_floor);
             printf("[game_init_ship] dng_spawn_hallway_enemies done, enemy_count=%d\n", dng_enemy_count);
             fflush(stdout);
+
+            /* Place boss in specified room if this is a boss mission */
+            if (g_starmap.active && g_starmap.current_node >= 0 &&
+                g_starmap.current_node < g_starmap.node_count) {
+                starmap_node *sn = &g_starmap.nodes[g_starmap.current_node];
+                if (sn->boss_room >= 0 && sn->boss_room < dng_state.dungeon->room_count) {
+                    sr_dungeon *dd = dng_state.dungeon;
+                    int br = sn->boss_room;
+                    int bx = dd->room_cx[br], by = dd->room_cy[br];
+                    /* Pick boss type based on starmap progression */
+                    int boss_type = ENEMY_BOSS_1 + (player_starmap % 3);
+                    if (boss_type > ENEMY_BOSS_3) boss_type = ENEMY_BOSS_3;
+                    dd->aliens[by][bx] = (uint8_t)boss_type;
+                    snprintf(dd->alien_names[by][bx], 16, "%s",
+                             enemy_templates[boss_type].name);
+                    printf("[game_init_ship] Boss %s placed in room %d at (%d,%d)\n",
+                           enemy_templates[boss_type].name, br, bx, by);
+                    fflush(stdout);
+                }
+            }
+
             printf("[game_init_ship] Ship init complete, returning to caller\n");
             fflush(stdout);
             return;
@@ -1076,6 +1109,7 @@ static void mission_complete_return_to_hub(int base_reward, const char *msg, boo
     player_scrap += scrap_reward;
     player_biomass += biomass_reward;
 
+    /* Mark first mission complete (enables starmap, changes captain dialog) */
     /* No auto-heal — player must visit medbay */
     medbay_used = false; /* allow one medbay heal between missions */
 
@@ -1092,6 +1126,7 @@ static void mission_complete_return_to_hub(int base_reward, const char *msg, boo
     hub_generate(&g_hub);
     g_hub.mission_available = false;
     current_combat_room = -1;
+    printf("[MISSION_COMPLETE] mission_available=%d\n", g_hub.mission_available);
 
     /* Boss sample collection */
     if (current_mission_is_boss) {
@@ -1099,15 +1134,13 @@ static void mission_complete_return_to_hub(int base_reward, const char *msg, boo
         current_mission_is_boss = false;
         current_map_boss_done = true;
 
-        if (player_samples >= SAMPLES_REQUIRED) {
-            /* Victory! Show win epilogue */
-            epilogue_is_win = true;
-            intro_char_idx = 0;
-            intro_timer = 0;
-            intro_done = false;
-            app_state = STATE_EPILOGUE;
-            return;
-        }
+        /* Demo ends after first boss — show epilogue */
+        epilogue_is_win = true;
+        intro_char_idx = 0;
+        intro_timer = 0;
+        intro_done = false;
+        app_state = STATE_EPILOGUE;
+        return;
     }
 
     app_state = STATE_MISSION_SUMMARY;
@@ -1202,11 +1235,21 @@ static void check_random_encounter(void) {
         int prev_gx = last_player_gx, prev_gy = last_player_gy;
         last_player_gx = p->gx;
         last_player_gy = p->gy;
+        /* Clear console confirm if player moved elsewhere */
+        if (p->gx != console_confirm_gx || p->gy != console_confirm_gy) {
+            console_confirm_gx = -1;
+            console_confirm_gy = -1;
+        }
         /* Auto-save on each step */
         game_save();
 
-        /* Tick enemy AI — enemies move when the player moves */
-        dng_enemies_tick(dng_state.dungeon, p->gx, p->gy);
+        /* Tick enemy AI — enemies move every 2 player steps */
+        static int player_step_count = 0;
+        player_step_count++;
+        if (player_step_count >= 2) {
+            player_step_count = 0;
+            dng_enemies_tick(dng_state.dungeon, p->gx, p->gy);
+        }
 
         uint8_t alien = dng_state.dungeon->aliens[p->gy][p->gx];
         if (alien != 0) {
@@ -1245,6 +1288,27 @@ static void check_random_encounter(void) {
         /* Check for console interaction — sentinel defense combat */
         uint8_t con_type = dng_state.dungeon->consoles[p->gy][p->gx];
         if (con_type != 0 && current_ship.initialized && current_ship.boarding_active) {
+            /* First time stepping on this console: bounce back and ask for confirm */
+            if (console_confirm_gx != p->gx || console_confirm_gy != p->gy) {
+                console_confirm_gx = p->gx;
+                console_confirm_gy = p->gy;
+                float mid_x = (p->gx - 0.5f) * DNG_CELL_SIZE;
+                float mid_z = (p->gy - 0.5f) * DNG_CELL_SIZE;
+                p->gx = prev_gx;
+                p->gy = prev_gy;
+                last_player_gx = prev_gx;
+                last_player_gy = prev_gy;
+                p->target_x = (p->gx - 0.5f) * DNG_CELL_SIZE;
+                p->target_z = (p->gy - 0.5f) * DNG_CELL_SIZE;
+                p->bounce_mid_x = mid_x;
+                p->bounce_mid_z = mid_z;
+                p->bounce_timer = 12;
+                snprintf(dng_hud_msg, sizeof(dng_hud_msg), "ATTACK TERMINAL? STEP AGAIN");
+                dng_hud_msg_timer = 120;
+                goto skip_console;
+            }
+            console_confirm_gx = -1;
+            console_confirm_gy = -1;
             /* Block console access if enemies remain in this room — bounce back */
             int con_room = dng_room_at(dng_state.dungeon, p->gx, p->gy);
             if (con_room >= 0) {
@@ -1447,7 +1511,6 @@ static void draw_class_select(sr_framebuffer *fb_ptr) {
                 mission_briefed = true;
                 mission_medbay_done = true;
                 mission_armory_done = true;
-                mission_first_done = false;
                 hub_generate(&g_hub);
                 memset(&g_dialog, 0, sizeof(g_dialog));
                 snprintf(g_dialog.speaker, sizeof(g_dialog.speaker), "CPT HARDEN");
@@ -1461,7 +1524,6 @@ static void draw_class_select(sr_framebuffer *fb_ptr) {
                 mission_briefed = false;
                 mission_medbay_done = false;
                 mission_armory_done = false;
-                mission_first_done = false;
                 medbay_used = false;
                 intro_char_idx = 0;
                 intro_timer = 0;
@@ -1977,7 +2039,7 @@ static void frame(void) {
         if (app_state != prev_app_state) {
             if (app_state == STATE_SHIP_HUB)
                 sr_audio_start_hub_ambient();
-            else if (prev_app_state == STATE_SHIP_HUB && app_state != STATE_SHOP && app_state != STATE_DIALOG)
+            else if (prev_app_state == STATE_SHIP_HUB && app_state != STATE_SHOP && app_state != STATE_DIALOG && app_state != STATE_STARMAP)
                 sr_audio_stop_hub_ambient();
             prev_app_state = app_state;
         }
@@ -2288,7 +2350,7 @@ static void frame(void) {
             {
                 int map_scale = 2;
                 int map_bottom = 28 + dng_state.dungeon->h * map_scale + 4;
-                int hx = fb.width - dng_state.dungeon->w * map_scale - 28;
+                int hx = fb.width - dng_state.dungeon->w * map_scale - 48;
                 int hy = map_bottom;
                 uint32_t dim = 0xFF888888;
                 uint32_t shadow = 0xFF000000;
@@ -2678,16 +2740,22 @@ static void handle_screen_tap(float sx, float sy) {
                         break;
                     }
                     case DIALOG_ACTION_STARMAP:
-                        if (!mission_first_done) {
-                            snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "INVESTIGATE THE DERELICT FIRST");
+                        printf("[STARMAP] mission_available=%d boss_done=%d sector=%d\n",
+                               g_hub.mission_available, current_map_boss_done, player_sector);
+                        if (g_hub.mission_available) {
+                            printf("[STARMAP] BLOCKED: mission active\n");
+                            snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "NEUTRALIZE THE ENEMY SHIP FIRST");
                             g_hub.hud_msg_timer = 90;
                         } else {
                             if (current_map_boss_done) {
                                 player_starmap++;
                                 current_map_boss_done = false;
+                                g_starmap.active = false; /* force new map for next sector */
                             }
-                            dng_rng_seed((uint32_t)(player_sector * 1337 + 42 + player_starmap * 9999));
-                            starmap_generate(&g_starmap, player_sector);
+                            if (!g_starmap.active) {
+                                dng_rng_seed((uint32_t)(player_sector * 1337 + 42 + player_starmap * 9999));
+                                starmap_generate_or_load(&g_starmap, player_sector);
+                            }
                             app_state = STATE_STARMAP;
                         }
                         break;
@@ -2729,13 +2797,12 @@ static void handle_screen_tap(float sx, float sy) {
                             last_player_gx = dng_state.player.gx;
                             last_player_gy = dng_state.player.gy;
                             g_hub.mission_available = false;
-                            if (!mission_first_done) mission_first_done = true;
                             beam_timer = 0;
                             app_state = STATE_BEAM;
                         }
                         break;
                     case DIALOG_ACTION_HEAL:
-                        if (!mission_medbay_done && mission_briefed && !mission_first_done) {
+                        if (!mission_medbay_done && mission_briefed) {
                             /* First visit during prep: free heal + check off objective */
                             g_player.hp = g_player.hp_max;
                             mission_medbay_done = true;
@@ -3058,7 +3125,6 @@ static void event(const sapp_event *ev) {
                     mission_briefed = true;
                     mission_medbay_done = true;
                     mission_armory_done = true;
-                    mission_first_done = false;
                     hub_generate(&g_hub);
                     memset(&g_dialog, 0, sizeof(g_dialog));
                     snprintf(g_dialog.speaker, sizeof(g_dialog.speaker), "CPT HARDEN");
@@ -3074,7 +3140,6 @@ static void event(const sapp_event *ev) {
                     mission_briefed = false;
                     mission_medbay_done = false;
                     mission_armory_done = false;
-                    mission_first_done = false;
                     medbay_used = false;
                     intro_char_idx = 0;
                     intro_timer = 0;
@@ -3177,7 +3242,6 @@ static void event(const sapp_event *ev) {
                                 last_player_gx = dng_state.player.gx;
                                 last_player_gy = dng_state.player.gy;
                                 g_hub.mission_available = false;
-                                if (!mission_first_done) mission_first_done = true;
                                 app_state = STATE_RUNNING;
                             }
                             break;
@@ -3217,16 +3281,19 @@ static void event(const sapp_event *ev) {
                             break;
                         }
                         case DIALOG_ACTION_STARMAP:
-                            if (!mission_first_done) {
+                            if (g_hub.mission_available) {
                                 snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "INVESTIGATE THE DERELICT FIRST");
                                 g_hub.hud_msg_timer = 90;
                             } else {
                                 if (current_map_boss_done) {
                                     player_starmap++;
                                     current_map_boss_done = false;
+                                    g_starmap.active = false;
                                 }
-                                dng_rng_seed((uint32_t)(player_sector * 1337 + 42 + player_starmap * 9999));
-                                starmap_generate(&g_starmap, player_sector);
+                                if (!g_starmap.active) {
+                                    dng_rng_seed((uint32_t)(player_sector * 1337 + 42 + player_starmap * 9999));
+                                    starmap_generate_or_load(&g_starmap, player_sector);
+                                }
                                 app_state = STATE_STARMAP;
                             }
                             break;
@@ -3267,12 +3334,11 @@ static void event(const sapp_event *ev) {
                                 last_player_gx = dng_state.player.gx;
                                 last_player_gy = dng_state.player.gy;
                                 g_hub.mission_available = false;
-                                if (!mission_first_done) mission_first_done = true;
                                 app_state = STATE_RUNNING;
                             }
                             break;
                         case DIALOG_ACTION_HEAL:
-                            if (!mission_medbay_done && mission_briefed && !mission_first_done) {
+                            if (!mission_medbay_done && mission_briefed) {
                                 g_player.hp = g_player.hp_max;
                                 mission_medbay_done = true;
                                 snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "VITALS LOGGED. YOU'RE CLEAR.");

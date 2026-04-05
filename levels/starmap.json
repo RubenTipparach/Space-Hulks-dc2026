@@ -1,0 +1,117 @@
+{
+  "currentNode": 3,
+  "derelictsVisited": 1,
+  "nodes": [
+    {
+      "name": "SECTOR ALPHA",
+      "levelFile": "sample_enemy_ship.json",
+      "difficulty": 0,
+      "scrapReward": 0,
+      "isBoss": false,
+      "visited": true,
+      "x": 40,
+      "y": 135,
+      "next": [2, 1, 3]
+    },
+    {
+      "name": "SECTOR DELTA-1",
+      "levelFile": "enemy_ship_small_2.json",
+      "difficulty": 1,
+      "scrapReward": 28,
+      "isBoss": false,
+      "visited": false,
+      "x": 140,
+      "y": 67,
+      "next": [4, 5]
+    },
+    {
+      "name": "SECTOR EPSILON-1",
+      "levelFile": "enemy_ship_small_3.json",
+      "difficulty": 1,
+      "scrapReward": 34,
+      "isBoss": false,
+      "visited": false,
+      "x": 140,
+      "y": 134,
+      "next": [6, 4]
+    },
+    {
+      "name": "SECTOR ZETA-1",
+      "levelFile": "enemy_ship_small_4.json",
+      "difficulty": 1,
+      "scrapReward": 26,
+      "isBoss": false,
+      "visited": true,
+      "x": 140,
+      "y": 202,
+      "next": [6, 4]
+    },
+    {
+      "name": "SECTOR SIGMA-2",
+      "levelFile": "enemy_ship_small_5.json",
+      "difficulty": 1,
+      "scrapReward": 35,
+      "isBoss": false,
+      "visited": false,
+      "x": 240,
+      "y": 67,
+      "next": [8]
+    },
+    {
+      "name": "SECTOR OMEGA-2",
+      "levelFile": "enemy_ship_small_6.json",
+      "difficulty": 1,
+      "scrapReward": 32,
+      "isBoss": false,
+      "visited": false,
+      "x": 240,
+      "y": 134,
+      "next": [8]
+    },
+    {
+      "name": "SECTOR THETA-2",
+      "levelFile": "enemy_ship_small_7.json",
+      "difficulty": 1,
+      "scrapReward": 34,
+      "isBoss": false,
+      "visited": false,
+      "x": 240,
+      "y": 202,
+      "next": [8, 7]
+    },
+    {
+      "name": "SECTOR KAPPA-3",
+      "levelFile": "enemy_ship_medium_1_long.json",
+      "difficulty": 2,
+      "scrapReward": 39,
+      "isBoss": false,
+      "visited": false,
+      "x": 340,
+      "y": 67,
+      "next": [9]
+    },
+    {
+      "name": "SECTOR NOVA-3",
+      "levelFile": "enemy_ship_medium_1_long.json",
+      "difficulty": 2,
+      "scrapReward": 39,
+      "isBoss": false,
+      "visited": false,
+      "x": 340,
+      "y": 202,
+      "next": [9]
+    },
+    {
+      "name": "HIVE VESSEL ALPHA",
+      "levelFile": "enemy_ship_medium_2_boss.json",
+      "difficulty": 3,
+      "scrapReward": 80,
+      "isBoss": true,
+      "bossRoom": 0,
+      "visited": false,
+      "x": 440,
+      "y": 135,
+      "next": []
+    }
+  ]
+}

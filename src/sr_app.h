@@ -86,7 +86,6 @@ static bool save_exists = false;
 static bool mission_briefed = false;     /* talked to captain for briefing */
 static bool mission_medbay_done = false; /* cleared by Dr Vasquez */
 static bool mission_armory_done = false; /* visited Chen's armory */
-static bool mission_first_done = false;  /* completed first derelict mission */
 static bool medbay_used = false;         /* already healed once between missions */
 static int  captain_briefing_page = 0;   /* current page in multi-page briefing */
 

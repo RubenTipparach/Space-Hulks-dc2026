@@ -63,6 +63,11 @@ static sr_audio_clip audio_sfx_laser;
 static sr_audio_clip audio_sfx_microwave;
 static sr_audio_clip audio_sfx_stun_gun;
 static sr_audio_clip audio_sfx_victory;
+static sr_audio_clip audio_sfx_fire;
+static sr_audio_clip audio_sfx_lightning;
+static sr_audio_clip audio_sfx_melee;
+static sr_audio_clip audio_sfx_shieldimpact;
+static sr_audio_clip audio_sfx_shotgun;
 
 /* Enemy ship music */
 static sr_audio_clip audio_enemyship_music;
@@ -259,6 +264,11 @@ static void sr_audio_init(void) {
     audio_sfx_microwave  = sr_audio_load_mp3("assets/audio/microwave.mp3");
     audio_sfx_stun_gun   = sr_audio_load_mp3("assets/audio/stun gun.mp3");
     audio_sfx_victory    = sr_audio_load_mp3("assets/audio/victory.mp3");
+    audio_sfx_fire       = sr_audio_load_mp3("assets/audio/fire.mp3");
+    audio_sfx_lightning  = sr_audio_load_mp3("assets/audio/lightning.mp3");
+    audio_sfx_melee      = sr_audio_load_mp3("assets/audio/melee.mp3");
+    audio_sfx_shieldimpact = sr_audio_load_mp3("assets/audio/shieldimpact.mp3");
+    audio_sfx_shotgun    = sr_audio_load_mp3("assets/audio/shotgun.mp3");
     audio_enemyship_music= sr_audio_load_mp3("assets/audio/enemyship_full.mp3");
 
     dng_on_move_callback = sr_audio_play_footstep;
@@ -292,6 +302,11 @@ static void sr_audio_shutdown(void) {
     sr_audio_clip_free(&audio_sfx_microwave);
     sr_audio_clip_free(&audio_sfx_stun_gun);
     sr_audio_clip_free(&audio_sfx_victory);
+    sr_audio_clip_free(&audio_sfx_fire);
+    sr_audio_clip_free(&audio_sfx_lightning);
+    sr_audio_clip_free(&audio_sfx_melee);
+    sr_audio_clip_free(&audio_sfx_shieldimpact);
+    sr_audio_clip_free(&audio_sfx_shotgun);
     sr_audio_clip_free(&audio_enemyship_music);
 }
 

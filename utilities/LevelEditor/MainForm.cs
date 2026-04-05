@@ -735,15 +735,17 @@ public class MainForm : Form
         RefreshFloorList();
     }
 
+    private static int _genSeed = Environment.TickCount;
     private void GenerateShip(int gridSize = 20, int floors = 1)
     {
+        int baseSeed = _genSeed++;
         _level = new LevelData();
         _level.Floors.Clear();
         for (int i = 0; i < floors; i++)
         {
             bool hasDown = i > 0;
             bool hasUp = i < floors - 1;
-            _level.Floors.Add(LevelGenerator.Generate(i, hasDown, hasUp, 42 + i * 777, gridSize, gridSize));
+            _level.Floors.Add(LevelGenerator.Generate(i, hasDown, hasUp, baseSeed + i * 777, gridSize, gridSize));
         }
         _currentFloor = 0;
         SyncControlsFromLevel();

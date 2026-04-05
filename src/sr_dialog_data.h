@@ -48,6 +48,9 @@ typedef struct {
     /* Default crew dialogs (after initial flow done) */
     dlgd_block crew_default[5]; /* same indexing as crew_init */
 
+    /* Kowalski progressive dialog — gets more stressed */
+    dlgd_block kowalski_stress[4]; /* 0=early, 1=mid, 2=late, 3=pre-boss freakout */
+
     /* Mission objectives */
     char objectives[DLGD_MAX_OBJECTIVES][DLGD_LINE_LEN];
     int  objective_count;
@@ -150,6 +153,12 @@ static void dlgd_load(void) {
     dlgd_load_block(&cfg, "crew_default.chen",      &g_dlgd.crew_default[2]);
     dlgd_load_block(&cfg, "crew_default.kowalski",  &g_dlgd.crew_default[3]);
     dlgd_load_block(&cfg, "crew_default.vasquez",   &g_dlgd.crew_default[4]);
+
+    /* Kowalski progressive stress dialog */
+    dlgd_load_block(&cfg, "kowalski.stress0", &g_dlgd.kowalski_stress[0]);
+    dlgd_load_block(&cfg, "kowalski.stress1", &g_dlgd.kowalski_stress[1]);
+    dlgd_load_block(&cfg, "kowalski.stress2", &g_dlgd.kowalski_stress[2]);
+    dlgd_load_block(&cfg, "kowalski.stress3", &g_dlgd.kowalski_stress[3]);
 
     /* Mission objectives */
     g_dlgd.objective_count = (int)sr_config_float(&cfg, "objectives.count", 0);

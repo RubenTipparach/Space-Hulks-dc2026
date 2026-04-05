@@ -86,27 +86,32 @@ public static class LevelGenerator
         if (numRooms > typePool.Count) numRooms = typePool.Count;
         int typeIdx = 0;
 
-        // Place rooms along branches and corridor
-        int spacing = (shipRight - shipLeft) / (numRooms + 1);
-        if (spacing < roomMaxW + 2) spacing = roomMaxW + 2;
-
+        // Place rooms with randomized positions along the corridor
         for (int i = 0; i < numRooms; i++)
         {
             int rw = roomMinW + _rng.Next(roomMaxW - roomMinW + 1);
             int rh = roomMinW + _rng.Next(roomMaxW - roomMinW + 1);
-            int rx = shipLeft + spacing * (i + 1) - rw / 2;
+
+            // Random X within ship bounds, with jitter
+            int rx = shipLeft + 1 + _rng.Next(shipRight - shipLeft - rw - 1);
             if (rx < 2) rx = 2;
             if (rx + rw > w) rx = w - rw;
 
+            // Random side: above or below corridor
+            bool above = _rng.Next(2) == 0;
             int ry;
-            if (i % 2 == 0)
+            if (above)
             {
-                ry = midY - rh - 1;
+                int maxOff = midY - rh - 2;
+                ry = 2 + (maxOff > 2 ? _rng.Next(maxOff - 1) : 0);
+                if (ry + rh >= midY) ry = midY - rh - 1;
                 if (ry < 2) ry = 2;
             }
             else
             {
-                ry = midY + 2;
+                int minOff = midY + 2;
+                int maxOff = h - rh;
+                ry = minOff + (maxOff > minOff ? _rng.Next(maxOff - minOff) : 0);
                 if (ry + rh > h) ry = h - rh;
             }
 
@@ -128,7 +133,7 @@ public static class LevelGenerator
 
             // Connect to corridor (1-tile wide)
             int connX = rx + rw / 2;
-            if (i % 2 == 0)
+            if (above)
             {
                 for (int y = ry + rh; y <= midY; y++)
                     if (y >= 1 && y <= h && connX >= 1 && connX <= w)

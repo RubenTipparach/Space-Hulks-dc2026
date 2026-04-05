@@ -694,6 +694,7 @@ static void combat_deal_damage_player(combat_state *cs, int dmg) {
     int actual = dmg - absorbed;
     if (absorbed > 0) {
         cs->player_shield_flash_timer = 20;
+        sr_audio_play_sfx(&audio_sfx_shieldimpact);
         combat_log(cs, "  shield absorb %d", absorbed);
     }
     if (actual > 0) {
@@ -762,7 +763,7 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
             break;
 
         case CARD_MELEE: {
-            sr_audio_play_sfx(&audio_sfx_shoot);
+            sr_audio_play_sfx(&audio_sfx_melee);
             int t = cs->target;
             while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
             if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
@@ -896,7 +897,7 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
         }
 
         case CARD_FIRE: {
-            sr_audio_play_sfx(&audio_sfx_burst); /* fire burst */
+            sr_audio_play_sfx(&audio_sfx_fire);
             int t = cs->target;
             while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
             if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
@@ -921,7 +922,7 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
         }
 
         case CARD_LIGHTNING: {
-            sr_audio_play_sfx(&audio_sfx_stun_gun);
+            sr_audio_play_sfx(&audio_sfx_lightning);
             int t = cs->target;
             while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
             if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
@@ -968,7 +969,7 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
         }
 
         case CARD_SHOTGUN: {
-            sr_audio_play_sfx(&audio_sfx_burst);
+            sr_audio_play_sfx(&audio_sfx_shotgun);
             int t = cs->target;
             while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
             if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);

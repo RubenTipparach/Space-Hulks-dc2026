@@ -87,10 +87,12 @@ typedef struct {
 
 typedef struct {
     char name[24];
+    char level_file[64]; /* JSON level to load for this node (empty = procedural) */
     int difficulty;
     int scrap_reward;
     bool visited;
     bool is_boss;       /* true = boss node (rightmost) */
+    int boss_room;      /* room index where boss spawns (-1 = none) */
     int next[STARMAP_MAX_CHOICES]; /* indices of next nodes, -1 = none */
     int next_count;
     int x, y;           /* screen position for drawing */
@@ -104,6 +106,7 @@ typedef struct {
     bool active;
     bool confirm_active; /* showing jump confirm dialog */
     int confirm_target;  /* node index to confirm */
+    int derelicts_visited; /* how many derelicts we've boarded */
 } starmap_state;
 
 static starmap_state g_starmap;
@@ -273,7 +276,8 @@ static void hub_generate(hub_state *hub) {
                 }
             }
 
-            dng_player_init(&hub->player, d->spawn_gx, d->spawn_gy, 1);
+            printf("[hub] Player spawn: (%d,%d) dir=%d\n", d->spawn_gx, d->spawn_gy, d->spawn_dir);
+            dng_player_init(&hub->player, d->spawn_gx, d->spawn_gy, d->spawn_dir);
 
             /* Place NPC sprites in the dungeon grid */
             {
@@ -371,11 +375,12 @@ static void hub_generate(hub_state *hub) {
         }
     }
 
-    /* Spawn in center of corridor */
-    d->spawn_gx = 10;
+    /* Spawn in front of the teleporter room, facing north toward it */
+    d->spawn_gx = 2;
     d->spawn_gy = mid_y;
+    d->spawn_dir = 1; /* 0=N, 1=E, 2=S, 3=W */
 
-    dng_player_init(&hub->player, d->spawn_gx, d->spawn_gy, 1);
+    dng_player_init(&hub->player, d->spawn_gx, d->spawn_gy, d->spawn_dir);
 
     /* Place crew NPCs */
     hub->crew_count = 5;
@@ -535,7 +540,7 @@ static void hub_start_dialog(int npc_idx, int action) {
 
     /* Captain (dialog_id 0) — complex state machine */
     if (did == 0) {
-        if (!mission_first_done && !mission_briefed) {
+        if (!mission_briefed) {
             /* First time: start multi-page briefing */
             captain_briefing_page = 0;
             if (g_dlgd.loaded && g_dlgd.captain_briefing_pages > 0) {
@@ -547,11 +552,6 @@ static void hub_start_dialog(int npc_idx, int action) {
                     action = DIALOG_ACTION_NONE;
                 }
             }
-        } else if (!mission_first_done) {
-            /* Already briefed but haven't done first mission */
-            if (g_dlgd.loaded)
-                dialog_from_block(&g_dlgd.captain_pre_mission);
-            action = DIALOG_ACTION_NONE;
         } else if (current_map_boss_done && !g_hub.mission_available) {
             /* Just beat a boss — show sample dialog, then open star map for next run */
             int si = player_samples - 1;
@@ -560,11 +560,11 @@ static void hub_start_dialog(int npc_idx, int action) {
                 dialog_from_block(&g_dlgd.captain_sample[si]);
             action = DIALOG_ACTION_STARMAP;
         } else if (g_hub.mission_available) {
-            /* Post-first-mission, under attack */
+            /* Mission available — board the derelict */
             if (g_dlgd.loaded)
                 dialog_from_block(&g_dlgd.captain_under_attack);
         } else {
-            /* Post-first-mission, neutralized — ready to jump */
+            /* Neutralized — ready to jump */
             if (g_dlgd.loaded)
                 dialog_from_block(&g_dlgd.captain_post_mission);
             action = DIALOG_ACTION_STARMAP;
@@ -572,27 +572,19 @@ static void hub_start_dialog(int npc_idx, int action) {
     }
     /* SGT REYES (dialog_id 1) — teleporter */
     else if (did == 1) {
-        if (!mission_first_done && !mission_briefed) {
+        if (!mission_briefed) {
             if (g_dlgd.loaded) dialog_from_block(&g_dlgd.crew_init[1]);
             action = DIALOG_ACTION_NONE;
-        } else if (!mission_first_done && mission_briefed) {
-            if (mission_medbay_done && mission_armory_done) {
-                if (g_dlgd.loaded) dialog_from_block(&g_dlgd.post_reyes_ready);
-                action = DIALOG_ACTION_TELEPORT;
-            } else {
-                if (g_dlgd.loaded) dialog_from_block(&g_dlgd.post_reyes_blocked);
-                action = DIALOG_ACTION_NONE;
-            }
         } else {
             if (g_dlgd.loaded) dialog_from_block(&g_dlgd.crew_default[1]);
         }
     }
     /* QM CHEN (dialog_id 2) — armory */
     else if (did == 2) {
-        if (!mission_first_done && !mission_briefed) {
+        if (!mission_briefed) {
             if (g_dlgd.loaded) dialog_from_block(&g_dlgd.crew_init[2]);
             action = DIALOG_ACTION_NONE;
-        } else if (!mission_first_done && mission_briefed && !mission_armory_done) {
+        } else if (!mission_armory_done) {
             /* First visit after briefing: show starting deck cards */
             if (g_dlgd.loaded) dialog_from_block(&g_dlgd.post_chen);
             action = DIALOG_ACTION_SHOW_KIT;
@@ -602,21 +594,29 @@ static void hub_start_dialog(int npc_idx, int action) {
             action = DIALOG_ACTION_SHOP;
         }
     }
-    /* PVT KOWALSKI (dialog_id 3) — quarters */
+    /* PVT KOWALSKI (dialog_id 3) — quarters, gets progressively stressed */
     else if (did == 3) {
-        if (!mission_first_done && !mission_briefed) {
+        if (!mission_briefed) {
             if (g_dlgd.loaded) dialog_from_block(&g_dlgd.crew_init[3]);
-        } else {
-            if (g_dlgd.loaded) dialog_from_block(&g_dlgd.crew_default[3]);
+        } else if (g_dlgd.loaded) {
+            int stress;
+            if (current_mission_is_boss)     stress = 3;
+            else if (player_sector >= 3)     stress = 2;
+            else if (player_sector >= 1)     stress = 1;
+            else                             stress = 0;
+            if (g_dlgd.kowalski_stress[stress].count > 0)
+                dialog_from_block(&g_dlgd.kowalski_stress[stress]);
+            else
+                dialog_from_block(&g_dlgd.crew_default[3]);
         }
         action = DIALOG_ACTION_NONE;
     }
     /* DR VASQUEZ (dialog_id 4) — medbay */
     else if (did == 4) {
-        if (!mission_first_done && !mission_briefed) {
+        if (!mission_briefed) {
             if (g_dlgd.loaded) dialog_from_block(&g_dlgd.crew_init[4]);
             action = DIALOG_ACTION_NONE;
-        } else if (!mission_first_done && mission_briefed && !mission_medbay_done) {
+        } else if (!mission_medbay_done) {
             if (g_dlgd.loaded) dialog_from_block(&g_dlgd.post_vasquez);
             action = DIALOG_ACTION_HEAL;
         } else {
@@ -1343,7 +1343,7 @@ static void starmap_generate(starmap_state *sm, int start_sector) {
     sm->nodes[0].visited = true;
     sm->nodes[0].is_boss = false;
     sm->nodes[0].x = 40;
-    sm->nodes[0].y = FB_HEIGHT / 4;
+    sm->nodes[0].y = FB_HEIGHT / 2;
     snprintf(sm->nodes[0].name, 24, "SECTOR %s", sector_names[start_sector % NUM_SECTOR_NAMES]);
     node_idx = 1;
 
@@ -1374,9 +1374,11 @@ static void starmap_generate(starmap_state *sm, int start_sector) {
             }
 
             nd->x = 40 + col * (FB_WIDTH - 80) / (col_count - 1);
-            int map_h = FB_HEIGHT / 2; /* squished to 50% height */
-            nd->y = is_boss_col ? map_h / 2
-                : 20 + n * (map_h - 40) / (nodes_in_col > 1 ? nodes_in_col - 1 : 1);
+            int map_top = FB_HEIGHT / 4;  /* top of node spread */
+            int map_bot = FB_HEIGHT * 3 / 4; /* bottom of node spread */
+            int map_h = map_bot - map_top;
+            nd->y = is_boss_col ? FB_HEIGHT / 2
+                : map_top + n * map_h / (nodes_in_col > 1 ? nodes_in_col - 1 : 1);
 
             nd->next_count = 0;
             for (int i = 0; i < STARMAP_MAX_CHOICES; i++) nd->next[i] = -1;
@@ -1430,6 +1432,101 @@ static void starmap_generate(starmap_state *sm, int start_sector) {
     sm->active = true;
 }
 
+/* ── Starmap JSON save/load ─────────────────────────────────────── */
+
+static void starmap_save_json(const starmap_state *sm, const char *path) {
+    FILE *f = fopen(path, "w");
+    if (!f) { printf("[starmap] Failed to save %s\n", path); return; }
+    fprintf(f, "{\n");
+    fprintf(f, "  \"currentNode\": %d,\n", sm->current_node);
+    fprintf(f, "  \"derelictsVisited\": %d,\n", sm->derelicts_visited);
+    fprintf(f, "  \"nodes\": [\n");
+    for (int i = 0; i < sm->node_count; i++) {
+        const starmap_node *nd = &sm->nodes[i];
+        fprintf(f, "    {\n");
+        fprintf(f, "      \"name\": \"%s\",\n", nd->name);
+        if (nd->level_file[0])
+            fprintf(f, "      \"levelFile\": \"%s\",\n", nd->level_file);
+        fprintf(f, "      \"difficulty\": %d,\n", nd->difficulty);
+        fprintf(f, "      \"scrapReward\": %d,\n", nd->scrap_reward);
+        fprintf(f, "      \"isBoss\": %s,\n", nd->is_boss ? "true" : "false");
+        if (nd->boss_room >= 0)
+            fprintf(f, "      \"bossRoom\": %d,\n", nd->boss_room);
+        fprintf(f, "      \"visited\": %s,\n", nd->visited ? "true" : "false");
+        fprintf(f, "      \"x\": %d,\n", nd->x);
+        fprintf(f, "      \"y\": %d,\n", nd->y);
+        fprintf(f, "      \"next\": [");
+        for (int j = 0; j < nd->next_count; j++)
+            fprintf(f, "%d%s", nd->next[j], j < nd->next_count - 1 ? ", " : "");
+        fprintf(f, "]\n");
+        fprintf(f, "    }%s\n", i < sm->node_count - 1 ? "," : "");
+    }
+    fprintf(f, "  ]\n}\n");
+    fclose(f);
+    printf("[starmap] Saved %d nodes to %s (current=%d, visited=%d)\n",
+           sm->node_count, path, sm->current_node, sm->derelicts_visited);
+}
+
+static bool starmap_load_json(starmap_state *sm, const char *path) {
+    if (!lvl_file_exists(path)) return false;
+    char *data = lvl_read_file(path);
+    if (!data) return false;
+    sr_json json;
+    if (!sr_json_parse(&json, data)) { free(data); return false; }
+
+    int root = 0;
+    int nodes_arr = sr_json_find(&json, root, "nodes");
+    if (nodes_arr < 0) { printf("[starmap] No 'nodes' in %s\n", path); return false; }
+
+    int count = sr_json_array_len(&json, nodes_arr);
+    if (count <= 0 || count > STARMAP_MAX_NODES) {
+        printf("[starmap] Invalid node count %d in %s\n", count, path);
+        return false;
+    }
+
+    memset(sm, 0, sizeof(*sm));
+    sm->node_count = count;
+    sm->current_node = sr_json_int(&json, sr_json_find(&json, root, "currentNode"), 0);
+    sm->derelicts_visited = sr_json_int(&json, sr_json_find(&json, root, "derelictsVisited"), 0);
+    sm->cursor = 0;
+    sm->active = true;
+
+    for (int i = 0; i < count; i++) {
+        int nt = sr_json_array_get(&json, nodes_arr, i);
+        if (nt < 0) continue;
+        starmap_node *nd = &sm->nodes[i];
+        sr_json_str(&json, sr_json_find(&json, nt, "name"), nd->name, sizeof(nd->name));
+        sr_json_str(&json, sr_json_find(&json, nt, "levelFile"), nd->level_file, sizeof(nd->level_file));
+        nd->difficulty = sr_json_int(&json, sr_json_find(&json, nt, "difficulty"), 0);
+        nd->scrap_reward = sr_json_int(&json, sr_json_find(&json, nt, "scrapReward"), 0);
+        nd->is_boss = sr_json_bool(&json, sr_json_find(&json, nt, "isBoss"), false);
+        nd->boss_room = sr_json_int(&json, sr_json_find(&json, nt, "bossRoom"), -1);
+        nd->visited = sr_json_bool(&json, sr_json_find(&json, nt, "visited"), i == 0);
+        nd->x = sr_json_int(&json, sr_json_find(&json, nt, "x"), 0);
+        nd->y = sr_json_int(&json, sr_json_find(&json, nt, "y"), 0);
+
+        int next_arr = sr_json_find(&json, nt, "next");
+        if (next_arr >= 0) {
+            nd->next_count = sr_json_array_len(&json, next_arr);
+            if (nd->next_count > STARMAP_MAX_CHOICES) nd->next_count = STARMAP_MAX_CHOICES;
+            for (int j = 0; j < nd->next_count; j++)
+                nd->next[j] = sr_json_int(&json, sr_json_array_get(&json, next_arr, j), -1);
+        }
+        for (int j = nd->next_count; j < STARMAP_MAX_CHOICES; j++)
+            nd->next[j] = -1;
+    }
+
+    printf("[starmap] Loaded %d nodes from %s\n", count, path);
+    return true;
+}
+
+/* Try JSON first, fall back to procedural generation */
+static void starmap_generate_or_load(starmap_state *sm, int start_sector) {
+    if (starmap_load_json(sm, "levels/starmap.json")) return;
+    starmap_generate(sm, start_sector);
+    starmap_save_json(sm, "levels/starmap.json");
+}
+
 static void draw_starmap(uint32_t *px, int W, int H) {
     if (!g_starmap.active) return;
     uint32_t shadow = 0xFF000000;
@@ -1467,13 +1564,39 @@ static void draw_starmap(uint32_t *px, int W, int H) {
         }
     }
 
-    /* Hover detection on selectable nodes (before drawing so cursor is up to date) */
+    /* Build reachable list: forward connections + back-links from visited nodes */
     starmap_node *cur = &g_starmap.nodes[g_starmap.current_node];
+    int reachable[STARMAP_MAX_NODES];
+    int reachable_count = 0;
+    /* Forward: cur->next[] (unvisited targets for new exploration) */
+    for (int c = 0; c < cur->next_count; c++) {
+        int t = cur->next[c];
+        if (t >= 0 && t < g_starmap.node_count && t != g_starmap.current_node)
+            reachable[reachable_count++] = t;
+    }
+    /* Backward: any visited node that has current_node in its next[] */
+    for (int i = 0; i < g_starmap.node_count; i++) {
+        if (i == g_starmap.current_node) continue;
+        if (!g_starmap.nodes[i].visited) continue;
+        /* Check if i connects to current_node (we can go back) */
+        for (int c = 0; c < g_starmap.nodes[i].next_count; c++) {
+            if (g_starmap.nodes[i].next[c] == g_starmap.current_node) {
+                /* Check not already in reachable */
+                bool dup = false;
+                for (int r = 0; r < reachable_count; r++)
+                    if (reachable[r] == i) { dup = true; break; }
+                if (!dup) reachable[reachable_count++] = i;
+                break;
+            }
+        }
+    }
+    if (g_starmap.cursor >= reachable_count) g_starmap.cursor = 0;
+
+    /* Hover detection on reachable nodes */
     int hovered_node = -1;
     if (!g_starmap.confirm_active) {
-        for (int c = 0; c < cur->next_count; c++) {
-            int target = cur->next[c];
-            if (target < 0 || target >= g_starmap.node_count) continue;
+        for (int c = 0; c < reachable_count; c++) {
+            int target = reachable[c];
             starmap_node *nd = &g_starmap.nodes[target];
             float ddx = ui_mouse_x - nd->x, ddy = ui_mouse_y - nd->y;
             if (ddx * ddx + ddy * ddy <= 14 * 14) {
@@ -1490,12 +1613,12 @@ static void draw_starmap(uint32_t *px, int W, int H) {
         uint32_t col;
         if (i == g_starmap.current_node) col = 0xFF22CC22;
         else if (nd->visited) col = 0xFF555555;
-        else if (nd->is_boss) col = 0xFF4444FF; /* red/orange for boss */
+        else if (nd->is_boss) col = 0xFF4444FF;
         else col = 0xFFCCCCFF;
 
         bool selectable = false;
-        for (int c = 0; c < cur->next_count; c++) {
-            if (cur->next[c] == i) {
+        for (int c = 0; c < reachable_count; c++) {
+            if (reachable[c] == i) {
                 selectable = true;
                 if (g_starmap.cursor == c) col = 0xFF00DDDD;
                 break;
@@ -1532,12 +1655,12 @@ static void draw_starmap(uint32_t *px, int W, int H) {
             int label_y = nd->is_boss ? nd->y + 8 : nd->y + 6;
             sr_draw_text_shadow(px, W, H, nd->x - 20, label_y,
                                 nd->name, col, shadow);
-            if (selectable && nd->scrap_reward > 0) {
+            if (selectable) {
                 char rbuf[24];
                 if (nd->is_boss)
-                    snprintf(rbuf, sizeof(rbuf), "BOSS  ~%d SCRAP", nd->scrap_reward);
+                    snprintf(rbuf, sizeof(rbuf), "BOSS");
                 else
-                    snprintf(rbuf, sizeof(rbuf), "D%d  ~%d SCRAP", nd->difficulty, nd->scrap_reward);
+                    snprintf(rbuf, sizeof(rbuf), "D%d", nd->difficulty);
                 sr_draw_text_shadow(px, W, H, nd->x - 20, label_y + 10,
                                     rbuf, nd->is_boss ? 0xFFCC8844 : 0xFF888888, shadow);
             }
@@ -1567,17 +1690,18 @@ static void draw_starmap(uint32_t *px, int W, int H) {
             sr_draw_text_shadow(px, W, H, dbx + 10, dby + 6, "JUMP TO", 0xFFCCCCCC, shadow);
             sr_draw_text_shadow(px, W, H, dbx + 10, dby + 16, tgt->name, 0xFF00DDDD, shadow);
             char dbuf[32];
-            snprintf(dbuf, sizeof(dbuf), "D%d  ~%d SCRAP", tgt->difficulty, tgt->scrap_reward);
+            snprintf(dbuf, sizeof(dbuf), "D%d", tgt->difficulty);
             sr_draw_text_shadow(px, W, H, dbx + 10, dby + 26, dbuf, 0xFF888888, shadow);
 
             if (ui_button(px, W, H, dbx + 10, dby + dbh - 16, 60, 14, "YES",
                           0xFF112211, 0xFF223322, 0xFF44CC44)) {
                 tgt->visited = true;
                 g_starmap.current_node = ct;
+                g_starmap.derelicts_visited++;
                 player_sector = tgt->difficulty;
                 current_mission_is_boss = tgt->is_boss;
-                g_starmap.active = false;
                 g_starmap.confirm_active = false;
+                starmap_save_json(&g_starmap, "levels/starmap.json");
                 hub_generate(&g_hub);
                 g_hub.mission_available = true;
                 app_state = STATE_SHIP_HUB;
@@ -1591,10 +1715,10 @@ static void draw_starmap(uint32_t *px, int W, int H) {
         }
     } else {
         /* Jump button — opens confirm dialog */
-        if (cur->next_count > 0) {
+        if (reachable_count > 0) {
             if (ui_button(px, W, H, W/2 - 30, H - 30, 60, 14, "JUMP",
                           0xFF111133, 0xFF222255, 0xFF333377)) {
-                int next = cur->next[g_starmap.cursor];
+                int next = reachable[g_starmap.cursor];
                 if (next >= 0 && next < g_starmap.node_count) {
                     g_starmap.confirm_active = true;
                     g_starmap.confirm_target = next;
@@ -1623,10 +1747,11 @@ static void starmap_handle_key(int key_code) {
             if (ct >= 0 && ct < g_starmap.node_count) {
                 g_starmap.nodes[ct].visited = true;
                 g_starmap.current_node = ct;
+                g_starmap.derelicts_visited++;
                 player_sector = g_starmap.nodes[ct].difficulty;
                 current_mission_is_boss = g_starmap.nodes[ct].is_boss;
-                g_starmap.active = false;
                 g_starmap.confirm_active = false;
+                starmap_save_json(&g_starmap, "levels/starmap.json");
                 hub_generate(&g_hub);
                 g_hub.mission_available = true;
                 app_state = STATE_SHIP_HUB;
@@ -1859,7 +1984,7 @@ static void hub_draw_hud(uint32_t *px, int W, int H) {
     snprintf(sec_buf, sizeof(sec_buf), "SECTOR %d", player_sector + 1);
     sr_draw_text_shadow(px, W, H, W - 60, 4, sec_buf, 0xFF888888, shadow);
 
-    if (mission_first_done) {
+    if (mission_briefed) {
         char samp_buf[32];
         snprintf(samp_buf, sizeof(samp_buf), "SAMPLES %d/%d", player_samples, SAMPLES_REQUIRED);
         uint32_t samp_col = (player_samples >= SAMPLES_REQUIRED) ? 0xFF44CC44 : 0xFFCC8822;
@@ -1869,7 +1994,7 @@ static void hub_draw_hud(uint32_t *px, int W, int H) {
     /* Mission objectives */
     {
         int oy = 50;
-        if (mission_briefed && !mission_first_done && g_dlgd.loaded) {
+        if (mission_briefed && !(mission_medbay_done && mission_armory_done) && g_dlgd.loaded) {
             /* Initial prep flow: medbay, armory, board derelict */
             sr_draw_text_shadow(px, W, H, 4, oy, "OBJECTIVES:", 0xFFCC8822, shadow);
             oy += 10;
@@ -1882,23 +2007,25 @@ static void hub_draw_hud(uint32_t *px, int W, int H) {
                 sr_draw_text_shadow(px, W, H, 8, oy, obj_buf, col, shadow);
                 oy += 10;
             }
-        } else if (mission_first_done && !g_hub.mission_available) {
-            /* Post-mission: head to warp */
+        } else if (!g_hub.mission_available) {
+            /* Post-mission: plot course */
             sr_draw_text_shadow(px, W, H, 4, oy, "OBJECTIVES:", 0xFFCC8822, shadow);
             oy += 10;
-            sr_draw_text_shadow(px, W, H, 8, oy, "[ ] GO TO WARP", 0xFFCCCCCC, shadow);
-        } else if (mission_first_done && g_hub.mission_available) {
-            /* Under attack: board the enemy ship */
+            sr_draw_text_shadow(px, W, H, 8, oy, "[ ] PLOT A COURSE FOR THE NEXT SYSTEM", 0xFFCCCCCC, shadow);
+        } else if (g_hub.mission_available) {
+            /* Arrived at new system: investigate */
             sr_draw_text_shadow(px, W, H, 4, oy, "OBJECTIVES:", 0xFFCC8822, shadow);
             oy += 10;
-            sr_draw_text_shadow(px, W, H, 8, oy, "[ ] BOARD ENEMY SHIP", 0xFFCCCCCC, shadow);
+            sr_draw_text_shadow(px, W, H, 8, oy, "[ ] INVESTIGATE DERELICT", 0xFFCCCCCC, shadow);
+            oy += 10;
+            sr_draw_text_shadow(px, W, H, 8, oy, "[ ] COLLECT BIOMASS", 0xFFCCCCCC, shadow);
         }
     }
 
     /* Deck button (clickable) */
     char deck_buf[32];
     snprintf(deck_buf, sizeof(deck_buf), "DECK %d", g_player.persistent_deck_count);
-    int deck_btn_y = mission_first_done ? 26 : 14;
+    int deck_btn_y = 26;
     if (ui_button(px, W, H, W - 70, deck_btn_y, 66, 12, deck_buf,
                   0xFF1A1A2A, 0xFF222244, 0xFF333366)) {
         deck_view_active = true;
@@ -1942,7 +2069,7 @@ static void hub_draw_hud(uint32_t *px, int W, int H) {
         if (rt == HUB_ROOM_TELEPORTER) {
             btn_label = "TELEPORTER";
             /* Only allow teleport if mission available AND prep done (or post-first-mission) */
-            if (g_hub.mission_available && (mission_first_done || (mission_medbay_done && mission_armory_done)))
+            if (g_hub.mission_available && (mission_medbay_done && mission_armory_done))
                 action = DIALOG_ACTION_TELEPORT;
         } else if (rt == HUB_ROOM_BRIDGE) {
             btn_label = "BRIDGE";
@@ -1950,7 +2077,7 @@ static void hub_draw_hud(uint32_t *px, int W, int H) {
         } else if (rt == HUB_ROOM_SHOP) {
             btn_label = "ARMORY";
             /* Block armory until briefed and medbay done (or past first mission) */
-            if (mission_first_done || (mission_briefed && mission_medbay_done))
+            if (mission_briefed && mission_medbay_done)
                 action = DIALOG_ACTION_SHOP;
         } else if (rt == HUB_ROOM_MEDBAY) {
             btn_label = "MEDBAY"; action = DIALOG_ACTION_HEAL;
