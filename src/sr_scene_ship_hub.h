@@ -1436,16 +1436,11 @@ static void starmap_generate(starmap_state *sm, int start_sector) {
 
 /* ── Starmap JSON save/load ─────────────────────────────────────── */
 
+/* Save starmap STRUCTURE only (no progress data — that goes in the save file) */
 static void starmap_save_json(const starmap_state *sm, const char *path) {
     FILE *f = fopen(path, "w");
     if (!f) { printf("[starmap] Failed to save %s\n", path); return; }
     fprintf(f, "{\n");
-    fprintf(f, "  \"currentNode\": %d,\n", sm->current_node);
-    fprintf(f, "  \"derelictsVisited\": %d,\n", sm->derelicts_visited);
-    fprintf(f, "  \"visitedPath\": [");
-    for (int i = 0; i < sm->visited_path_count; i++)
-        fprintf(f, "%d%s", sm->visited_path[i], i < sm->visited_path_count - 1 ? ", " : "");
-    fprintf(f, "],\n");
     fprintf(f, "  \"nodes\": [\n");
     for (int i = 0; i < sm->node_count; i++) {
         const starmap_node *nd = &sm->nodes[i];
@@ -1454,11 +1449,9 @@ static void starmap_save_json(const starmap_state *sm, const char *path) {
         if (nd->level_file[0])
             fprintf(f, "      \"levelFile\": \"%s\",\n", nd->level_file);
         fprintf(f, "      \"difficulty\": %d,\n", nd->difficulty);
-        fprintf(f, "      \"scrapReward\": %d,\n", nd->scrap_reward);
         fprintf(f, "      \"isBoss\": %s,\n", nd->is_boss ? "true" : "false");
         if (nd->boss_room >= 0)
             fprintf(f, "      \"bossRoom\": %d,\n", nd->boss_room);
-        fprintf(f, "      \"visited\": %s,\n", nd->visited ? "true" : "false");
         fprintf(f, "      \"x\": %d,\n", nd->x);
         fprintf(f, "      \"y\": %d,\n", nd->y);
         fprintf(f, "      \"next\": [");
@@ -1492,15 +1485,8 @@ static bool starmap_load_json(starmap_state *sm, const char *path) {
 
     memset(sm, 0, sizeof(*sm));
     sm->node_count = count;
-    sm->current_node = sr_json_int(&json, sr_json_find(&json, root, "currentNode"), 0);
-    sm->derelicts_visited = sr_json_int(&json, sr_json_find(&json, root, "derelictsVisited"), 0);
-    int vpath = sr_json_find(&json, root, "visitedPath");
-    if (vpath >= 0) {
-        sm->visited_path_count = sr_json_array_len(&json, vpath);
-        if (sm->visited_path_count > STARMAP_MAX_NODES) sm->visited_path_count = STARMAP_MAX_NODES;
-        for (int i = 0; i < sm->visited_path_count; i++)
-            sm->visited_path[i] = sr_json_int(&json, sr_json_array_get(&json, vpath, i), 0);
-    }
+    sm->current_node = 0;        /* progress restored from save file, not JSON */
+    sm->derelicts_visited = 0;
     sm->cursor = 0;
     sm->active = true;
 
@@ -1511,10 +1497,9 @@ static bool starmap_load_json(starmap_state *sm, const char *path) {
         sr_json_str(&json, sr_json_find(&json, nt, "name"), nd->name, sizeof(nd->name));
         sr_json_str(&json, sr_json_find(&json, nt, "levelFile"), nd->level_file, sizeof(nd->level_file));
         nd->difficulty = sr_json_int(&json, sr_json_find(&json, nt, "difficulty"), 0);
-        nd->scrap_reward = sr_json_int(&json, sr_json_find(&json, nt, "scrapReward"), 0);
         nd->is_boss = sr_json_bool(&json, sr_json_find(&json, nt, "isBoss"), false);
         nd->boss_room = sr_json_int(&json, sr_json_find(&json, nt, "bossRoom"), -1);
-        nd->visited = sr_json_bool(&json, sr_json_find(&json, nt, "visited"), i == 0);
+        nd->visited = (i == 0); /* only start node visited by default */
         nd->x = sr_json_int(&json, sr_json_find(&json, nt, "x"), 0);
         nd->y = sr_json_int(&json, sr_json_find(&json, nt, "y"), 0);
 
@@ -1729,7 +1714,6 @@ static void draw_starmap(uint32_t *px, int W, int H) {
                 player_sector = tgt->difficulty;
                 current_mission_is_boss = tgt->is_boss;
                 g_starmap.confirm_active = false;
-                starmap_save_json(&g_starmap, "levels/starmap.json");
                 /* Clear pregen so new ship loads from starmap node's levelFile */
                 memset(dng_state.floor_generated, 0, sizeof(dng_state.floor_generated));
                 remote_hull_computed = false;
@@ -1784,7 +1768,6 @@ static void starmap_handle_key(int key_code) {
                 player_sector = g_starmap.nodes[ct].difficulty;
                 current_mission_is_boss = g_starmap.nodes[ct].is_boss;
                 g_starmap.confirm_active = false;
-                starmap_save_json(&g_starmap, "levels/starmap.json");
                 memset(dng_state.floor_generated, 0, sizeof(dng_state.floor_generated));
                 remote_hull_computed = false;
                 hub_generate(&g_hub);

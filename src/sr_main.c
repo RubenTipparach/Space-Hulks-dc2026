@@ -923,7 +923,9 @@ static void game_init_ship(void) {
             static char level_path_buf[128];
             snprintf(level_path_buf, sizeof(level_path_buf), "levels/%s", lf);
             level_path = level_path_buf;
-            printf("[game_init_ship] Starmap node specifies level: %s\n", level_path);
+            printf("[game_init_ship] Sector '%s' (node %d) -> level: %s\n",
+                   g_starmap.nodes[g_starmap.current_node].name,
+                   g_starmap.current_node, level_path);
         }
     }
     if (!level_path) level_path = "levels/sample_enemy_ship.json";
@@ -1544,7 +1546,6 @@ static void draw_class_select(sr_framebuffer *fb_ptr) {
             current_mission_is_boss = false;
             /* Reset starmap for new game */
             memset(&g_starmap, 0, sizeof(g_starmap));
-            remove("levels/starmap.json");
             settings_save();
             if (skip_intro) {
                 mission_briefed = true;
@@ -3161,7 +3162,6 @@ static void event(const sapp_event *ev) {
                 current_map_boss_done = false;
                 current_mission_is_boss = false;
                 memset(&g_starmap, 0, sizeof(g_starmap));
-                remove("levels/starmap.json");
                 if (skip_intro) {
                     mission_briefed = true;
                     mission_medbay_done = true;
