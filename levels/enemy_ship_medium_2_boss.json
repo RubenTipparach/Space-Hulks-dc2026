@@ -1693,9 +1693,9 @@
       ],
       "spawnGX": 3,
       "spawnGY": 20,
-      "stairsGX": 38,
+      "stairsGX": 37,
       "stairsGY": 20,
-      "stairsDir": 1,
+      "stairsDir": 0,
       "hasUp": true,
       "downGX": -1,
       "downGY": -1,
@@ -1786,55 +1786,55 @@
           "gX": 20,
           "gY": 38,
           "enemyType": "Lurker",
-          "name": "BL\u0027ORM"
+          "name": "BL'ORM"
         },
         {
           "gX": 18,
           "gY": 37,
           "enemyType": "Lurker",
-          "name": "VX\u0027ASH"
+          "name": "VX'ASH"
         },
         {
           "gX": 11,
           "gY": 10,
           "enemyType": "Brute",
-          "name": "QZ\u0027IKS"
+          "name": "QZ'IKS"
         },
         {
           "gX": 12,
           "gY": 26,
           "enemyType": "Brute",
-          "name": "KR\u0027AXE"
+          "name": "KR'AXE"
         },
         {
           "gX": 13,
           "gY": 25,
           "enemyType": "Brute",
-          "name": "TR\u0027IKS"
+          "name": "TR'IKS"
         },
         {
           "gX": 24,
           "gY": 14,
           "enemyType": "Brute",
-          "name": "VX\u0027URG"
+          "name": "VX'URG"
         },
         {
           "gX": 24,
           "gY": 16,
           "enemyType": "Brute",
-          "name": "QZ\u0027IKS"
+          "name": "QZ'IKS"
         },
         {
           "gX": 25,
           "gY": 4,
           "enemyType": "Brute",
-          "name": "SK\u0027AAK"
+          "name": "SK'AAK"
         },
         {
           "gX": 32,
           "gY": 17,
           "enemyType": "Lurker",
-          "name": "KR\u0027ORM"
+          "name": "KR'ORM"
         }
       ],
       "consoles": [
@@ -3599,7 +3599,7 @@
       "downGX": 4,
       "downGY": 20,
       "downDir": 3,
-      "hasDown": true,
+      "hasDown": false,
       "rooms": [
         {
           "x": 7,
@@ -3672,37 +3672,37 @@
           "gX": 12,
           "gY": 15,
           "enemyType": "Brute",
-          "name": "ZR\u0027ENT"
+          "name": "ZR'ENT"
         },
         {
           "gX": 23,
           "gY": 34,
           "enemyType": "Lurker",
-          "name": "QZ\u0027OKK"
+          "name": "QZ'OKK"
         },
         {
           "gX": 24,
           "gY": 10,
           "enemyType": "Lurker",
-          "name": "VX\u0027AAK"
+          "name": "VX'AAK"
         },
         {
           "gX": 31,
           "gY": 10,
           "enemyType": "Lurker",
-          "name": "XL\u0027OKK"
+          "name": "XL'OKK"
         },
         {
           "gX": 35,
           "gY": 9,
           "enemyType": "Brute",
-          "name": "SK\u0027ENT"
+          "name": "SK'ENT"
         },
         {
           "gX": 33,
           "gY": 34,
           "enemyType": "Brute",
-          "name": "TR\u0027ASH"
+          "name": "TR'ASH"
         }
       ],
       "consoles": [

@@ -498,11 +498,39 @@ static void draw_title_screen(sr_framebuffer *fb_ptr) {
     sr_draw_text_centered(px, W, H, 60, "DRAKE'S VOID", white, shadow);
     sr_draw_text_centered(px, W, H, 80, "DUNGEON CRAWLER", gray, shadow);
 
-    /* New Game button */
-    {
-        int bw = 100, bh = 22;
-        int bx = (W - bw) / 2, by = 120;
-        if (!title_confirm_new) {
+    if (title_confirm_new) {
+        /* Confirm dialog — hides buttons behind it */
+        int dbw = 260, dbh = 55;
+        int dbx = W/2 - dbw/2, dby = H/2 - dbh/2;
+        for (int ry = dby; ry < dby + dbh && ry < H; ry++)
+            for (int rx = dbx; rx < dbx + dbw && rx < W; rx++)
+                if (rx >= 0 && ry >= 0) px[ry * W + rx] = 0xFF111133;
+        for (int rx = dbx; rx < dbx + dbw && rx < W; rx++) {
+            if (dby >= 0) px[dby * W + rx] = 0xFF4444AA;
+            if (dby+dbh-1 < H) px[(dby+dbh-1) * W + rx] = 0xFF4444AA;
+        }
+        for (int ry = dby; ry < dby + dbh && ry < H; ry++) {
+            if (dbx >= 0) px[ry * W + dbx] = 0xFF4444AA;
+            if (dbx+dbw-1 < W) px[ry * W + dbx+dbw-1] = 0xFF4444AA;
+        }
+        sr_draw_text_centered(px, W, H, dby + 8, "START NEW RUN?", 0xFFCCCCCC, shadow);
+        sr_draw_text_centered(px, W, H, dby + 20, "PREVIOUS SAVE WILL BE DELETED", 0xFFCC4444, shadow);
+        if (ui_button(px, W, H, dbx + 20, dby + dbh - 18, 80, 14, "YES",
+                      0xFF112211, 0xFF223322, 0xFF44CC44)) {
+            game_delete_save();
+            save_exists = false;
+            title_confirm_new = false;
+            app_state = STATE_CLASS_SELECT;
+        }
+        if (ui_button(px, W, H, dbx + dbw - 100, dby + dbh - 18, 80, 14, "NO",
+                      0xFF221111, 0xFF332222, 0xFF882222)) {
+            title_confirm_new = false;
+        }
+    } else {
+        /* New Game button */
+        {
+            int bw = 100, bh = 22;
+            int bx = (W - bw) / 2, by = 120;
             if (ui_button(px, W, H, bx, by, bw, bh, "NEW GAME",
                           0xFF111122, 0xFF222244, 0xFF333366)) {
                 if (save_exists)
@@ -510,53 +538,23 @@ static void draw_title_screen(sr_framebuffer *fb_ptr) {
                 else
                     app_state = STATE_CLASS_SELECT;
             }
-        } else {
-            /* Confirm dialog */
-            int dbw = 180, dbh = 50;
-            int dbx = W/2 - dbw/2, dby = H/2 - dbh/2;
-            for (int ry = dby; ry < dby + dbh && ry < H; ry++)
-                for (int rx = dbx; rx < dbx + dbw && rx < W; rx++)
-                    if (rx >= 0 && ry >= 0) px[ry * W + rx] = 0xFF111133;
-            for (int rx = dbx; rx < dbx + dbw && rx < W; rx++) {
-                if (dby >= 0) px[dby * W + rx] = 0xFF4444AA;
-                if (dby+dbh-1 < H) px[(dby+dbh-1) * W + rx] = 0xFF4444AA;
-            }
-            for (int ry = dby; ry < dby + dbh && ry < H; ry++) {
-                if (dbx >= 0) px[ry * W + dbx] = 0xFF4444AA;
-                if (dbx+dbw-1 < W) px[ry * W + dbx+dbw-1] = 0xFF4444AA;
-            }
-            sr_draw_text_shadow(px, W, H, dbx + 10, dby + 6,
-                "START NEW RUN?", 0xFFCCCCCC, shadow);
-            sr_draw_text_shadow(px, W, H, dbx + 10, dby + 18,
-                "PREVIOUS SAVE WILL BE DELETED", 0xFFCC4444, shadow);
-            if (ui_button(px, W, H, dbx + 10, dby + dbh - 16, 60, 14, "YES",
-                          0xFF112211, 0xFF223322, 0xFF44CC44)) {
-                game_delete_save();
-                save_exists = false;
-                title_confirm_new = false;
-                app_state = STATE_CLASS_SELECT;
-            }
-            if (ui_button(px, W, H, dbx + dbw - 70, dby + dbh - 16, 60, 14, "NO",
-                          0xFF221111, 0xFF332222, 0xFF882222)) {
-                title_confirm_new = false;
-            }
         }
-    }
 
-    /* Continue button */
-    {
-        int bw = 100, bh = 22;
-        int bx = (W - bw) / 2, by = 150;
-        if (save_exists) {
-            if (ui_button(px, W, H, bx, by, bw, bh, "CONTINUE",
-                          0xFF111122, 0xFF222244, 0xFF333366)) {
-                title_cursor = 99; /* signal continue was clicked */
+        /* Continue button */
+        {
+            int bw = 100, bh = 22;
+            int bx = (W - bw) / 2, by = 150;
+            if (save_exists) {
+                if (ui_button(px, W, H, bx, by, bw, bh, "CONTINUE",
+                              0xFF111122, 0xFF222244, 0xFF333366)) {
+                    title_cursor = 99;
+                }
+            } else {
+                combat_draw_rect(px, W, H, bx, by, bw, bh, 0xFF111122);
+                combat_draw_rect_outline(px, W, H, bx, by, bw, bh, 0xFF333333);
+                int tx = bx + (bw - sr_text_width("CONTINUE")) / 2;
+                sr_draw_text_shadow(px, W, H, tx, by + 7, "CONTINUE", 0xFF444444, shadow);
             }
-        } else {
-            combat_draw_rect(px, W, H, bx, by, bw, bh, 0xFF111122);
-            combat_draw_rect_outline(px, W, H, bx, by, bw, bh, 0xFF333333);
-            int tx = bx + (bw - sr_text_width("CONTINUE")) / 2;
-            sr_draw_text_shadow(px, W, H, tx, by + 7, "CONTINUE", 0xFF444444, shadow);
         }
     }
 }
