@@ -121,7 +121,7 @@ typedef struct {
     int hp_max;
     int deck_composition[CARD_TYPE_COUNT]; /* count of each card type */
     const char *name;
-    const uint32_t *sprite;
+    int stex_idx;
 } char_class;
 
 static const char_class char_classes[] = {
@@ -130,27 +130,27 @@ static const char_class char_classes[] = {
         /* 2 shield, 0 shoot, 1 burst, 3 move, 0 melee, ..., 2 sniper, 2 shotgun, ..., 2 quickstep */
         .deck_composition = { 2, 0, 1, 3, 0, 0,0,0,0,0,0, 0,0,0,0, 2, 2, 0,0,0,0,0,0, 2 },
         .name = "SCOUT",
-        .sprite = spr_scout,
+        .stex_idx = STEX_SCOUT,
     },
     [CLASS_MARINE] = {
         .hp_max = 30,
         .deck_composition = { 4, 3, 1, 1, 1 }, /* 4 shield, 3 shoot, 1 burst, 1 move, 1 melee */
         .name = "MARINE",
-        .sprite = spr_marine,
+        .stex_idx = STEX_MARINE,
     },
     [CLASS_ENGINEER] = {
         .hp_max = 26,
         /* 2 shield, 1 shoot, 1 burst, 1 move, 0 melee, ..., welder 3, chainsaw 2, ..., quickstep 2 */
         .deck_composition = { 2, 1, 1, 1, 0, 0,0,0,0,0,0, 0,0,0,0, 0,0, 3, 2, 0,0,0,0, 2 },
         .name = "ENGINEER",
-        .sprite = spr_engineer,
+        .stex_idx = STEX_ENGINEER,
     },
     [CLASS_SCIENTIST] = {
         .hp_max = 22,
         /* 1 shield, 1 shoot, 1 burst, 1 move, 0 melee, ..., laser 2, deflector 2, stun_gun 1, microwave 2 */
         .deck_composition = { 1, 1, 1, 1, 0, 0,0,0,0,0,0, 0,0,0,0, 0,0,0,0, 2, 2, 1, 2 },
         .name = "SCIENTIST",
-        .sprite = spr_scientist,
+        .stex_idx = STEX_SCIENTIST,
     },
 };
 
@@ -2324,11 +2324,14 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
                     }
                 }
                 if (!drew_boss_anim) {
-                    const uint32_t *sprite = spr_enemy_table[e->type];
-                    if (e->flash_timer > 0 && (e->flash_timer & 2))
-                        spr_draw_flash_nf(px, W, H, sprite, src_sz, src_sz, sprite_x + anim_x, sprite_y, fscale);
-                    else
-                        spr_draw_nf(px, W, H, sprite, src_sz, src_sz, sprite_x + anim_x, sprite_y, fscale);
+                    int eidx = enemy_to_stex[e->type];
+                    sr_texture *etex = (eidx >= 0) ? &stextures[eidx] : NULL;
+                    if (etex && etex->pixels) {
+                        if (e->flash_timer > 0 && (e->flash_timer & 2))
+                            spr_draw_flash_nf(px, W, H, etex->pixels, etex->width, etex->height, sprite_x + anim_x, sprite_y, fscale);
+                        else
+                            spr_draw_nf(px, W, H, etex->pixels, etex->width, etex->height, sprite_x + anim_x, sprite_y, fscale);
+                    }
                 }
 
                 /* Target highlight removed — drag-to-target provides the highlight */
@@ -2466,8 +2469,8 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
         if (combat.player_flash_timer > 0 && (combat.player_flash_timer & 2))
             show_player = false; /* skip drawing = flicker effect */
 
-        if (show_player)
-            spr_draw(px, W, H, cc->sprite, 8, 140, 2);
+        if (show_player && stextures[cc->stex_idx].pixels)
+            spr_draw_tex(px, W, H, &stextures[cc->stex_idx], 8, 140, 2);
 
         /* Red tint on visible flicker frames */
         if (combat.player_flash_timer > 0 && show_player) {

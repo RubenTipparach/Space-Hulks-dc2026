@@ -839,8 +839,8 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
                 if (alien_type == 0) continue;
 
                 int raw_idx = alien_type - 1;
-                if (raw_idx < 0 || raw_idx >= STEX_COUNT) continue;
-                int stex_idx = raw_idx;
+                if (raw_idx < 0 || raw_idx >= ENEMY_TYPE_COUNT) continue;
+                int stex_idx = enemy_to_stex[raw_idx];
                 if (stex_idx < 0 || stex_idx >= STEX_COUNT) continue;
                 const sr_texture *stex = &stextures[stex_idx];
                 if (!stex->pixels) continue;

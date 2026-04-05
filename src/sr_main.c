@@ -1652,7 +1652,7 @@ static void check_random_encounter(void) {
 
 static void draw_class_box(uint32_t *px, int W, int H,
                            int bx, int by, bool sel,
-                           const uint32_t *sprite, const char *name,
+                           int stex_idx, const char *name,
                            const char *line1, const char *line2,
                            const char *line3, const char *line4) {
     uint32_t shadow = 0xFF000000;
@@ -1662,7 +1662,8 @@ static void draw_class_box(uint32_t *px, int W, int H,
     uint32_t border = sel ? yellow : gray;
     combat_draw_rect_outline(px, W, H, bx, by, CLASS_BOX_W, CLASS_BOX_H, border);
     if (sel) combat_draw_rect_outline(px, W, H, bx+1, by+1, CLASS_BOX_W-2, CLASS_BOX_H-2, border);
-    spr_draw(px, W, H, sprite, bx + 34, by + 4, 2);
+    if (stextures[stex_idx].pixels)
+        spr_draw_tex(px, W, H, &stextures[stex_idx], bx + 34, by + 4, 2);
     sr_draw_text_shadow(px, W, H, bx + 8, by + 40, name, sel ? yellow : white, shadow);
     sr_draw_text_shadow(px, W, H, bx + 8, by + 52, line1, gray, shadow);
     sr_draw_text_shadow(px, W, H, bx + 8, by + 64, line2, gray, shadow);
@@ -1690,7 +1691,7 @@ static void draw_class_select(sr_framebuffer *fb_ptr) {
     {
         int bx = gap;
         draw_class_box(px, W, H, bx, by, class_select_cursor == 0,
-                       spr_scout, "SCOUT",
+                       STEX_SCOUT, "SCOUT",
                        "HP: 18", "NIMBLE",
                        "SNIPER/SHOTGUN", "3 MOVE CARDS");
     }
@@ -1698,7 +1699,7 @@ static void draw_class_select(sr_framebuffer *fb_ptr) {
     {
         int bx = gap * 2 + CLASS_BOX_W;
         draw_class_box(px, W, H, bx, by, class_select_cursor == 1,
-                       spr_marine, "MARINE",
+                       STEX_MARINE, "MARINE",
                        "HP: 30", "TOUGH",
                        "3 SHOOT", "4 SHIELD");
     }
@@ -1706,7 +1707,7 @@ static void draw_class_select(sr_framebuffer *fb_ptr) {
     {
         int bx = gap * 3 + CLASS_BOX_W * 2;
         draw_class_box(px, W, H, bx, by, class_select_cursor == 2,
-                       spr_engineer, "ENGINEER",
+                       STEX_ENGINEER, "ENGINEER",
                        "HP: 26", "MELEE FOCUS",
                        "WELDER/CHNSAW", "UP CLOSE");
     }
@@ -1714,7 +1715,7 @@ static void draw_class_select(sr_framebuffer *fb_ptr) {
     {
         int bx = gap * 4 + CLASS_BOX_W * 3;
         draw_class_box(px, W, H, bx, by, class_select_cursor == 3,
-                       spr_scientist, "SCIENTIST",
+                       STEX_SCIENTIST, "SCIENTIST",
                        "HP: 22", "PRECISION",
                        "LASER/DEFLECT", "STUN GUN");
     }
@@ -2192,6 +2193,8 @@ static void init(void) {
     if (!stextures[STEX_WARDEN].pixels) stextures[STEX_WARDEN] = sr_texture_load("assets/sprites/hiveguard.png");
     stextures[STEX_SCOUT]     = sr_texture_load("assets/sprites/scout.png");
     stextures[STEX_MARINE]    = sr_texture_load("assets/sprites/marine.png");
+    stextures[STEX_ENGINEER]  = sr_texture_load("assets/sprites/engineer.png");
+    stextures[STEX_SCIENTIST] = sr_texture_load("assets/sprites/scientist.png");
     stextures[STEX_CREW_CAPTAIN]       = sr_texture_load("assets/sprites/crew_captain.png");
     stextures[STEX_CREW_SERGEANT]      = sr_texture_load("assets/sprites/crew_sergeant.png");
     stextures[STEX_CREW_QUARTERMASTER] = sr_texture_load("assets/sprites/crew_quartermaster.png");
