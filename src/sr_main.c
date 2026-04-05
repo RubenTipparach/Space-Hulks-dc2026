@@ -45,6 +45,7 @@
 static float ui_mouse_x = -1, ui_mouse_y = -1;
 static bool  ui_mouse_clicked = false;
 static float ui_click_x = -1, ui_click_y = -1;
+static int   g_dialog_action_pending = 0; /* action from dialog button click */
 
 static bool ui_button(uint32_t *px, int W, int H, int bx, int by, int bw, int bh,
                       const char *label, uint32_t base_col, uint32_t hover_col, uint32_t click_col) {
@@ -2324,11 +2325,84 @@ static void init(void) {
     printf("Space Hulks initialized (%dx%d @ %dfps)\n", FB_WIDTH, FB_HEIGHT, TARGET_FPS);
 }
 
+/* Dispatch a dialog action (shared by button clicks and keyboard) */
+static void dispatch_dialog_action(int action) {
+    if (app_state != STATE_SHIP_HUB) return;
+    switch (action) {
+        case DIALOG_ACTION_STARMAP:
+            if (g_hub.mission_available) {
+                snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "NEUTRALIZE THE ENEMY SHIP FIRST");
+                g_hub.hud_msg_timer = 90;
+            } else {
+                if (current_map_boss_done) { player_starmap++; current_map_boss_done = false; g_starmap.active = false; }
+                if (!g_starmap.active) {
+                    dng_rng_seed((uint32_t)(player_sector * 1337 + 42 + player_starmap * 9999));
+                    starmap_generate_or_load(&g_starmap, player_sector);
+                }
+                app_state = STATE_STARMAP;
+            }
+            break;
+        case DIALOG_ACTION_SHOP:
+            dng_rng_seed((uint32_t)(player_sector * 7777 + 123));
+            shop_generate(&g_shop);
+            if (!mission_armory_done) mission_armory_done = true;
+            active_shop_type = 0;
+            app_state = STATE_SHOP;
+            break;
+        case DIALOG_ACTION_HEAL:
+            if (!mission_medbay_done && mission_briefed && !mission_armory_done) {
+                g_player.hp = g_player.hp_max;
+                mission_medbay_done = true;
+                snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "VITALS LOGGED. YOU'RE CLEAR.");
+                g_hub.hud_msg_timer = 90;
+            } else {
+                if (!mission_medbay_done && mission_briefed) mission_medbay_done = true;
+                dng_rng_seed((uint32_t)(player_sector * 5555 + 456 + player_biomass * 13));
+                medbay_shop_generate(&g_medbay_shop);
+                active_shop_type = 1;
+                app_state = STATE_SHOP;
+            }
+            break;
+        case DIALOG_ACTION_MEDBAY_SHOP:
+            dng_rng_seed((uint32_t)(player_sector * 5555 + 456 + player_biomass * 13));
+            medbay_shop_generate(&g_medbay_shop);
+            active_shop_type = 1;
+            app_state = STATE_SHOP;
+            break;
+        case DIALOG_ACTION_TELEPORT:
+            if (g_hub.mission_available)
+                hub_show_teleport_confirm();
+            break;
+        case DIALOG_ACTION_TELEPORT_GO:
+            if (g_hub.mission_available) {
+                { int sw, sh; game_ship_size(player_sector, &sw, &sh);
+                dng_game_init_sized(&dng_state, sw, sh); }
+                game_init_ship();
+                dng_initialized = true;
+                dng_hull_computed = false;
+                last_player_gx = dng_state.player.gx;
+                last_player_gy = dng_state.player.gy;
+                g_hub.mission_available = false;
+                beam_timer = 0;
+                app_state = STATE_BEAM;
+            }
+            break;
+        default: break;
+    }
+}
+
 static void frame(void) {
     double dt = sapp_frame_duration();
     time_acc += dt;
     dng_time += dt;
     frame_counter++;
+
+    /* Process dialog button clicks from previous frame */
+    if (g_dialog_action_pending != 0) {
+        int action = g_dialog_action_pending;
+        g_dialog_action_pending = 0;
+        dispatch_dialog_action(action);
+    }
 
     fps_timer += dt;
     fps_frame_count++;
@@ -2864,6 +2938,39 @@ static void frame(void) {
 
     /* Pause menu overlay (drawn on top of everything) */
     if (game_paused) draw_pause_menu(&fb);
+
+    /* Process dialog button clicks (set during draw, acted on here) */
+    if (g_dialog.btn_dismiss) {
+        g_dialog.btn_dismiss = false;
+        if (!g_dialog.tt_all_done) {
+            g_dialog.tt_all_done = true;
+            g_dialog.tt_timer = 9999;
+        } else {
+            int action = g_dialog.pending_action;
+            g_dialog.active = false;
+            /* Trigger pending action (same as keyboard path) */
+            if (action != DIALOG_ACTION_NONE) {
+                g_dialog.pending_action = DIALOG_ACTION_NONE;
+                /* Re-dispatch — set a flag for the main event handler */
+                g_dialog_action_pending = action;
+            }
+        }
+    }
+    if (g_dialog.btn_yes) {
+        g_dialog.btn_yes = false;
+        int action = g_dialog.pending_action;
+        g_dialog.active = false;
+        g_dialog.confirm_mode = false;
+        if (action != DIALOG_ACTION_NONE) {
+            g_dialog.pending_action = DIALOG_ACTION_NONE;
+            g_dialog_action_pending = action;
+        }
+    }
+    if (g_dialog.btn_no) {
+        g_dialog.btn_no = false;
+        g_dialog.active = false;
+        g_dialog.confirm_mode = false;
+    }
 
     /* Clear UI click state after drawing (consumed this frame) */
     ui_mouse_clicked = false;

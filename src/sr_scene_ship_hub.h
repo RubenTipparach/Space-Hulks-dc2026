@@ -165,6 +165,10 @@ typedef struct {
     int tt_line;           /* current line being typed (0..line_count-1) */
     int tt_timer;          /* frame counter for current line */
     bool tt_all_done;      /* all lines fully revealed */
+    /* Button click flags (set by draw, consumed by event loop) */
+    bool btn_dismiss;      /* CONTINUE/CLOSE clicked */
+    bool btn_yes;          /* YES clicked (confirm mode) */
+    bool btn_no;           /* NO clicked (confirm mode) */
 } dialog_state;
 
 static dialog_state g_dialog;
@@ -761,9 +765,11 @@ static void draw_dialog(uint32_t *px, int W, int H) {
         /* YES / NO buttons only after all text revealed */
         if (ui_button(px, W, H, bx + bw - 140, tab_y, 60, 14,
                       "YES", 0xFF112211, 0xFF223322, 0xFF44CC44)) {
+            g_dialog.btn_yes = true;
         }
         if (ui_button(px, W, H, bx + bw - 70, tab_y, 60, 14,
                       "NO", 0xFF221111, 0xFF332222, 0xFF882222)) {
+            g_dialog.btn_no = true;
         }
         /* Connect tabs to box — draw border continuation */
         for (int rx = bx + bw - 140; rx < bx + bw - 140 + 130 && rx < W; rx++)
@@ -781,6 +787,7 @@ static void draw_dialog(uint32_t *px, int W, int H) {
         int btn_x = bx + bw - btn_w - 5;
         if (ui_button(px, W, H, btn_x, tab_y, btn_w, 14,
                       dismiss_label, 0xFF1A1A33, 0xFF222255, 0xFF44CC44)) {
+            g_dialog.btn_dismiss = true;
         }
         /* Erase border where tab attaches to box */
         for (int rx = btn_x; rx < btn_x + btn_w && rx < W; rx++)
