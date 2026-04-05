@@ -107,6 +107,8 @@ typedef struct {
     bool confirm_active; /* showing jump confirm dialog */
     int confirm_target;  /* node index to confirm */
     int derelicts_visited; /* how many derelicts we've boarded */
+    int visited_path[STARMAP_MAX_NODES]; /* ordered list of node indices visited */
+    int visited_path_count;
 } starmap_state;
 
 static starmap_state g_starmap;
@@ -1440,6 +1442,10 @@ static void starmap_save_json(const starmap_state *sm, const char *path) {
     fprintf(f, "{\n");
     fprintf(f, "  \"currentNode\": %d,\n", sm->current_node);
     fprintf(f, "  \"derelictsVisited\": %d,\n", sm->derelicts_visited);
+    fprintf(f, "  \"visitedPath\": [");
+    for (int i = 0; i < sm->visited_path_count; i++)
+        fprintf(f, "%d%s", sm->visited_path[i], i < sm->visited_path_count - 1 ? ", " : "");
+    fprintf(f, "],\n");
     fprintf(f, "  \"nodes\": [\n");
     for (int i = 0; i < sm->node_count; i++) {
         const starmap_node *nd = &sm->nodes[i];
@@ -1488,6 +1494,13 @@ static bool starmap_load_json(starmap_state *sm, const char *path) {
     sm->node_count = count;
     sm->current_node = sr_json_int(&json, sr_json_find(&json, root, "currentNode"), 0);
     sm->derelicts_visited = sr_json_int(&json, sr_json_find(&json, root, "derelictsVisited"), 0);
+    int vpath = sr_json_find(&json, root, "visitedPath");
+    if (vpath >= 0) {
+        sm->visited_path_count = sr_json_array_len(&json, vpath);
+        if (sm->visited_path_count > STARMAP_MAX_NODES) sm->visited_path_count = STARMAP_MAX_NODES;
+        for (int i = 0; i < sm->visited_path_count; i++)
+            sm->visited_path[i] = sr_json_int(&json, sr_json_array_get(&json, vpath, i), 0);
+    }
     sm->cursor = 0;
     sm->active = true;
 
@@ -1561,6 +1574,19 @@ static void draw_starmap(uint32_t *px, int W, int H) {
             uint32_t line_col = 0xFF333355;
             if (i == g_starmap.current_node) line_col = 0xFF5555AA;
             minimap_line(px, nd->x, nd->y, tgt->x, tgt->y, line_col);
+        }
+    }
+
+    /* Draw visited path (bright line showing where player has been) */
+    {
+        int prev = 0; /* start node */
+        for (int i = 0; i < g_starmap.visited_path_count; i++) {
+            int cur_p = g_starmap.visited_path[i];
+            if (cur_p >= 0 && cur_p < g_starmap.node_count && prev >= 0) {
+                minimap_line(px, g_starmap.nodes[prev].x, g_starmap.nodes[prev].y,
+                             g_starmap.nodes[cur_p].x, g_starmap.nodes[cur_p].y, 0xFF44AA44);
+            }
+            prev = cur_p;
         }
     }
 
@@ -1698,10 +1724,15 @@ static void draw_starmap(uint32_t *px, int W, int H) {
                 tgt->visited = true;
                 g_starmap.current_node = ct;
                 g_starmap.derelicts_visited++;
+                if (g_starmap.visited_path_count < STARMAP_MAX_NODES)
+                    g_starmap.visited_path[g_starmap.visited_path_count++] = ct;
                 player_sector = tgt->difficulty;
                 current_mission_is_boss = tgt->is_boss;
                 g_starmap.confirm_active = false;
                 starmap_save_json(&g_starmap, "levels/starmap.json");
+                /* Clear pregen so new ship loads from starmap node's levelFile */
+                memset(dng_state.floor_generated, 0, sizeof(dng_state.floor_generated));
+                remote_hull_computed = false;
                 hub_generate(&g_hub);
                 g_hub.mission_available = true;
                 app_state = STATE_SHIP_HUB;
@@ -1748,10 +1779,14 @@ static void starmap_handle_key(int key_code) {
                 g_starmap.nodes[ct].visited = true;
                 g_starmap.current_node = ct;
                 g_starmap.derelicts_visited++;
+                if (g_starmap.visited_path_count < STARMAP_MAX_NODES)
+                    g_starmap.visited_path[g_starmap.visited_path_count++] = ct;
                 player_sector = g_starmap.nodes[ct].difficulty;
                 current_mission_is_boss = g_starmap.nodes[ct].is_boss;
                 g_starmap.confirm_active = false;
                 starmap_save_json(&g_starmap, "levels/starmap.json");
+                memset(dng_state.floor_generated, 0, sizeof(dng_state.floor_generated));
+                remote_hull_computed = false;
                 hub_generate(&g_hub);
                 g_hub.mission_available = true;
                 app_state = STATE_SHIP_HUB;

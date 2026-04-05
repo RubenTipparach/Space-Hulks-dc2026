@@ -789,6 +789,7 @@ static bool dng_update_climb(dng_game *g) {
 #define DNG_PATH_MAX      32    /* max steps stored per enemy path */
 #define DNG_PATROL_MAX    4     /* max waypoints per patrol route */
 #define DNG_ALERT_RADIUS  12    /* chase lock-on distance for hallway enemies */
+#define DNG_CHASE_RANGE    6    /* max distance to chase before giving up */
 
 enum {
     DNG_AI_IDLE,      /* standing still in a room, hasn't seen player */
@@ -1178,12 +1179,13 @@ static void dng_enemies_tick(sr_dungeon *d, int player_gx, int player_gy) {
             }
         }
 
-        /* ── De-aggro: lost line of sight while chasing → return to spawn ── */
-        if (e->ai_state == DNG_AI_CHASE && !can_see_player) {
-            e->ai_state = DNG_AI_RETURN;
+        /* ── De-aggro: lost sight OR too far → return to spawn ── */
+        if (e->ai_state == DNG_AI_CHASE) {
+            if (!can_see_player || dist_to_player > DNG_CHASE_RANGE)
+                e->ai_state = DNG_AI_RETURN;
         }
-        /* Re-aggro during return if player comes back into view */
-        if (e->ai_state == DNG_AI_RETURN && can_see_player) {
+        /* Re-aggro during return if player comes back into view AND in range */
+        if (e->ai_state == DNG_AI_RETURN && can_see_player && dist_to_player <= DNG_CHASE_RANGE) {
             e->ai_state = DNG_AI_CHASE;
         }
 

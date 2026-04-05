@@ -1,6 +1,6 @@
 {
-  "currentNode": 3,
-  "derelictsVisited": 1,
+  "currentNode": 4,
+  "derelictsVisited": 2,
   "nodes": [
     {
       "name": "SECTOR ALPHA",
@@ -52,7 +52,7 @@
       "difficulty": 1,
       "scrapReward": 35,
       "isBoss": false,
-      "visited": false,
+      "visited": true,
       "x": 240,
       "y": 67,
       "next": [8]

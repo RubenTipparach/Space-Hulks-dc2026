@@ -131,8 +131,19 @@ static void game_ship_size(int sector, int *out_w, int *out_h) {
 static void game_pregen_enemy_ship(void) {
     if (dng_state.floor_generated[0]) return; /* already generated */
 
-    /* Try JSON level first (has windows, hand-placed layout) */
-    const char *level_path = "levels/sample_enemy_ship.json";
+    /* Check current starmap node's levelFile */
+    const char *level_path = NULL;
+    if (g_starmap.active && g_starmap.current_node >= 0 &&
+        g_starmap.current_node < g_starmap.node_count) {
+        const char *lf = g_starmap.nodes[g_starmap.current_node].level_file;
+        if (lf[0]) {
+            static char pregen_path[128];
+            snprintf(pregen_path, sizeof(pregen_path), "levels/%s", lf);
+            level_path = pregen_path;
+            printf("[pregen] Using starmap node levelFile: %s\n", level_path);
+        }
+    }
+    if (!level_path) level_path = "levels/sample_enemy_ship.json";
     if (lvl_file_exists(level_path)) {
         lvl_loaded lvl = lvl_load(level_path);
         if (lvl.valid && !lvl.is_hub) {
@@ -184,7 +195,7 @@ static void game_pregen_enemy_ship(void) {
 
 /* ── Save / Load ─────────────────────────────────────────────────── */
 
-#define SAVE_VERSION 6  /* bumped: added card_angle_offsets to combat_state */
+#define SAVE_VERSION 7  /* bumped: added starmap progress */
 
 /*  Save header — fixed-size portion written first.
  *  After the header, each generated dungeon floor (sr_dungeon) is
@@ -226,6 +237,13 @@ typedef struct {
 
     /* Weakness system */
     weakness_table weakness;
+
+    /* Starmap progress */
+    int  starmap_current_node;
+    int  starmap_derelicts_visited;
+    bool starmap_node_visited[STARMAP_MAX_NODES];
+    int  starmap_visited_path[STARMAP_MAX_NODES];
+    int  starmap_visited_path_count;
 } save_header;
 
 /* Variables used by save/load — declared here so they're visible to game_save/game_load */
@@ -322,6 +340,14 @@ static void game_save(void) {
     hdr.saved_console_combat  = console_combat;
     hdr.weakness              = g_weakness;
 
+    /* Starmap progress */
+    hdr.starmap_current_node = g_starmap.current_node;
+    hdr.starmap_derelicts_visited = g_starmap.derelicts_visited;
+    for (int i = 0; i < STARMAP_MAX_NODES; i++)
+        hdr.starmap_node_visited[i] = (i < g_starmap.node_count) ? g_starmap.nodes[i].visited : false;
+    memcpy(hdr.starmap_visited_path, g_starmap.visited_path, sizeof(hdr.starmap_visited_path));
+    hdr.starmap_visited_path_count = g_starmap.visited_path_count;
+
     FILE *f = fopen(SAVE_FILE, "wb");
     if (!f) return;
     fwrite(&hdr, sizeof(hdr), 1, f);
@@ -396,6 +422,16 @@ static bool game_load(void) {
 
     /* Restore weakness table */
     g_weakness = hdr.weakness;
+
+    /* Restore starmap progress — load structure from JSON, then apply saved state */
+    if (starmap_load_json(&g_starmap, "levels/starmap.json")) {
+        g_starmap.current_node = hdr.starmap_current_node;
+        g_starmap.derelicts_visited = hdr.starmap_derelicts_visited;
+        for (int i = 0; i < g_starmap.node_count && i < STARMAP_MAX_NODES; i++)
+            g_starmap.nodes[i].visited = hdr.starmap_node_visited[i];
+        memcpy(g_starmap.visited_path, hdr.starmap_visited_path, sizeof(g_starmap.visited_path));
+        g_starmap.visited_path_count = hdr.starmap_visited_path_count;
+    }
 
     /* Restore combat if saved mid-fight */
     if (hdr.in_combat) {
@@ -1506,6 +1542,9 @@ static void draw_class_select(sr_framebuffer *fb_ptr) {
             player_starmap = 0;
             current_map_boss_done = false;
             current_mission_is_boss = false;
+            /* Reset starmap for new game */
+            memset(&g_starmap, 0, sizeof(g_starmap));
+            remove("levels/starmap.json");
             settings_save();
             if (skip_intro) {
                 mission_briefed = true;
@@ -3121,6 +3160,8 @@ static void event(const sapp_event *ev) {
                 player_starmap = 0;
                 current_map_boss_done = false;
                 current_mission_is_boss = false;
+                memset(&g_starmap, 0, sizeof(g_starmap));
+                remove("levels/starmap.json");
                 if (skip_intro) {
                     mission_briefed = true;
                     mission_medbay_done = true;
