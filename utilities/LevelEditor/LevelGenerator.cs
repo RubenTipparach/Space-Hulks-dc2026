@@ -20,12 +20,48 @@ public static class LevelGenerator
                 f.Map[y, x] = 1;
 
         int midY = h / 2;
+        int shipLeft = 3, shipRight = w - 2;
 
-        // Central corridor (2 tiles wide)
-        for (int x = 3; x <= w - 2; x++)
-        {
+        // Main corridor (1 tile wide)
+        for (int x = shipLeft; x <= shipRight; x++)
             f.Map[midY, x] = 0;
-            f.Map[midY + 1, x] = 0;
+
+        // Branching corridors
+        int branchCount = w <= 20 ? 3 : w <= 40 ? 5 : 8;
+        int branchSpacing = (shipRight - shipLeft) / (branchCount + 1);
+        for (int i = 0; i < branchCount; i++)
+        {
+            int bx = shipLeft + branchSpacing * (i + 1);
+            if (bx < shipLeft || bx > shipRight) continue;
+
+            bool goNorth = i % 2 == 0;
+            int branchLen = 3 + _rng.Next(h / 4);
+
+            if (goNorth)
+            {
+                for (int y = midY - 1; y >= Math.Max(2, midY - branchLen); y--)
+                    f.Map[y, bx] = 0;
+            }
+            else
+            {
+                for (int y = midY + 1; y <= Math.Min(h - 1, midY + branchLen); y++)
+                    f.Map[y, bx] = 0;
+            }
+
+            // Occasional cross-branch (horizontal connector between branches)
+            if (i > 0 && _rng.Next(3) == 0)
+            {
+                int prevBx = shipLeft + branchSpacing * i;
+                int crossY = goNorth ? midY - Math.Min(branchLen, 2) : midY + Math.Min(branchLen, 2);
+                if (crossY >= 2 && crossY <= h - 1)
+                {
+                    int fromX = Math.Min(prevBx, bx);
+                    int toX = Math.Max(prevBx, bx);
+                    for (int x = fromX; x <= toX; x++)
+                        if (x >= 1 && x <= w)
+                            f.Map[crossY, x] = 0;
+                }
+            }
         }
 
         // Scale room count and size with grid
@@ -35,18 +71,12 @@ public static class LevelGenerator
         int roomMinW = w <= 20 ? 3 : w <= 40 ? 4 : 5;
         int roomMaxW = w <= 20 ? 4 : w <= 40 ? 6 : 8;
 
-        int shipLeft = 3, shipRight = w - 2;
-        int shipSpan = shipRight - shipLeft;
-        int spacing = shipSpan / (numRooms + 1);
-        if (spacing < roomMaxW + 2) spacing = roomMaxW + 2;
-
         // Build unique room type pool — mandatory first, then shuffled optional
         var typePool = new List<RoomType> { RoomType.Bridge, RoomType.Engines, RoomType.Weapons };
         var optional = new List<RoomType> {
             RoomType.Shields, RoomType.Reactor, RoomType.Medbay,
             RoomType.Cargo, RoomType.Barracks
         };
-        // Shuffle optional
         for (int i = optional.Count - 1; i > 0; i--)
         {
             int j = _rng.Next(i + 1);
@@ -55,6 +85,10 @@ public static class LevelGenerator
         typePool.AddRange(optional);
         if (numRooms > typePool.Count) numRooms = typePool.Count;
         int typeIdx = 0;
+
+        // Place rooms along branches and corridor
+        int spacing = (shipRight - shipLeft) / (numRooms + 1);
+        if (spacing < roomMaxW + 2) spacing = roomMaxW + 2;
 
         for (int i = 0; i < numRooms; i++)
         {
@@ -72,11 +106,10 @@ public static class LevelGenerator
             }
             else
             {
-                ry = midY + 2 + 1;
+                ry = midY + 2;
                 if (ry + rh > h) ry = h - rh;
             }
 
-            // Check overlap with existing rooms (1-tile margin)
             if (f.RoomOverlaps(rx, ry, rw, rh)) continue;
 
             var room = new RoomData
@@ -93,7 +126,7 @@ public static class LevelGenerator
                     if (py >= 1 && py <= h && px >= 1 && px <= w)
                         f.Map[py, px] = 0;
 
-            // Connect to corridor
+            // Connect to corridor (1-tile wide)
             int connX = rx + rw / 2;
             if (i % 2 == 0)
             {
@@ -131,9 +164,7 @@ public static class LevelGenerator
             }
         }
 
-        // Windows: one per room on the outer wall, facing toward the room interior.
-        // Rooms above corridor: S-facing window on wall above (visible from inside looking N)
-        // Rooms below corridor: N-facing window on wall below (visible from inside looking S)
+        // Windows: one per room on the outer wall
         foreach (var room in f.Rooms)
         {
             int cx = room.CenterX;

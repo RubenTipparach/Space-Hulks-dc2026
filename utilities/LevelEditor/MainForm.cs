@@ -404,9 +404,9 @@ public class MainForm : Form
         var genMenu = new ToolStripMenuItem("Generate");
         genMenu.DropDownItems.Add("Generate Floor", null, (_, _) => GenerateFloor());
         genMenu.DropDownItems.Add(new ToolStripSeparator());
-        genMenu.DropDownItems.Add("Small Ship 20x20 (3 floors)", null, (_, _) => GenerateShip(20));
-        genMenu.DropDownItems.Add("Medium Ship 40x40 (3 floors)", null, (_, _) => GenerateShip(40));
-        genMenu.DropDownItems.Add("Large Ship 80x80 (3 floors)", null, (_, _) => GenerateShip(80));
+        genMenu.DropDownItems.Add("Small Ship 20x20 (1 floor)", null, (_, _) => GenerateShip(20, 1));
+        genMenu.DropDownItems.Add("Medium Ship 40x40 (2 floors)", null, (_, _) => GenerateShip(40, 2));
+        genMenu.DropDownItems.Add("Large Ship 80x80 (3 floors)", null, (_, _) => GenerateShip(80, 3));
         menu.Items.Add(genMenu);
 
         var viewMenu = new ToolStripMenuItem("View");
@@ -735,14 +735,14 @@ public class MainForm : Form
         RefreshFloorList();
     }
 
-    private void GenerateShip(int gridSize = 20)
+    private void GenerateShip(int gridSize = 20, int floors = 1)
     {
         _level = new LevelData();
         _level.Floors.Clear();
-        for (int i = 0; i < 3; i++)
+        for (int i = 0; i < floors; i++)
         {
             bool hasDown = i > 0;
-            bool hasUp = i < 2;
+            bool hasUp = i < floors - 1;
             _level.Floors.Add(LevelGenerator.Generate(i, hasDown, hasUp, 42 + i * 777, gridSize, gridSize));
         }
         _currentFloor = 0;
