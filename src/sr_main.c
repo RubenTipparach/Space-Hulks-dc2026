@@ -2416,8 +2416,9 @@ static void frame(void) {
     {
         static int prev_app_state = -1;
         if (app_state != prev_app_state) {
-            /* Stop enemy ship music when leaving dungeon */
-            if (prev_app_state == STATE_RUNNING || prev_app_state == STATE_COMBAT)
+            /* Stop enemy ship music when leaving dungeon (but not when entering combat) */
+            if ((prev_app_state == STATE_RUNNING || prev_app_state == STATE_COMBAT)
+                && app_state != STATE_RUNNING && app_state != STATE_COMBAT)
                 sr_audio_stop_enemyship_music();
             /* Hub ambient */
             if (app_state == STATE_SHIP_HUB)
