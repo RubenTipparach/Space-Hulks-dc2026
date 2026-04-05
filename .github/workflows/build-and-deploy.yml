@@ -53,6 +53,7 @@ jobs:
             -I third_party \
             --preload-file assets \
             --preload-file config \
+            --preload-file levels \
             src/sr_main.c \
             src/sr_raster.c \
             src/sr_texture.c \
@@ -112,6 +113,7 @@ jobs:
           cp build/spacehulks.exe spacehulks-win/
           cp -r assets spacehulks-win/assets
           cp -r config spacehulks-win/config
+          cp -r levels spacehulks-win/levels
           cd spacehulks-win && 7z a -tzip ../spacehulks-windows.zip . && cd ..
 
       - name: Upload Windows artifact

@@ -214,6 +214,36 @@ kowalski:
     line2: WE'RE ALL GONNA DIE IN THIS STUPID VOID!
     count: 3
 
+# ── By-Tor progressive dialog (friendly alien, Kowalski's best friend) ──
+
+bytor:
+  init:
+    line0: *CHIRPS HAPPILY*
+    line1: KOWALSKI SAYS YOU ARE THE ONE WHO WILL SAVE US.
+    line2: BY-TOR BELIEVES THIS. YES YES.
+    count: 3
+  default0:
+    line0: THE STARS OUT HERE ARE DIFFERENT FROM MY HOME.
+    line1: BUT YOUR CREW... THEY FEEL LIKE FAMILY NOW.
+    line2: KOWALSKI TAUGHT ME THAT WORD. FAMILY.
+    count: 3
+  default1:
+    line0: MORE DERELICTS. MORE DANGER.
+    line1: BUT BY-TOR IS NOT AFRAID! WE HAVE GOOD TEAM.
+    line2: KOWALSKI AND I WILL KEEP SPIRITS HIGH. YOU FOCUS ON FIGHT.
+    count: 3
+  default2:
+    line0: BY-TOR CAN FEEL IT... THE HIVE IS CLOSE.
+    line1: THE AIR TASTES DIFFERENT. ELECTRIC.
+    line2: BUT WE HAVE COME TOO FAR TO TURN BACK NOW. TOGETHER WE ARE STRONG.
+    count: 3
+  pre_boss:
+    line0: *QUIET FOR ONCE*
+    line1: KOWALSKI IS SCARED. BY-TOR IS SCARED TOO.
+    line2: BUT SCARED IS OK. SCARED MEANS WE STILL HAVE SOMETHING TO LOSE.
+    line3: GO GET THAT SAMPLE. WE BELIEVE IN YOU.
+    count: 4
+
 captain_sample:
   sample1:
     line0: FIRST BIOMASS HAUL SECURED. GOOD WORK. BUT WE NEED MORE.

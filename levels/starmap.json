@@ -11,7 +11,7 @@
     },
     {
       "name": "SECTOR DELTA-1",
-      "levelFile": "sample_enemy_ship.json",
+      "levelFile": "enemy_ship_small_2.json",
       "difficulty": 1,
       "isBoss": false,
       "x": 140,
@@ -20,7 +20,7 @@
     },
     {
       "name": "SECTOR EPSILON-1",
-      "levelFile": "sample_enemy_ship.json",
+      "levelFile": "enemy_ship_small_3.json",
       "difficulty": 1,
       "isBoss": false,
       "x": 140,
@@ -29,7 +29,7 @@
     },
     {
       "name": "SECTOR ZETA-1",
-      "levelFile": "sample_enemy_ship.json",
+      "levelFile": "enemy_ship_small_4.json",
       "difficulty": 1,
       "isBoss": false,
       "x": 140,
@@ -38,8 +38,8 @@
     },
     {
       "name": "SECTOR SIGMA-2",
-      "levelFile": "sample_enemy_ship.json",
-      "difficulty": 2,
+      "levelFile": "enemy_ship_small_5.json",
+      "difficulty": 1,
       "isBoss": false,
       "x": 240,
       "y": 67,
@@ -47,8 +47,8 @@
     },
     {
       "name": "SECTOR OMEGA-2",
-      "levelFile": "sample_enemy_ship.json",
-      "difficulty": 2,
+      "levelFile": "enemy_ship_small_6.json",
+      "difficulty": 1,
       "isBoss": false,
       "x": 240,
       "y": 134,
@@ -56,8 +56,8 @@
     },
     {
       "name": "SECTOR THETA-2",
-      "levelFile": "sample_enemy_ship.json",
-      "difficulty": 2,
+      "levelFile": "enemy_ship_small_7.json",
+      "difficulty": 1,
       "isBoss": false,
       "x": 240,
       "y": 202,
@@ -65,8 +65,8 @@
     },
     {
       "name": "SECTOR KAPPA-3",
-      "levelFile": "sample_enemy_ship.json",
-      "difficulty": 3,
+      "levelFile": "enemy_ship_medium_1_long.json",
+      "difficulty": 2,
       "isBoss": false,
       "x": 340,
       "y": 67,
@@ -74,8 +74,8 @@
     },
     {
       "name": "SECTOR NOVA-3",
-      "levelFile": "sample_enemy_ship.json",
-      "difficulty": 3,
+      "levelFile": "enemy_ship_medium_1_long.json",
+      "difficulty": 2,
       "isBoss": false,
       "x": 340,
       "y": 202,
@@ -84,7 +84,7 @@
     {
       "name": "HIVE VESSEL ALPHA",
       "levelFile": "enemy_ship_medium_2_boss.json",
-      "difficulty": 4,
+      "difficulty": 3,
       "isBoss": true,
       "bossRoom": 0,
       "x": 440,

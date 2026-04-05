@@ -145,6 +145,12 @@
           "gY": 13,
           "name": "DR VASQUEZ",
           "dialogId": 4
+        },
+        {
+          "gX": 7,
+          "gY": 14,
+          "name": "BY-TOR",
+          "dialogId": 5
         }
       ]
     }

@@ -40,6 +40,7 @@ emcc -O2 -std=gnu99 \
     -I third_party \
     --preload-file assets \
     --preload-file config \
+    --preload-file levels \
     src/sr_main.c \
     src/sr_raster.c \
     src/sr_texture.c \

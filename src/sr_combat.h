@@ -157,6 +157,8 @@ static const char_class char_classes[] = {
 /* ── Enemy types ─────────────────────────────────────────────────── */
 
 enum { ENEMY_LURKER, ENEMY_BRUTE, ENEMY_SPITTER, ENEMY_HIVEGUARD,
+       /* Evolved tier 2 — advanced dragon parasite */
+       ENEMY_STALKER, ENEMY_MAULER, ENEMY_ACID_THROWER, ENEMY_WARDEN,
        ENEMY_BOSS_1, ENEMY_BOSS_2, ENEMY_BOSS_3,
        ENEMY_TYPE_COUNT };
 
@@ -237,7 +239,7 @@ static const int elem_icon_stex[] = {
 };
 
 /* Enemy intent types */
-enum { INTENT_ATTACK, INTENT_MOVE, INTENT_DEFEND, INTENT_BUFF };
+enum { INTENT_ATTACK, INTENT_MOVE, INTENT_DEFEND, INTENT_BUFF, INTENT_DEBUFF };
 
 typedef struct {
     const char *name;
@@ -248,13 +250,18 @@ typedef struct {
 } enemy_template;
 
 static const enemy_template enemy_templates[] = {
-    [ENEMY_LURKER]    = { "LURKER",      8,  1,  3, 2 },
-    [ENEMY_BRUTE]     = { "BRUTE",      18,  4,  6, 1 },
-    [ENEMY_SPITTER]   = { "SPITTER",    10,  2,  4, 3 },
-    [ENEMY_HIVEGUARD] = { "HIVEGUARD",  24,  3,  5, 2 },
-    [ENEMY_BOSS_1]    = { "RAVAGER",    40,  5,  8, 2 },
-    [ENEMY_BOSS_2]    = { "VOID WYRM",  50,  6,  9, 3 },
-    [ENEMY_BOSS_3]    = { "HIVEMIND",   60,  7, 10, 2 },
+    [ENEMY_LURKER]       = { "LURKER",       8,  1,  3, 2 },
+    [ENEMY_BRUTE]        = { "BRUTE",       18,  4,  6, 1 },
+    [ENEMY_SPITTER]      = { "SPITTER",     10,  2,  4, 3 },
+    [ENEMY_HIVEGUARD]    = { "HIVEGUARD",   24,  3,  5, 2 },
+    /* Evolved tier 2 — advanced parasite forms */
+    [ENEMY_STALKER]      = { "STALKER",     14,  3,  5, 2 }, /* fast, attacks twice */
+    [ENEMY_MAULER]       = { "MAULER",      28,  5,  8, 1 }, /* heavy hitter, buffs often */
+    [ENEMY_ACID_THROWER] = { "ACID THROWER",16,  3,  6, 4 }, /* long range, acid DoT */
+    [ENEMY_WARDEN]       = { "WARDEN",      32,  4,  6, 2 }, /* shields allies, high HP */
+    [ENEMY_BOSS_1]       = { "RAVAGER",    115,  7, 12, 2 },
+    [ENEMY_BOSS_2]       = { "VOID WYRM",  130,  8, 14, 3 },
+    [ENEMY_BOSS_3]       = { "HIVEMIND",   150,  9, 16, 2 },
 };
 
 /* Roll random damage for an enemy type */
@@ -641,14 +648,30 @@ static void combat_roll_intents(combat_state *cs) {
             e->intent = INTENT_MOVE;
             continue;
         }
+        /* Boss: attack every 4 rounds, defend/move/buff/debuff in between */
+        if (e->type >= ENEMY_BOSS_1 && e->type <= ENEMY_BOSS_3) {
+            if ((cs->turn % 4) == 0) {
+                e->intent = INTENT_ATTACK;
+            } else {
+                int roll = dng_rng_int(4);
+                if (roll == 0) e->intent = INTENT_DEFEND;
+                else if (roll == 1) e->intent = INTENT_MOVE;
+                else if (roll == 2) e->intent = INTENT_BUFF;
+                else e->intent = INTENT_DEBUFF;
+            }
+        }
         /* In range: usually attack, but sometimes defend or buff based on type */
-        int roll = dng_rng_int(100);
-        if (e->type == ENEMY_HIVEGUARD && roll < 25) {
-            e->intent = INTENT_DEFEND; /* 25% chance: shield wall */
-        } else if (e->type == ENEMY_BRUTE && roll < 20) {
-            e->intent = INTENT_BUFF;   /* 20% chance: rage (+atk) */
-        } else {
-            e->intent = INTENT_ATTACK;
+        else {
+            int roll = dng_rng_int(100);
+            if ((e->type == ENEMY_HIVEGUARD || e->type == ENEMY_WARDEN) && roll < 35) {
+                e->intent = INTENT_DEFEND;
+            } else if ((e->type == ENEMY_STALKER || e->type == ENEMY_ACID_THROWER) && roll < 25) {
+                e->intent = INTENT_DEFEND;
+            } else if ((e->type == ENEMY_BRUTE || e->type == ENEMY_MAULER) && roll < 20) {
+                e->intent = (roll < 10) ? INTENT_DEFEND : INTENT_BUFF;
+            } else {
+                e->intent = INTENT_ATTACK;
+            }
         }
     }
 }
@@ -679,9 +702,13 @@ static void combat_deal_damage_enemy(combat_state *cs, int idx, int dmg) {
     if (dmg > 0) {
         e->hp -= dmg;
         e->flash_timer = 10;
+        g_run_stats.damage_dealt += dmg;
         if (e->hp <= 0) {
             e->hp = 0;
             e->alive = false;
+            g_run_stats.enemies_killed++;
+            if (e->type >= ENEMY_BOSS_1 && e->type <= ENEMY_BOSS_3)
+                g_run_stats.bosses_killed++;
         }
     }
 }
@@ -701,6 +728,7 @@ static void combat_deal_damage_player(combat_state *cs, int dmg) {
         cs->player_hp -= actual;
         if (cs->player_hp <= 0) cs->player_hp = 0;
         cs->player_flash_timer = 16;
+        g_run_stats.damage_taken += actual;
         combat_log(cs, "  took %d dmg (%d HP)", actual, cs->player_hp);
     } else {
         combat_log(cs, "  fully blocked!");
@@ -990,7 +1018,7 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
             int t = cs->target;
             while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
             if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
-            if (t >= 0 && cs->enemies[t].distance <= 1) {
+            if (t >= 0 && cs->enemies[t].distance <= 2) {
                 int dmg = 4 + cs->fire_atk_bonus;
                 combat_deal_damage_enemy(cs, t, dmg);
                 cs->player_shield += 2;
@@ -1011,7 +1039,7 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
             int t = cs->target;
             while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
             if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
-            if (t >= 0 && cs->enemies[t].distance <= 1) {
+            if (t >= 0 && cs->enemies[t].distance <= 2) {
                 int dmg = 8 + cs->fire_atk_bonus;
                 combat_deal_damage_enemy(cs, t, dmg);
                 cs->player_shield += 3;
@@ -1034,8 +1062,16 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
             if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
             if (t >= 0) {
                 int dmg = 4 + cs->fire_atk_bonus;
-                combat_deal_damage_enemy(cs, t, dmg);
-                snprintf(buf, sizeof(buf), "LASER %s -%dHP", enemy_templates[cs->enemies[t].type].name, dmg);
+                /* Precision: bypass enemy shield, damage HP directly */
+                combat_enemy *le = &cs->enemies[t];
+                le->hp -= dmg;
+                le->flash_timer = 16;
+                combat_log(cs, "LASER %s -%d (bypass shield)", enemy_templates[le->type].name, dmg);
+                if (le->hp <= 0) {
+                    le->hp = 0; le->alive = false;
+                    combat_log(cs, "  %s DESTROYED", enemy_templates[le->type].name);
+                }
+                snprintf(buf, sizeof(buf), "LASER %s -%dHP!", enemy_templates[cs->enemies[t].type].name, dmg);
                 combat_set_message(cs, buf);
             }
             break;
@@ -1223,13 +1259,41 @@ static void combat_begin_enemy_turn(combat_state *cs) {
         if (!e->alive) continue;
         if (e->lightning_stun > 0 || e->flash_timer > 10) continue;
         if (e->intent == INTENT_DEFEND) {
-            e->shield = 4;
+            /* Tier 2 enemies get stronger shields */
+            bool tier2 = (e->type >= ENEMY_STALKER && e->type <= ENEMY_WARDEN);
+            e->shield = tier2 ? 6 : 4;
             combat_log(cs, "%s raises shield (%d)",
                        enemy_templates[e->type].name, e->shield);
+            /* Warden: also shields all allies */
+            if (e->type == ENEMY_WARDEN) {
+                for (int j = 0; j < cs->enemy_count; j++) {
+                    if (j == i || !cs->enemies[j].alive) continue;
+                    cs->enemies[j].shield += 2;
+                    combat_log(cs, "  WARDEN shields %s (+2)",
+                               enemy_templates[cs->enemies[j].type].name);
+                }
+            }
         } else if (e->intent == INTENT_BUFF) {
             e->atk_buff = 3;
+            /* Mauler: stronger rage buff */
+            if (e->type == ENEMY_MAULER) e->atk_buff = 5;
+            /* Boss: bigger buff */
+            if (e->type >= ENEMY_BOSS_1) e->atk_buff = 4;
             combat_log(cs, "%s enrages (+%d atk)",
                        enemy_templates[e->type].name, e->atk_buff);
+        } else if (e->intent == INTENT_DEBUFF) {
+            /* Boss debuff: reduce player shield and energy */
+            if (cs->player_shield > 0) {
+                int strip = cs->player_shield < 3 ? cs->player_shield : 3;
+                cs->player_shield -= strip;
+                combat_log(cs, "%s corrodes armor! (-%d shield)",
+                           enemy_templates[e->type].name, strip);
+            }
+            if (cs->energy > 0) {
+                cs->energy--;
+                combat_log(cs, "  psychic drain! (-1 energy)");
+            }
+            combat_set_message(cs, "BOSS DEBUFF!");
         }
     }
 
@@ -1367,8 +1431,26 @@ static void combat_update(combat_state *cs) {
                 combat_set_message(cs, buf);
             } else {
                 combat_deal_damage_player(cs, dmg);
-                snprintf(buf, sizeof(buf), "%s ATTACKS -%dHP",
-                         enemy_templates[e->type].name, dmg);
+                /* Stalker: double strike */
+                if (e->type == ENEMY_STALKER) {
+                    int dmg2 = enemy_roll_damage(e->type);
+                    if (e->ice_turns > 0) dmg2 = dmg2 / 2;
+                    if (dmg2 < 1) dmg2 = 1;
+                    combat_deal_damage_player(cs, dmg2);
+                    combat_log(cs, "  STALKER double strike! +%d", dmg2);
+                    snprintf(buf, sizeof(buf), "%s x2 -%dHP",
+                             enemy_templates[e->type].name, dmg + dmg2);
+                }
+                /* Acid Thrower: applies acid stacks to player (extra DoT damage) */
+                else if (e->type == ENEMY_ACID_THROWER) {
+                    /* Log acid effect — actual acid damage on player is through the hit */
+                    combat_log(cs, "  ACID THROWER corrodes armor!");
+                    snprintf(buf, sizeof(buf), "%s ACID -%dHP",
+                             enemy_templates[e->type].name, dmg);
+                } else {
+                    snprintf(buf, sizeof(buf), "%s ATTACKS -%dHP",
+                             enemy_templates[e->type].name, dmg);
+                }
                 combat_set_message(cs, buf);
             }
         }
@@ -1597,6 +1679,7 @@ static void combat_touch_began(combat_state *cs, float fx, float fy) {
                 /* Add chosen card to persistent deck */
                 if (g_player.persistent_deck_count < COMBAT_DECK_MAX) {
                     g_player.persistent_deck[g_player.persistent_deck_count++] = cs->reward_choices[i];
+                    g_run_stats.cards_gathered++;
                 }
                 cs->phase = CPHASE_RESULT;
                 cs->combat_over = true;
@@ -2159,8 +2242,6 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
             int wobble_x = (int)(sinf(e->wobble_phase) * (2.0f + fscale * 0.5f));
 
             if (e->alive) {
-                const uint32_t *sprite = spr_enemy_table[e->type];
-
                 /* Attack wiggle overrides idle wobble */
                 int anim_x = wobble_x;
                 if (combat.phase == CPHASE_ENEMY_TURN &&
@@ -2169,10 +2250,31 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
                     anim_x = ((combat.enemy_atk_timer % 4) < 2) ? 3 : -3;
                 }
 
-                if (e->flash_timer > 0 && (e->flash_timer & 2))
-                    spr_draw_flash_nf(px, W, H, sprite, src_sz, src_sz, sprite_x + anim_x, sprite_y, fscale);
-                else
-                    spr_draw_nf(px, W, H, sprite, src_sz, src_sz, sprite_x + anim_x, sprite_y, fscale);
+                /* Boss: use animated PNG frames if available */
+                bool drew_boss_anim = false;
+                if (e->type >= ENEMY_BOSS_1 && e->type <= ENEMY_BOSS_3 &&
+                    stextures[STEX_BOSS_FRAME_0].pixels) {
+                    int frame = ((combat.frame_counter / 12) % 3);
+                    sr_texture *ft = &stextures[STEX_BOSS_FRAME_0 + frame];
+                    if (ft->pixels) {
+                        int bw = (int)(ft->width * fscale);
+                        int bh = (int)(ft->height * fscale);
+                        int bx = sprite_x + anim_x + spr_sz / 2 - bw / 2;
+                        int by = sprite_y + spr_sz - bh;
+                        if (e->flash_timer > 0 && (e->flash_timer & 2))
+                            spr_draw_flash_nf(px, W, H, ft->pixels, ft->width, ft->height, bx, by, fscale);
+                        else
+                            spr_draw_nf(px, W, H, ft->pixels, ft->width, ft->height, bx, by, fscale);
+                        drew_boss_anim = true;
+                    }
+                }
+                if (!drew_boss_anim) {
+                    const uint32_t *sprite = spr_enemy_table[e->type];
+                    if (e->flash_timer > 0 && (e->flash_timer & 2))
+                        spr_draw_flash_nf(px, W, H, sprite, src_sz, src_sz, sprite_x + anim_x, sprite_y, fscale);
+                    else
+                        spr_draw_nf(px, W, H, sprite, src_sz, src_sz, sprite_x + anim_x, sprite_y, fscale);
+                }
 
                 /* Target highlight (yellow border around selected enemy) */
                 if (i == combat.target && combat.phase == CPHASE_PLAYER_TURN) {
@@ -2195,6 +2297,9 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
                     } else if (e->intent == INTENT_BUFF) {
                         sr_draw_text_shadow(px, W, H, cx - 8, sprite_y - 10,
                                             "BUFF", 0xFFFF8844, shadow);
+                    } else if (e->intent == INTENT_DEBUFF) {
+                        sr_draw_text_shadow(px, W, H, cx - 10, sprite_y - 10,
+                                            "CURSE", 0xFFCC44CC, shadow);
                     } else if (e->intent == INTENT_ATTACK) {
                         const enemy_template *tmpl = &enemy_templates[e->type];
                         int lo = (tmpl->dmg_min + e->atk_buff) / 2; if (lo < 1) lo = 1;

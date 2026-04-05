@@ -41,11 +41,13 @@ static sr_indexed_texture itextures[ITEX_COUNT];
 /* Sprite textures (loaded from PNG) */
 enum {
     STEX_LURKER, STEX_BRUTE, STEX_SPITTER, STEX_HIVEGUARD,
+    STEX_STALKER, STEX_MAULER, STEX_ACID_THROWER, STEX_WARDEN,
     STEX_SCOUT, STEX_MARINE,
     STEX_CREW_CAPTAIN, STEX_CREW_SERGEANT, STEX_CREW_QUARTERMASTER,
-    STEX_CREW_PRIVATE, STEX_CREW_DOCTOR,
+    STEX_CREW_PRIVATE, STEX_CREW_DOCTOR, STEX_CREW_BYTOR,
     STEX_ICON_ICE, STEX_ICON_ACID, STEX_ICON_FIRE, STEX_ICON_LIGHTNING,
     STEX_LOOT_CHEST,
+    STEX_BOSS_FRAME_0, STEX_BOSS_FRAME_1, STEX_BOSS_FRAME_2,
     STEX_COUNT
 };
 static sr_texture stextures[STEX_COUNT];
@@ -71,7 +73,7 @@ static bool debug_mode = false;
 
 enum { STATE_TITLE, STATE_CLASS_SELECT, STATE_INTRO, STATE_RUNNING, STATE_COMBAT,
        STATE_SHIP_HUB, STATE_SHOP, STATE_DIALOG, STATE_STARMAP, STATE_EPILOGUE,
-       STATE_BEAM, STATE_MISSION_SUMMARY };
+       STATE_BEAM, STATE_MISSION_SUMMARY, STATE_RUN_STATS };
 static int app_state = STATE_TITLE;
 static bool game_paused = false;   /* pause menu overlay */
 static int  pause_prev_state = 0;  /* state before pause */
@@ -115,6 +117,20 @@ static int  player_starmap = 0;     /* which star map we're on (0-2) */
 static bool current_map_boss_done = false;  /* boss beaten on current star map */
 static bool current_mission_is_boss = false; /* true if currently on a boss node mission */
 static bool epilogue_is_win = false; /* true = victory, false = game over */
+
+/* ── Run stats (accumulated across the entire run) ─────────────── */
+typedef struct {
+    int cards_gathered;
+    int damage_taken;
+    int damage_dealt;
+    int chests_found;
+    int enemies_killed;
+    int bosses_killed;
+    int sectors_visited;
+    int scrap_earned;
+    int biomass_earned;
+} run_stats;
+static run_stats g_run_stats;
 
 /* ── Player progression / currency ─────────────────────────────── */
 

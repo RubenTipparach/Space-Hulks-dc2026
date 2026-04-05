@@ -407,8 +407,16 @@ static void dng_generate_ex(sr_dungeon *d, int w, int h, bool has_down_stairs, b
             if (d->has_down && ax == d->down_gx && ay == d->down_gy) continue;
             if (d->consoles[ay][ax] != 0) continue; /* don't place on consoles */
             if (d->aliens[ay][ax] != 0) continue;  /* don't stack on existing alien */
-            int max_type = (floor_num <= 1) ? 2 : (floor_num <= 3) ? 3 : 4;
-            d->aliens[ay][ax] = 1 + (uint8_t)dng_rng_int(max_type);
+            int etype;
+            if (floor_num >= 2) {
+                /* Difficulty 2+: evolved tier 2 enemies (STALKER..WARDEN) */
+                etype = ENEMY_STALKER + dng_rng_int(4);
+            } else {
+                /* Difficulty 0-1: tier 1 enemies (LURKER..HIVEGUARD) */
+                int max_type = (floor_num <= 0) ? 2 : 4;
+                etype = dng_rng_int(max_type);
+            }
+            d->aliens[ay][ax] = 1 + (uint8_t)etype;
             dng_gen_alien_name(d->alien_names[ay][ax], 16);
         }
     }
@@ -1047,8 +1055,6 @@ static void dng_spawn_hallway_enemies(sr_dungeon *d, int floor_num) {
 
     /* Spawn 1-2 hallway patrol enemies */
     int num_patrol = 1 + dng_rng_int(2);
-    int max_type = (floor_num <= 1) ? 2 : (floor_num <= 3) ? 3 : 4;
-
     for (int p = 0; p < num_patrol && dng_enemy_count < DNG_MAX_ENEMIES; p++) {
         /* Pick a random corridor tile */
         int ci = dng_rng_int(corridor_count);
@@ -1059,7 +1065,13 @@ static void dng_spawn_hallway_enemies(sr_dungeon *d, int floor_num) {
         if (d->aliens[sgy][sgx] != 0) continue;
 
         uint8_t etype;
-        do { etype = 1 + (uint8_t)dng_rng_int(max_type); } while (etype == 2); /* skip brute (type 2) in hallways */
+        if (floor_num >= 2) {
+            /* Evolved: STALKER or ACID_THROWER in hallways (fast/ranged) */
+            etype = (uint8_t)(1 + (dng_rng_int(2) == 0 ? ENEMY_STALKER : ENEMY_ACID_THROWER));
+        } else {
+            int max_type = (floor_num <= 0) ? 2 : 4;
+            do { etype = 1 + (uint8_t)dng_rng_int(max_type); } while (etype == 2); /* skip brute in hallways */
+        }
         d->aliens[sgy][sgx] = etype;
         dng_gen_alien_name(d->alien_names[sgy][sgx], 16);
 

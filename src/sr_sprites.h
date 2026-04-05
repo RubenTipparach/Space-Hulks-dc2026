@@ -484,6 +484,11 @@ static const uint32_t *spr_enemy_table[] = {
     spr_brute,
     spr_spitter,
     spr_hiveguard,
+    /* Evolved tier 2 — reuse sprites as placeholders until new art */
+    spr_lurker,       /* STALKER — evolved lurker */
+    spr_brute,        /* MAULER — evolved brute */
+    spr_spitter,      /* ACID_THROWER — evolved spitter */
+    spr_hiveguard,    /* WARDEN — evolved hiveguard */
     spr_boss_ravager,
     spr_boss_voidwyrm,
     spr_boss_hivemind,

@@ -51,6 +51,11 @@ typedef struct {
     /* Kowalski progressive dialog — gets more stressed */
     dlgd_block kowalski_stress[4]; /* 0=early, 1=mid, 2=late, 3=pre-boss freakout */
 
+    /* By-Tor progressive dialog — hopeful alien friend */
+    dlgd_block bytor_init;
+    dlgd_block bytor_default[3]; /* 0=early, 1=mid, 2=late */
+    dlgd_block bytor_pre_boss;
+
     /* Mission objectives */
     char objectives[DLGD_MAX_OBJECTIVES][DLGD_LINE_LEN];
     int  objective_count;
@@ -159,6 +164,13 @@ static void dlgd_load(void) {
     dlgd_load_block(&cfg, "kowalski.stress1", &g_dlgd.kowalski_stress[1]);
     dlgd_load_block(&cfg, "kowalski.stress2", &g_dlgd.kowalski_stress[2]);
     dlgd_load_block(&cfg, "kowalski.stress3", &g_dlgd.kowalski_stress[3]);
+
+    /* By-Tor dialog */
+    dlgd_load_block(&cfg, "bytor.init",      &g_dlgd.bytor_init);
+    dlgd_load_block(&cfg, "bytor.default0",  &g_dlgd.bytor_default[0]);
+    dlgd_load_block(&cfg, "bytor.default1",  &g_dlgd.bytor_default[1]);
+    dlgd_load_block(&cfg, "bytor.default2",  &g_dlgd.bytor_default[2]);
+    dlgd_load_block(&cfg, "bytor.pre_boss",  &g_dlgd.bytor_pre_boss);
 
     /* Mission objectives */
     g_dlgd.objective_count = (int)sr_config_float(&cfg, "objectives.count", 0);

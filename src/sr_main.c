@@ -590,6 +590,61 @@ static void draw_intro_screen(sr_framebuffer *fb_ptr) {
     }
 }
 
+/* ── Run stats screen ──────────────────────────────────────────── */
+
+static void draw_run_stats(sr_framebuffer *fb_ptr) {
+    int W = fb_ptr->width, H = fb_ptr->height;
+    uint32_t *px = fb_ptr->color;
+    uint32_t shadow = 0xFF000000;
+
+    for (int i = 0; i < W * H; i++) px[i] = 0xFF0A0A0A;
+
+    const char *title = epilogue_is_win ? "MISSION COMPLETE" : "MISSION FAILED";
+    uint32_t title_col = epilogue_is_win ? 0xFF44CC44 : 0xFF4444CC;
+    sr_draw_text_centered(px, W, H, 16, title, title_col, shadow);
+    sr_draw_text_centered(px, W, H, 30, "RUN STATISTICS", 0xFFCCCCCC, shadow);
+
+    int y = 50;
+    int x = W / 2 - 80;
+    uint32_t label = 0xFF888888;
+    uint32_t val_col = 0xFFEEEEEE;
+    char buf[64];
+
+    snprintf(buf, sizeof(buf), "SECTORS VISITED     %d", g_run_stats.sectors_visited);
+    sr_draw_text_shadow(px, W, H, x, y, buf, val_col, shadow); y += 12;
+
+    snprintf(buf, sizeof(buf), "ENEMIES KILLED      %d", g_run_stats.enemies_killed);
+    sr_draw_text_shadow(px, W, H, x, y, buf, val_col, shadow); y += 12;
+
+    snprintf(buf, sizeof(buf), "BOSSES KILLED       %d", g_run_stats.bosses_killed);
+    sr_draw_text_shadow(px, W, H, x, y, buf, g_run_stats.bosses_killed > 0 ? 0xFF44CC44 : val_col, shadow); y += 12;
+
+    snprintf(buf, sizeof(buf), "DAMAGE DEALT        %d", g_run_stats.damage_dealt);
+    sr_draw_text_shadow(px, W, H, x, y, buf, val_col, shadow); y += 12;
+
+    snprintf(buf, sizeof(buf), "DAMAGE TAKEN        %d", g_run_stats.damage_taken);
+    sr_draw_text_shadow(px, W, H, x, y, buf, val_col, shadow); y += 12;
+
+    snprintf(buf, sizeof(buf), "CARDS GATHERED      %d", g_run_stats.cards_gathered);
+    sr_draw_text_shadow(px, W, H, x, y, buf, val_col, shadow); y += 12;
+
+    snprintf(buf, sizeof(buf), "LOOT CHESTS FOUND   %d", g_run_stats.chests_found);
+    sr_draw_text_shadow(px, W, H, x, y, buf, val_col, shadow); y += 12;
+
+    snprintf(buf, sizeof(buf), "SCRAP EARNED        %d", g_run_stats.scrap_earned);
+    sr_draw_text_shadow(px, W, H, x, y, buf, 0xFFEECC44, shadow); y += 12;
+
+    snprintf(buf, sizeof(buf), "BIOMASS EARNED      %d", g_run_stats.biomass_earned);
+    sr_draw_text_shadow(px, W, H, x, y, buf, 0xFF44CCAA, shadow); y += 16;
+
+    /* Final deck size */
+    snprintf(buf, sizeof(buf), "FINAL DECK SIZE     %d", g_player.persistent_deck_count);
+    sr_draw_text_shadow(px, W, H, x, y, buf, 0xFF44AACC, shadow);
+
+    uint32_t blink = ((beam_timer++ / 30) % 2 == 0) ? 0xFFCCCCCC : 0xFF666666;
+    sr_draw_text_centered(px, W, H, H - 16, "PRESS SPACE TO CONTINUE", blink, shadow);
+}
+
 /* ── Epilogue teletype screen ───────────────────────────────────── */
 
 static void draw_epilogue_screen(sr_framebuffer *fb_ptr) {
@@ -1146,6 +1201,9 @@ static void mission_complete_return_to_hub(int base_reward, const char *msg, boo
 
     player_scrap += scrap_reward;
     player_biomass += biomass_reward;
+    g_run_stats.scrap_earned += scrap_reward;
+    g_run_stats.biomass_earned += biomass_reward;
+    g_run_stats.sectors_visited++;
 
     /* Mark first mission complete (enables starmap, changes captain dialog) */
     /* No auto-heal — player must visit medbay */
@@ -1311,6 +1369,7 @@ static void check_random_encounter(void) {
         /* Check for chest pickup */
         if (dng_state.dungeon->chests[p->gy][p->gx] != 0 && !chest_overlay_active) {
             chest_overlay_active = true;
+            g_run_stats.chests_found++;
             chest_gx = p->gx;
             chest_gy = p->gy;
             /* Generate 3 unique elemental card choices */
@@ -1544,8 +1603,9 @@ static void draw_class_select(sr_framebuffer *fb_ptr) {
             player_starmap = 0;
             current_map_boss_done = false;
             current_mission_is_boss = false;
-            /* Reset starmap for new game */
+            /* Reset starmap and run stats for new game */
             memset(&g_starmap, 0, sizeof(g_starmap));
+            memset(&g_run_stats, 0, sizeof(g_run_stats));
             settings_save();
             if (skip_intro) {
                 mission_briefed = true;
@@ -1964,6 +2024,15 @@ static void init(void) {
     stextures[STEX_BRUTE]     = sr_texture_load("assets/sprites/brute.png");
     stextures[STEX_SPITTER]   = sr_texture_load("assets/sprites/spitter.png");
     stextures[STEX_HIVEGUARD] = sr_texture_load("assets/sprites/hiveguard.png");
+    /* Evolved tier 2 — load specific sprites, fall back to tier 1 */
+    stextures[STEX_STALKER]      = sr_texture_load("assets/sprites/stalker.png");
+    if (!stextures[STEX_STALKER].pixels) stextures[STEX_STALKER] = sr_texture_load("assets/sprites/lurker.png");
+    stextures[STEX_MAULER]       = sr_texture_load("assets/sprites/mauler.png");
+    if (!stextures[STEX_MAULER].pixels) stextures[STEX_MAULER] = sr_texture_load("assets/sprites/brute.png");
+    stextures[STEX_ACID_THROWER] = sr_texture_load("assets/sprites/acid_thrower.png");
+    if (!stextures[STEX_ACID_THROWER].pixels) stextures[STEX_ACID_THROWER] = sr_texture_load("assets/sprites/spitter.png");
+    stextures[STEX_WARDEN]       = sr_texture_load("assets/sprites/warden.png");
+    if (!stextures[STEX_WARDEN].pixels) stextures[STEX_WARDEN] = sr_texture_load("assets/sprites/hiveguard.png");
     stextures[STEX_SCOUT]     = sr_texture_load("assets/sprites/scout.png");
     stextures[STEX_MARINE]    = sr_texture_load("assets/sprites/marine.png");
     stextures[STEX_CREW_CAPTAIN]       = sr_texture_load("assets/sprites/crew_captain.png");
@@ -1971,11 +2040,18 @@ static void init(void) {
     stextures[STEX_CREW_QUARTERMASTER] = sr_texture_load("assets/sprites/crew_quartermaster.png");
     stextures[STEX_CREW_PRIVATE]       = sr_texture_load("assets/sprites/crew_private.png");
     stextures[STEX_CREW_DOCTOR]        = sr_texture_load("assets/sprites/crew_doctor.png");
+    stextures[STEX_CREW_BYTOR]        = sr_texture_load("assets/sprites/crew_bytor.png");
+    if (!stextures[STEX_CREW_BYTOR].pixels) /* fallback until sprite exists */
+        stextures[STEX_CREW_BYTOR] = sr_texture_load("assets/sprites/crew_private.png");
     stextures[STEX_ICON_ICE]           = sr_texture_load("assets/sprites/icon_ice.png");
     stextures[STEX_ICON_ACID]          = sr_texture_load("assets/sprites/icon_acid.png");
     stextures[STEX_ICON_FIRE]          = sr_texture_load("assets/sprites/icon_fire.png");
     stextures[STEX_ICON_LIGHTNING]     = sr_texture_load("assets/sprites/icon_lightning.png");
     stextures[STEX_LOOT_CHEST]         = sr_texture_load("assets/sprites/loot_chest.png");
+    /* Animated boss frames */
+    stextures[STEX_BOSS_FRAME_0]       = sr_texture_load("assets/sprites/final_boss/astrozom_side00.png");
+    stextures[STEX_BOSS_FRAME_1]       = sr_texture_load("assets/sprites/final_boss/astrozom_side01.png");
+    stextures[STEX_BOSS_FRAME_2]       = sr_texture_load("assets/sprites/final_boss/astrozom_side02.png");
 
     /* Build console textures from embedded sprite data for 3D billboard rendering */
     for (int rt = 1; rt < CONSOLE_TEX_COUNT && rt < ROOM_TYPE_COUNT; rt++) {
@@ -2106,6 +2182,8 @@ static void frame(void) {
         }
     } else if (app_state == STATE_INTRO) {
         draw_intro_screen(&fb);
+    } else if (app_state == STATE_RUN_STATS) {
+        draw_run_stats(&fb);
     } else if (app_state == STATE_EPILOGUE) {
         draw_epilogue_screen(&fb);
     } else if (app_state == STATE_CLASS_SELECT) {
@@ -2658,10 +2736,15 @@ static void handle_screen_tap(float sx, float sy) {
         return;
     }
 
+    if (app_state == STATE_RUN_STATS) {
+        app_state = STATE_TITLE;
+        save_exists = game_has_save();
+        return;
+    }
+
     if (app_state == STATE_EPILOGUE) {
         if (intro_done) {
-            app_state = STATE_TITLE;
-            save_exists = game_has_save();
+            app_state = STATE_RUN_STATS;
         } else {
             intro_done = true;
             intro_char_idx = 9999;
@@ -2842,31 +2925,19 @@ static void handle_screen_tap(float sx, float sy) {
                         }
                         break;
                     case DIALOG_ACTION_HEAL:
-                        if (!mission_medbay_done && mission_briefed) {
+                        if (!mission_medbay_done && mission_briefed && !mission_first_done) {
                             /* First visit during prep: free heal + check off objective */
                             g_player.hp = g_player.hp_max;
                             mission_medbay_done = true;
                             snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "VITALS LOGGED. YOU'RE CLEAR.");
                             g_hub.hud_msg_timer = 90;
-                        } else if (medbay_used) {
-                            snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "ALREADY TREATED. NEXT MISSION.");
-                            g_hub.hud_msg_timer = 60;
-                        } else if (g_player.hp >= g_player.hp_max) {
-                            if (!mission_medbay_done && mission_briefed) mission_medbay_done = true;
-                            snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "ALREADY AT FULL HP");
-                            g_hub.hud_msg_timer = 60;
-                        } else if (player_biomass >= 10) {
-                            player_biomass -= 10;
-                            int heal = (g_player.hp_max * 3) / 10; /* 30% of max HP */
-                            if (heal < 1) heal = 1;
-                            g_player.hp += heal;
-                            if (g_player.hp > g_player.hp_max) g_player.hp = g_player.hp_max;
-                            medbay_used = true;
-                            snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "HEALED +%d HP (-10 BIO)", heal);
-                            g_hub.hud_msg_timer = 60;
                         } else {
-                            snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "NOT ENOUGH BIOMASS (NEED 10)");
-                            g_hub.hud_msg_timer = 60;
+                            /* Open medbay shop */
+                            if (!mission_medbay_done && mission_briefed) mission_medbay_done = true;
+                            dng_rng_seed((uint32_t)(player_sector * 5555 + 456 + player_biomass * 13));
+                            shop_generate(&g_medbay_shop);
+                            active_shop_type = 1;
+                            app_state = STATE_SHOP;
                         }
                         break;
                 }
@@ -3162,6 +3233,7 @@ static void event(const sapp_event *ev) {
                 current_map_boss_done = false;
                 current_mission_is_boss = false;
                 memset(&g_starmap, 0, sizeof(g_starmap));
+                memset(&g_run_stats, 0, sizeof(g_run_stats));
                 if (skip_intro) {
                     mission_briefed = true;
                     mission_medbay_done = true;
@@ -3207,12 +3279,20 @@ static void event(const sapp_event *ev) {
         return;
     }
 
+    /* ── Run stats screen ──────────────────────────────────── */
+    if (app_state == STATE_RUN_STATS) {
+        if (ev->key_code == SAPP_KEYCODE_SPACE || ev->key_code == SAPP_KEYCODE_ENTER) {
+            app_state = STATE_TITLE;
+            save_exists = game_has_save();
+        }
+        return;
+    }
+
     /* ── Epilogue teletype ──────────────────────────────────── */
     if (app_state == STATE_EPILOGUE) {
         if (ev->key_code == SAPP_KEYCODE_SPACE || ev->key_code == SAPP_KEYCODE_ENTER) {
             if (intro_done) {
-                app_state = STATE_TITLE;
-                save_exists = game_has_save();
+                app_state = STATE_RUN_STATS;
             } else {
                 intro_done = true;
                 intro_char_idx = 9999;
@@ -3379,30 +3459,17 @@ static void event(const sapp_event *ev) {
                             }
                             break;
                         case DIALOG_ACTION_HEAL:
-                            if (!mission_medbay_done && mission_briefed) {
+                            if (!mission_medbay_done && mission_briefed && !mission_first_done) {
                                 g_player.hp = g_player.hp_max;
                                 mission_medbay_done = true;
                                 snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "VITALS LOGGED. YOU'RE CLEAR.");
                                 g_hub.hud_msg_timer = 90;
-                            } else if (medbay_used) {
-                                snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "ALREADY TREATED. NEXT MISSION.");
-                                g_hub.hud_msg_timer = 60;
-                            } else if (g_player.hp >= g_player.hp_max) {
-                                if (!mission_medbay_done && mission_briefed) mission_medbay_done = true;
-                                snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "ALREADY AT FULL HP");
-                                g_hub.hud_msg_timer = 60;
-                            } else if (player_biomass >= 10) {
-                                player_biomass -= 10;
-                                int heal = g_player.hp_max / 5;
-                                if (heal < 1) heal = 1;
-                                g_player.hp += heal;
-                                if (g_player.hp > g_player.hp_max) g_player.hp = g_player.hp_max;
-                                medbay_used = true;
-                                snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "HEALED +%d HP (-10 BIO)", heal);
-                                g_hub.hud_msg_timer = 60;
                             } else {
-                                snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "NOT ENOUGH BIOMASS (NEED 10)");
-                                g_hub.hud_msg_timer = 60;
+                                if (!mission_medbay_done && mission_briefed) mission_medbay_done = true;
+                                dng_rng_seed((uint32_t)(player_sector * 5555 + 456 + player_biomass * 13));
+                                shop_generate(&g_medbay_shop);
+                                active_shop_type = 1;
+                                app_state = STATE_SHOP;
                             }
                             break;
                     }
@@ -3595,16 +3662,53 @@ static void event(const sapp_event *ev) {
             break;
         case SAPP_KEYCODE_S:
         case SAPP_KEYCODE_DOWN:
-            if (dng_play_state == DNG_STATE_PLAYING)
-                dng_player_try_move(&dng_state.player, dng_state.dungeon, (dng_state.player.dir + 2) % 4);
+            if (dng_play_state == DNG_STATE_PLAYING) {
+                int back_dir = (dng_state.player.dir + 2) % 4;
+                int bnx = dng_state.player.gx + dng_dir_dx[back_dir];
+                int bny = dng_state.player.gy + dng_dir_dz[back_dir];
+                if (bnx >= 1 && bnx <= dng_state.dungeon->w &&
+                    bny >= 1 && bny <= dng_state.dungeon->h &&
+                    (dng_state.dungeon->aliens[bny][bnx] != 0 ||
+                     dng_state.dungeon->consoles[bny][bnx] != 0)) {
+                    dng_state.player.dir = back_dir;
+                    dng_state.player.target_angle = back_dir * 0.25f;
+                } else {
+                    dng_player_try_move(&dng_state.player, dng_state.dungeon, back_dir);
+                }
+            }
             break;
         case SAPP_KEYCODE_A:
-            if (dng_play_state == DNG_STATE_PLAYING)
-                dng_player_try_move(&dng_state.player, dng_state.dungeon, (dng_state.player.dir + 3) % 4);
+            if (dng_play_state == DNG_STATE_PLAYING) {
+                int strafe_dir_a = (dng_state.player.dir + 3) % 4;
+                int snx_a = dng_state.player.gx + dng_dir_dx[strafe_dir_a];
+                int sny_a = dng_state.player.gy + dng_dir_dz[strafe_dir_a];
+                /* If strafe target has enemy or console, rotate to face it instead */
+                if (snx_a >= 1 && snx_a <= dng_state.dungeon->w &&
+                    sny_a >= 1 && sny_a <= dng_state.dungeon->h &&
+                    (dng_state.dungeon->aliens[sny_a][snx_a] != 0 ||
+                     dng_state.dungeon->consoles[sny_a][snx_a] != 0)) {
+                    dng_state.player.dir = strafe_dir_a;
+                    dng_state.player.target_angle = strafe_dir_a * 0.25f;
+                } else {
+                    dng_player_try_move(&dng_state.player, dng_state.dungeon, strafe_dir_a);
+                }
+            }
             break;
         case SAPP_KEYCODE_D:
-            if (dng_play_state == DNG_STATE_PLAYING)
-                dng_player_try_move(&dng_state.player, dng_state.dungeon, (dng_state.player.dir + 1) % 4);
+            if (dng_play_state == DNG_STATE_PLAYING) {
+                int strafe_dir_d = (dng_state.player.dir + 1) % 4;
+                int snx_d = dng_state.player.gx + dng_dir_dx[strafe_dir_d];
+                int sny_d = dng_state.player.gy + dng_dir_dz[strafe_dir_d];
+                if (snx_d >= 1 && snx_d <= dng_state.dungeon->w &&
+                    sny_d >= 1 && sny_d <= dng_state.dungeon->h &&
+                    (dng_state.dungeon->aliens[sny_d][snx_d] != 0 ||
+                     dng_state.dungeon->consoles[sny_d][snx_d] != 0)) {
+                    dng_state.player.dir = strafe_dir_d;
+                    dng_state.player.target_angle = strafe_dir_d * 0.25f;
+                } else {
+                    dng_player_try_move(&dng_state.player, dng_state.dungeon, strafe_dir_d);
+                }
+            }
             break;
         case SAPP_KEYCODE_LEFT:
         case SAPP_KEYCODE_Q:

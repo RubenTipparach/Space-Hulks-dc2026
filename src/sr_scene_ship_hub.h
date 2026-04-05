@@ -285,7 +285,7 @@ static void hub_generate(hub_state *hub) {
             {
                 static const int crew_stex[] = {
                     STEX_CREW_CAPTAIN, STEX_CREW_SERGEANT, STEX_CREW_QUARTERMASTER,
-                    STEX_CREW_PRIVATE, STEX_CREW_DOCTOR, STEX_CREW_CAPTAIN
+                    STEX_CREW_PRIVATE, STEX_CREW_DOCTOR, STEX_CREW_BYTOR
                 };
                 for (int i = 0; i < hub->crew_count; i++) {
                     hub_npc *npc = &hub->crew[i];
@@ -627,6 +627,28 @@ static void hub_start_dialog(int npc_idx, int action) {
             action = DIALOG_ACTION_MEDBAY_SHOP;
         }
     }
+    /* BY-TOR (dialog_id 5) — friendly alien, Kowalski's friend */
+    else if (did == 5) {
+        if (!mission_briefed) {
+            if (g_dlgd.loaded) dialog_from_block(&g_dlgd.bytor_init);
+        } else {
+            /* Progressive dialog: hopeful early, reflective late, emotional pre-boss */
+            bool near_boss = (g_starmap.active && g_starmap.node_count > 0 &&
+                g_starmap.nodes[g_starmap.node_count - 1].is_boss &&
+                player_sector >= g_starmap.nodes[g_starmap.node_count - 1].difficulty - 1);
+            if (near_boss && g_dlgd.bytor_pre_boss.count > 0) {
+                dialog_from_block(&g_dlgd.bytor_pre_boss);
+            } else {
+                int stage = g_starmap.derelicts_visited;
+                if (stage > 2) stage = 2;
+                if (g_dlgd.bytor_default[stage].count > 0)
+                    dialog_from_block(&g_dlgd.bytor_default[stage]);
+                else
+                    dialog_from_block(&g_dlgd.bytor_init);
+            }
+        }
+        action = DIALOG_ACTION_NONE;
+    }
 
     g_dialog.pending_action = action;
     g_dialog.active = true;
@@ -949,6 +971,27 @@ static void draw_shop(uint32_t *px, int W, int H) {
                   0xFF222255, 0xFF333366))
         shop->mode = 1;
 
+    /* Treat Wounds button — medbay only, once per mission */
+    if (active_shop_type == 1) {
+        int tw_x = W - 170, tw_y = 24;
+        if (medbay_used) {
+            sr_draw_text_shadow(px, W, H, tw_x, tw_y + 2, "ALREADY TREATED", 0xFF555555, shadow);
+        } else if (g_player.hp >= g_player.hp_max) {
+            sr_draw_text_shadow(px, W, H, tw_x, tw_y + 2, "FULL HP", 0xFF555555, shadow);
+        } else {
+            char tw_buf[48];
+            int heal_amt = (g_player.hp_max * 3) / 10;
+            snprintf(tw_buf, sizeof(tw_buf), "TREAT WOUNDS +%d HP", heal_amt);
+            if (ui_button(px, W, H, tw_x, tw_y, 160, 14, tw_buf,
+                          0xFF113322, 0xFF225533, 0xFF44CC88)) {
+                if (heal_amt < 1) heal_amt = 1;
+                g_player.hp += heal_amt;
+                if (g_player.hp > g_player.hp_max) g_player.hp = g_player.hp_max;
+                medbay_used = true;
+            }
+        }
+    }
+
     if (shop->mode == 0) {
         /* Buy mode — visual card grid */
         int shop_cols = 3;
@@ -1040,6 +1083,14 @@ static void draw_shop(uint32_t *px, int W, int H) {
                     cdesc = "DEALS 4 DAMAGE TO\nALL ENEMIES.\nCAN BE USED ANY TIME\nDURING COMBAT.";
                 sr_draw_text_wrap(px, W, H, px2 + 8, py + 30, cdesc,
                                   pw - 16, 8, ccol, shadow);
+                /* Show current inventory count */
+                int owned = 0;
+                for (int s = 0; s < CONSUMABLE_SLOTS; s++)
+                    if (player_consumables[s] == cons_type_detail) owned++;
+                char inv_buf[32];
+                snprintf(inv_buf, sizeof(inv_buf), "OWNED: %d/%d", owned, CONSUMABLE_SLOTS);
+                sr_draw_text_shadow(px, W, H, px2 + 8, py + 75, inv_buf,
+                                    owned >= CONSUMABLE_SLOTS ? 0xFF882222 : 0xFF888888, shadow);
             } else {
                 /* Card detail */
                 if (card_type < (int)(sizeof(spr_card_table)/sizeof(spr_card_table[0])))
@@ -1083,8 +1134,11 @@ static void draw_shop(uint32_t *px, int W, int H) {
             sr_draw_text_shadow(px, W, H, px2 + 8, py + ph - 30,
                                 price_buf, price_col, shadow);
 
-            /* BUY button */
-            if (can_buy) {
+            /* BUY button or reason why not */
+            if (!can_buy && !has_space) {
+                sr_draw_text_shadow(px, W, H, px2 + 8, py + ph - 18,
+                                    "INVENTORY FULL", 0xFF882222, shadow);
+            } else if (can_buy) {
                 if (ui_button(px, W, H, px2 + 8, py + ph - 18, 60, 14, "BUY",
                               0xFF1A3311, 0xFF224422, 0xFF44CC44)) {
                     if (bio) player_biomass -= shop->prices[idx];
