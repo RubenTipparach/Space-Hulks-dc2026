@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Drake's Void - Background</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
+canvas { display: block; width: 100vw; height: 100vh; image-rendering: pixelated; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+const canvas = document.getElementById('c');
+const gl = canvas.getContext('webgl');
+
+const vsSource = `
+attribute vec2 a_pos;
+void main() { gl_Position = vec4(a_pos, 0.0, 1.0); }
+`;
+
+const fsSource = `
+precision highp float;
+uniform vec2 u_res;
+uniform float u_time;
+
+// --- Hash ---
+float hash21(vec2 p) {
+    p = fract(p * vec2(123.34, 456.21));
+    p += dot(p, p + 45.32);
+    return fract(p.x * p.y);
+}
+
+float hash31(vec3 p) {
+    p = fract(p * vec3(0.1031, 0.1030, 0.0973));
+    p += dot(p, p.yxz + 33.33);
+    return fract((p.x + p.y) * p.z);
+}
+
+// --- 3D noise ---
+float noise3(vec3 p) {
+    vec3 i = floor(p);
+    vec3 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(
+        mix(mix(hash31(i + vec3(0,0,0)), hash31(i + vec3(1,0,0)), f.x),
+            mix(hash31(i + vec3(0,1,0)), hash31(i + vec3(1,1,0)), f.x), f.y),
+        mix(mix(hash31(i + vec3(0,0,1)), hash31(i + vec3(1,0,1)), f.x),
+            mix(hash31(i + vec3(0,1,1)), hash31(i + vec3(1,1,1)), f.x), f.y),
+        f.z);
+}
+
+float fbm(vec3 p) {
+    float v = 0.0, a = 0.5;
+    for (int i = 0; i < 6; i++) {
+        v += a * noise3(p);
+        p = p * 2.02 + vec3(1.7, 9.2, 3.1);
+        a *= 0.5;
+    }
+    return v;
+}
+
+// --- Custom pixel star sprites ---
+// Each star is drawn as a small sprite pattern within its grid cell
+// Shapes: 4-point cross, diamond, dot, 6-point sparkle
+vec3 starSprite() {
+    vec3 col = vec3(0.0);
+
+    // Two layers: small and large stars
+    for (int layer = 0; layer < 2; layer++) {
+        float cellSize = (layer == 0) ? 24.0 : 40.0;
+        float density = (layer == 0) ? 0.88 : 0.92;
+
+        // Raw pixel coords — no aspect distortion
+        vec2 pixUV = gl_FragCoord.xy;
+        vec2 cell = floor(pixUV / cellSize);
+        vec2 local = mod(pixUV, cellSize); // pixel within cell
+
+        float h = hash21(cell + float(layer) * 73.0);
+        if (h < density) continue;
+
+        // Star properties from hash
+        float h2 = hash21(cell * 3.17 + float(layer) * 29.0);
+        float h3 = hash21(cell * 7.91 + float(layer) * 13.0);
+        float h4 = hash21(cell * 11.3 + float(layer) * 47.0);
+
+        // Star position jitter within cell (keep away from edges)
+        vec2 starPos = vec2(
+            3.0 + h2 * (cellSize - 6.0),
+            3.0 + h3 * (cellSize - 6.0)
+        );
+        vec2 d = local - starPos;
+
+        // Twinkle animation: pulse between frames
+        float twinkleSpeed = 1.0 + h4 * 4.0;
+        float twinklePhase = h * 62.83;
+        float twinkle = sin(u_time * twinkleSpeed + twinklePhase);
+
+        // Animated frame: 3 frames of animation
+        float frameTime = u_time * (0.5 + h4 * 2.0) + h * 100.0;
+        int frame = int(mod(floor(frameTime), 3.0));
+
+        // Star brightness
+        float baseBright = (layer == 0) ? 0.4 : 0.8;
+        float brightness = baseBright + 0.3 * twinkle;
+        brightness = max(brightness, 0.05);
+
+        // Sprite shape (integer pixel art)
+        float dx = abs(d.x);
+        float dy = abs(d.y);
+        float lit = 0.0;
+
+        // Shape type based on hash
+        int shape = int(mod(floor(h4 * 4.0), 4.0));
+
+        if (shape == 0) {
+            // 4-point cross star, animated arm length
+            float armLen = (frame == 0) ? 2.0 : (frame == 1) ? 3.0 : 1.0;
+            if (dx < 1.0 && dy < 1.0) lit = 1.0;              // center
+            else if (dx < 1.0 && dy < armLen + 1.0) lit = 0.6; // vertical arms
+            else if (dy < 1.0 && dx < armLen + 1.0) lit = 0.6; // horizontal arms
+        } else if (shape == 1) {
+            // Diamond, pulses size
+            float sz = (frame == 0) ? 2.0 : (frame == 1) ? 3.0 : 1.5;
+            if (dx + dy < sz) lit = 1.0 - (dx + dy) / sz * 0.5;
+        } else if (shape == 2) {
+            // 6-point sparkle
+            float armLen = (frame == 0) ? 3.0 : (frame == 1) ? 2.0 : 4.0;
+            if (dx < 1.0 && dy < 1.0) lit = 1.0;
+            else if (dx < 1.0 && dy < armLen + 1.0) lit = 0.5;
+            else if (dy < 1.0 && dx < armLen + 1.0) lit = 0.5;
+            // diagonal arms
+            else if (abs(dx - dy) < 1.0 && dx < armLen * 0.7) lit = 0.3;
+        } else {
+            // Simple dot, blinks
+            float sz = (frame == 0) ? 1.5 : (frame == 1) ? 1.0 : 2.0;
+            if (dx < sz && dy < sz) lit = 1.0;
+        }
+
+        // Color: green or orange tinted
+        vec3 tint;
+        if (h2 < 0.4) {
+            tint = vec3(0.3, 0.9, 0.3);       // green
+        } else if (h2 < 0.7) {
+            tint = vec3(0.95, 0.6, 0.15);     // orange
+        } else {
+            tint = vec3(0.7, 0.75, 0.65);     // dim warm white
+        }
+
+        col += lit * brightness * tint;
+    }
+    return col;
+}
+
+// --- Nebula ray march (green/orange only) ---
+vec4 nebula(vec2 uv) {
+    vec3 ro = vec3(0.0, 0.0, u_time * 0.03);
+    vec3 rd = normalize(vec3(uv * 1.2, 1.0));
+
+    float angle = u_time * 0.015;
+    float ca = cos(angle), sa = sin(angle);
+    rd.xz = mat2(ca, sa, -sa, ca) * rd.xz;
+
+    vec3 col = vec3(0.0);
+    float totalDensity = 0.0;
+    float t = 0.2;
+
+    for (int i = 0; i < 64; i++) {
+        if (totalDensity > 0.97) break;
+
+        vec3 p = ro + rd * t;
+
+        float warp = fbm(p * 0.5 + u_time * 0.01);
+        vec3 wp = p + vec3(warp) * 1.5;
+        float n = fbm(wp * 0.6);
+
+        float d = smoothstep(0.35, 0.75, n) * 0.9;
+
+        if (d > 0.01) {
+            // Green and orange palette only
+            vec3 c1 = vec3(0.02, 0.2, 0.02);    // dark green
+            vec3 c2 = vec3(0.1, 0.5, 0.05);     // mid green
+            vec3 c3 = vec3(0.6, 0.35, 0.02);    // dark orange
+            vec3 c4 = vec3(0.9, 0.55, 0.05);    // bright orange
+            vec3 c5 = vec3(0.3, 0.7, 0.1);      // lime green core
+
+            float t1 = noise3(wp * 0.3 + vec3(0.0, 0.0, u_time * 0.02));
+            float t2 = noise3(wp * 0.2 + vec3(5.0, 3.0, u_time * 0.01));
+
+            vec3 nc = mix(c1, c2, smoothstep(0.25, 0.55, t1));
+            nc = mix(nc, c3, smoothstep(0.45, 0.75, t2));
+            nc = mix(nc, c4, smoothstep(0.6, 0.85, t1 * t2 * 2.5));
+            nc = mix(nc, c5, smoothstep(0.7, 0.95, n) * 0.5);
+
+            nc *= 0.6 + d * 0.6;
+
+            float alpha = d * 0.04;
+            col += nc * alpha * (1.0 - totalDensity);
+            totalDensity += alpha * (1.0 - totalDensity);
+        }
+
+        t += 0.12 + (1.0 - d) * 0.08;
+    }
+
+    return vec4(col, totalDensity);
+}
+
+void main() {
+    vec2 uv = (gl_FragCoord.xy - 0.5 * u_res) / u_res.y;
+
+    vec4 neb = nebula(uv);
+    vec3 stars = starSprite();
+
+    // Nebula background, stars always on top (additive)
+    vec3 col = neb.rgb * 0.6 + stars;
+
+    // Very dark ambient — barely visible green tint
+    col += vec3(0.005, 0.01, 0.003) / (length(uv) + 0.5);
+
+    // Strong vignette for darkness
+    vec2 q = gl_FragCoord.xy / u_res;
+    col *= 0.25 + 0.75 * pow(16.0 * q.x * q.y * (1.0 - q.x) * (1.0 - q.y), 0.3);
+
+    // Dark tone map
+    col = 1.0 - exp(-col * 1.2);
+
+    gl_FragColor = vec4(col, 1.0);
+}
+`;
+
+function compileShader(src, type) {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+        console.error(gl.getShaderInfoLog(s));
+        return null;
+    }
+    return s;
+}
+
+const prog = gl.createProgram();
+gl.attachShader(prog, compileShader(vsSource, gl.VERTEX_SHADER));
+gl.attachShader(prog, compileShader(fsSource, gl.FRAGMENT_SHADER));
+gl.linkProgram(prog);
+if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+    console.error(gl.getProgramInfoLog(prog));
+}
+gl.useProgram(prog);
+
+const verts = new Float32Array([-1, -1, 3, -1, -1, 3]);
+const vbo = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+gl.bufferData(gl.ARRAY_BUFFER, verts, gl.STATIC_DRAW);
+const aPos = gl.getAttribLocation(prog, 'a_pos');
+gl.enableVertexAttribArray(aPos);
+gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+
+const uRes = gl.getUniformLocation(prog, 'u_res');
+const uTime = gl.getUniformLocation(prog, 'u_time');
+
+function resize() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    gl.viewport(0, 0, canvas.width, canvas.height);
+}
+window.onresize = resize;
+resize();
+
+function frame(t) {
+    gl.uniform2f(uRes, canvas.width, canvas.height);
+    gl.uniform1f(uTime, t * 0.001);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+// Press S to capture 4K PNG
+window.addEventListener('keydown', function(e) {
+    if (e.key === 's' || e.key === 'S') {
+        const W = 3840, H = 2160;
+        const oldW = canvas.width, oldH = canvas.height;
+        canvas.width = W;
+        canvas.height = H;
+        gl.viewport(0, 0, W, H);
+        gl.uniform2f(uRes, W, H);
+        gl.uniform1f(uTime, performance.now() * 0.001);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+        canvas.toBlob(function(blob) {
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = 'drakesvoid-background-4k.png';
+            a.click();
+            URL.revokeObjectURL(a.href);
+            canvas.width = oldW;
+            canvas.height = oldH;
+            gl.viewport(0, 0, oldW, oldH);
+        }, 'image/png');
+    }
+});
+</script>
+</body>
+</html>

@@ -124,38 +124,38 @@ jobs:
           name: drakesvoid-windows
           path: drakesvoid-windows.zip
 
-  deploy-itch:
-    name: Deploy to itch.io
-    needs: [build-web, build-windows]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download web build
-        uses: actions/download-artifact@v4
-        with:
-          name: drakesvoid-web
-          path: web-build/
-
-      - name: Download Windows build
-        uses: actions/download-artifact@v4
-        with:
-          name: drakesvoid-windows
-          path: win-build/
-
-      - name: Deploy web to itch.io
-        uses: robpc/itchio-upload-action@v1
-        with:
-          path: web-build/
-          project: ruben-tipparach/drakes-void
-          channel: html5
-          api-key: ${{ secrets.BUTLER_API_KEY }}
-
-      - name: Deploy Windows to itch.io
-        uses: robpc/itchio-upload-action@v1
-        with:
-          path: win-build/drakesvoid-windows.zip
-          project: ruben-tipparach/drakes-void
-          channel: windows
-          api-key: ${{ secrets.BUTLER_API_KEY }}
+  # deploy-itch:
+  #   name: Deploy to itch.io
+  #   needs: [build-web, build-windows]
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - name: Download web build
+  #       uses: actions/download-artifact@v4
+  #       with:
+  #         name: drakesvoid-web
+  #         path: web-build/
+  #
+  #     - name: Download Windows build
+  #       uses: actions/download-artifact@v4
+  #       with:
+  #         name: drakesvoid-windows
+  #         path: win-build/
+  #
+  #     - name: Deploy web to itch.io
+  #       uses: robpc/itchio-upload-action@v1
+  #       with:
+  #         path: web-build/
+  #         project: ruben-tipparach/drakes-void
+  #         channel: html5
+  #         api-key: ${{ secrets.BUTLER_API_KEY }}
+  #
+  #     - name: Deploy Windows to itch.io
+  #       uses: robpc/itchio-upload-action@v1
+  #       with:
+  #         path: win-build/drakesvoid-windows.zip
+  #         project: ruben-tipparach/drakes-void
+  #         channel: windows
+  #         api-key: ${{ secrets.BUTLER_API_KEY }}
 
   deploy-pages:
     name: Deploy to GitHub Pages
