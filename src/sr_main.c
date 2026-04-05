@@ -461,6 +461,10 @@ static bool game_load(void) {
     if (current_mission_is_boss)
         printf("[LOAD] Boss mission active (node %d)\n", g_starmap.current_node);
 
+    /* Initialize enemy AI from restored dungeon grid */
+    dng_enemies_init(dng_state.dungeon);
+    printf("[LOAD] Enemy AI initialized, count=%d\n", dng_enemy_count);
+
     /* Loading a save means player is past the intro flow */
     mission_briefed = true;
     mission_medbay_done = true;
