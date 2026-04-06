@@ -909,7 +909,7 @@ static void medbay_shop_generate(shop_state *shop) {
     /* 2 elemental cards — expensive, costs biomass */
     for (int i = 0; i < 2 && idx < SHOP_MAX_CARDS; i++, idx++) {
         shop->cards[idx] = elem[i];
-        shop->prices[idx] = 200;
+        shop->prices[idx] = 135;
         shop->is_bio[idx] = true;
     }
     /* 2 health kits — cheap consumables, costs scrap */

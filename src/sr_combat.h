@@ -322,7 +322,7 @@ static void enemy_load_config(void) {
 /* ── Combat state ────────────────────────────────────────────────── */
 
 #define COMBAT_MAX_ENEMIES   4
-#define COMBAT_DECK_MAX      20
+#define COMBAT_DECK_MAX      64
 #define COMBAT_HAND_MAX      5
 
 typedef struct {
@@ -425,6 +425,10 @@ typedef struct {
     bool discard_view_open;
     int pile_view_selected;   /* -1 = none */
 
+    /* Reward summary (displayed before card pick) */
+    int reward_scrap;      /* scrap earned this combat */
+    int reward_biomass;    /* biomass earned this combat */
+
     /* Result */
     bool combat_over;
     bool player_won;
@@ -432,11 +436,12 @@ typedef struct {
 } combat_state;
 
 enum {
-    CPHASE_DRAW,         /* drawing cards animation */
-    CPHASE_PLAYER_TURN,  /* player selects and plays cards */
-    CPHASE_ENEMY_TURN,   /* enemies attack */
-    CPHASE_REWARD,       /* pick 1 of 3 card rewards */
-    CPHASE_RESULT,       /* win/lose screen */
+    CPHASE_DRAW,            /* drawing cards animation */
+    CPHASE_PLAYER_TURN,     /* player selects and plays cards */
+    CPHASE_ENEMY_TURN,      /* enemies attack */
+    CPHASE_REWARD_SUMMARY,  /* show scrap/biomass earned before card pick */
+    CPHASE_REWARD,          /* pick 1 of 3 card rewards */
+    CPHASE_RESULT,          /* win/lose screen */
 };
 
 static combat_state combat;
@@ -1284,8 +1289,10 @@ static void combat_begin_enemy_turn(combat_state *cs) {
         cs->player_won = true;
         g_player.hp = cs->player_hp;
         combat_generate_rewards(cs);
-        cs->phase = CPHASE_REWARD;
-        combat_set_message(cs, "VICTORY! PICK A CARD");
+        cs->reward_biomass = 3 + player_sector * 2;
+        cs->reward_scrap = console_combat ? (5 + player_sector * 3) : 0;
+        cs->phase = CPHASE_REWARD_SUMMARY;
+        combat_set_message(cs, "VICTORY!");
         return;
     }
 
@@ -1524,13 +1531,14 @@ static void combat_update(combat_state *cs) {
 static void combat_check_victory(combat_state *cs) {
     if (combat_all_enemies_dead(cs)) {
         cs->player_won = true;
-        /* Save HP back to persistent state */
         g_player.hp = cs->player_hp;
         combat_log(cs, "VICTORY — HP: %d/%d", cs->player_hp, cs->player_hp_max);
-        /* Generate rewards */
         combat_generate_rewards(cs);
-        cs->phase = CPHASE_REWARD;
-        combat_set_message(cs, "VICTORY! PICK A CARD");
+        /* Calculate per-combat rewards for summary screen */
+        cs->reward_biomass = 3 + player_sector * 2;
+        cs->reward_scrap = console_combat ? (5 + player_sector * 3) : 0;
+        cs->phase = CPHASE_REWARD_SUMMARY;
+        combat_set_message(cs, "VICTORY!");
     }
 }
 
@@ -1718,6 +1726,17 @@ static void combat_touch_began(combat_state *cs, float fx, float fy) {
     }
 
     if (cs->phase == CPHASE_RESULT) return;
+
+    /* Reward summary — tap CONTINUE to proceed to card pick */
+    if (cs->phase == CPHASE_REWARD_SUMMARY) {
+        int cb_w = 80, cb_h = 20;
+        int cb_x = (FB_WIDTH - cb_w) / 2, cb_y = 150;
+        if (fx >= cb_x && fx < cb_x + cb_w && fy >= cb_y && fy < cb_y + cb_h) {
+            cs->phase = CPHASE_REWARD;
+            combat_set_message(cs, "PICK A CARD");
+        }
+        return;
+    }
 
     /* Reward phase — tap a card to pick it */
     if (cs->phase == CPHASE_REWARD) {
@@ -1954,6 +1973,16 @@ static void combat_handle_key(combat_state *cs, int key) {
     }
 
     if (cs->phase == CPHASE_RESULT) return;
+
+    /* Reward summary — any key advances to card pick */
+    if (cs->phase == CPHASE_REWARD_SUMMARY) {
+        if (key == SAPP_KEYCODE_ENTER || key == SAPP_KEYCODE_SPACE || key == SAPP_KEYCODE_F) {
+            cs->phase = CPHASE_REWARD;
+            combat_set_message(cs, "PICK A CARD");
+        }
+        return;
+    }
+
     if (cs->phase != CPHASE_PLAYER_TURN) return;
 
     switch (key) {
@@ -2757,6 +2786,49 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
     }
     if (combat.phase == CPHASE_ENEMY_TURN) {
         sr_draw_text_shadow(px, W, H, W/2 - 40, H/2, "ENEMY TURN...", 0xFF4444FF, shadow);
+    }
+
+    /* ── Reward summary screen ────────────────────────────── */
+    if (combat.phase == CPHASE_REWARD_SUMMARY) {
+        /* Darken background */
+        for (int i = 0; i < W * H; i++) {
+            uint32_t c = px[i];
+            px[i] = ((c >> 24) << 24) | ((((c>>16)&0xFF)>>1)<<16) |
+                    ((((c>>8)&0xFF)>>1)<<8) | (((c)&0xFF)>>1);
+        }
+        sr_draw_text_shadow(px, W, H, W/2 - 35, 40, "VICTORY!", 0xFF00FF00, shadow);
+
+        /* Show rewards earned */
+        int ty = 70;
+        if (combat.reward_biomass > 0) {
+            char buf[64];
+            snprintf(buf, sizeof(buf), "BIOMASS +%d", combat.reward_biomass);
+            sr_draw_text_shadow(px, W, H, W/2 - 40, ty, buf, 0xFF44FF44, shadow);
+            ty += 16;
+        }
+        if (combat.reward_scrap > 0) {
+            char buf[64];
+            snprintf(buf, sizeof(buf), "SCRAP   +%d", combat.reward_scrap);
+            sr_draw_text_shadow(px, W, H, W/2 - 40, ty, buf, 0xFF44DDFF, shadow);
+            ty += 16;
+        }
+
+        /* Totals */
+        {
+            char buf[64];
+            ty += 8;
+            snprintf(buf, sizeof(buf), "TOTAL: %d SCRAP  %d BIO",
+                     player_scrap + combat.reward_scrap,
+                     player_biomass + combat.reward_biomass);
+            sr_draw_text_shadow(px, W, H, W/2 - 70, ty, buf, 0xFFAAAAAA, shadow);
+        }
+
+        /* CONTINUE button */
+        int cb_w = 80, cb_h = 20;
+        int cb_x = (W - cb_w) / 2, cb_y = 150;
+        combat_draw_rect(px, W, H, cb_x, cb_y, cb_w, cb_h, 0xFF333333);
+        combat_draw_rect_outline(px, W, H, cb_x, cb_y, cb_w, cb_h, white);
+        sr_draw_text_shadow(px, W, H, cb_x + 12, cb_y + 6, "CONTINUE", white, shadow);
     }
 
     /* ── Reward screen (pick 1 of 3 cards) ──────────────────── */

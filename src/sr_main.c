@@ -97,6 +97,8 @@ static bool ui_row_hover(int bx, int by, int bw, int bh, bool *out_hovered) {
     return clicked;
 }
 
+static bool console_combat = false;
+
 #include "sr_combat.h"
 
 #include "sr_json.h"
@@ -253,7 +255,6 @@ typedef struct {
 
 /* Variables used by save/load — declared here so they're visible to game_save/game_load */
 static int current_combat_room = -1;
-static bool console_combat = false;
 
 /* ── WASM persistence helpers ────────────────────────────────────── */
 
@@ -1382,6 +1383,10 @@ static void handle_combat_end(void) {
                 int sub_dmg = 10;
                 ship_damage_subsystem(&current_ship, current_combat_room, sub_dmg);
                 current_ship.terminals_destroyed++;
+                /* Award scrap for destroying terminal */
+                int terminal_scrap = 5 + player_sector * 3;
+                player_scrap += terminal_scrap;
+                g_run_stats.scrap_earned += terminal_scrap;
 
                 for (int o = 0; o < current_ship.officer_count; o++) {
                     if (current_ship.officers[o].room_idx == current_combat_room &&
@@ -1395,6 +1400,13 @@ static void handle_combat_end(void) {
             }
         }
         console_combat = false;
+
+        /* Award biomass for every combat victory */
+        if (combat.player_won) {
+            int combat_biomass = 3 + player_sector * 2;
+            player_biomass += combat_biomass;
+            g_run_stats.biomass_earned += combat_biomass;
+        }
 
         if (!combat.player_won) {
             /* Player died — game over, delete save, show loss epilogue */
