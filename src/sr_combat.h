@@ -36,6 +36,15 @@ enum {
     CARD_STUN_GUN,   /* stun gun: stun 1 enemy 1 turn, 1 dmg, cost 1 */
     CARD_MICROWAVE,  /* microwave: 5 dmg, if kill -> 3 dmg all, cost 2 */
     CARD_QUICKSTEP,  /* quickstep: add 1 MOVE card to discard, cost 1 */
+    /* Upgraded class-specific cards (dropped by brutes/harder enemies) */
+    CARD_SNIPER_UP,    /* sniper+: 8 dmg single, requires dist>=2, cost 1 */
+    CARD_SHOTGUN_UP,   /* shotgun+: 2-5 dmg based on range, cost 1 */
+    CARD_WELDER_UP,    /* welder+: 6 dmg melee +3 shield, cost 1 */
+    CARD_CHAINSAW_UP,  /* chainsaw+: 12 dmg melee +5 shield, cost 2 */
+    CARD_LASER_UP,     /* laser+: 6 dmg precision, cost 1 */
+    CARD_DEFLECTOR_UP, /* deflector+: +6 shield, reflects 2 dmg back, cost 1 */
+    CARD_STUN_GUN_UP,  /* stun gun+: stun 2 turns, 2 dmg, cost 1 */
+    CARD_MICROWAVE_UP, /* microwave+: 7 dmg, if kill -> 5 dmg all, cost 2 */
     CARD_TYPE_COUNT
 };
 
@@ -44,7 +53,8 @@ static const char *card_names[] = {
     "OVERCHRG", "REPAIR", "STUN", "FORTIFY", "DBL SHOT", "DASH",
     "ICE", "ACID", "FIRE", "LIGHTNING",
     "SNIPER", "SHOTGUN", "WELDER", "CHAINSAW", "LASER", "DEFLECTR", "STUN GUN", "MCROWAVE",
-    "QCKSTEP"
+    "QCKSTEP",
+    "SNIPER+", "SHOTGUN+", "WELDER+", "CHAINSAW+", "LASER+", "DEFLCTR+", "STUNGUN+", "MCROWAV+",
 };
 
 /* Card colors — NOT-64 palette only (ABGR: 0xFFBBGGRR from #RRGGBB) */
@@ -73,6 +83,15 @@ static const uint32_t card_colors[] = {
     0xFFF384A8,  /* STUN GUN  - #a884f3 pal lavender */
     0xFF4A7DF5,  /* MCROWAVE  - #f57d4a pal salmon */
     0xFF6CDF34,  /* QCKSTEP   - #34df6c (close to #cddf6c) pal yellow-green */
+    /* Upgraded cards — reuse base card colors */
+    0xFF4C5A16,  /* SNIPER+   - same as SNIPER */
+    0xFF3D68CD,  /* SHOTGUN+  - same as SHOTGUN */
+    0xFF1797F7,  /* WELDER+   - same as WELDER */
+    0xFF3423AE,  /* CHAINSAW+ - same as CHAINSAW */
+    0xFFB9E130,  /* LASER+    - same as LASER */
+    0xFF8A707F,  /* DEFLCTR+  - same as DEFLECTOR */
+    0xFFF384A8,  /* STUNGUN+  - same as STUN GUN */
+    0xFF4A7DF5,  /* MCROWAV+  - same as MICROWAVE */
 };
 
 static const int card_energy_cost[] = {
@@ -80,7 +99,8 @@ static const int card_energy_cost[] = {
     0, 2, 1, 2, 2, 2, /* droppable cards */
     1, 1, 1, 2, /* elemental cards */
     1, 1, 1, 2, 1, 1, 1, 2, /* class-specific: sniper, shotgun, welder, chainsaw, laser, deflector, stun gun, microwave */
-    1 /* quickstep */
+    1, /* quickstep */
+    1, 1, 1, 2, 1, 1, 1, 2, /* upgraded: sniper+, shotgun+, welder+, chainsaw+, laser+, deflector+, stun gun+, microwave+ */
 };
 
 /* Card target types */
@@ -111,6 +131,15 @@ static const int card_targets[] = {
     TARGET_ENEMY,         /* STUN GUN */
     TARGET_ENEMY,         /* MICROWAVE */
     TARGET_SELF,          /* QUICKSTEP */
+    /* Upgraded cards — same targets as base */
+    TARGET_ENEMY,         /* SNIPER+ */
+    TARGET_ENEMY,         /* SHOTGUN+ */
+    TARGET_ENEMY,         /* WELDER+ (melee) */
+    TARGET_ENEMY,         /* CHAINSAW+ (melee) */
+    TARGET_ENEMY,         /* LASER+ */
+    TARGET_SELF,          /* DEFLECTOR+ */
+    TARGET_ENEMY,         /* STUN GUN+ */
+    TARGET_ENEMY,         /* MICROWAVE+ */
 };
 
 /* ── Character classes ───────────────────────────────────────────── */
@@ -523,20 +552,56 @@ static void combat_generate_rewards(combat_state *cs) {
                        CARD_DOUBLE_SHOT, CARD_DASH };
     int non_elem_count = 5;
 
-    /* Elemental chance based on enemy type */
-    int elem_pct; /* percentage chance per slot */
-    if (cs->primary_enemy_type >= ENEMY_BOSS_1)
+    /* Build upgraded class card pool based on player class */
+    int upgraded[8];
+    int upgraded_count = 0;
+    switch (g_player.player_class) {
+        case CLASS_SCOUT:
+            upgraded[upgraded_count++] = CARD_SNIPER_UP;
+            upgraded[upgraded_count++] = CARD_SHOTGUN_UP;
+            break;
+        case CLASS_ENGINEER:
+            upgraded[upgraded_count++] = CARD_WELDER_UP;
+            upgraded[upgraded_count++] = CARD_CHAINSAW_UP;
+            break;
+        case CLASS_SCIENTIST:
+            upgraded[upgraded_count++] = CARD_LASER_UP;
+            upgraded[upgraded_count++] = CARD_DEFLECTOR_UP;
+            upgraded[upgraded_count++] = CARD_STUN_GUN_UP;
+            upgraded[upgraded_count++] = CARD_MICROWAVE_UP;
+            break;
+        default: /* Marine has no class cards — gets random upgraded pool */
+            upgraded[upgraded_count++] = CARD_SNIPER_UP;
+            upgraded[upgraded_count++] = CARD_SHOTGUN_UP;
+            upgraded[upgraded_count++] = CARD_WELDER_UP;
+            upgraded[upgraded_count++] = CARD_CHAINSAW_UP;
+            break;
+    }
+
+    /* Chance percentages based on enemy type */
+    int elem_pct, upgraded_pct;
+    if (cs->primary_enemy_type >= ENEMY_BOSS_1) {
         elem_pct = 100;
-    else if (cs->primary_enemy_type == ENEMY_BRUTE || cs->primary_enemy_type == ENEMY_HIVEGUARD)
+        upgraded_pct = 40;
+    } else if (cs->primary_enemy_type >= ENEMY_STALKER) {
+        /* Tier 2: stalker, mauler, acid thrower, warden */
         elem_pct = 5;
-    else
+        upgraded_pct = 25;
+    } else if (cs->primary_enemy_type == ENEMY_BRUTE || cs->primary_enemy_type == ENEMY_HIVEGUARD) {
+        elem_pct = 5;
+        upgraded_pct = 15;
+    } else {
         elem_pct = 1;
+        upgraded_pct = 0;
+    }
 
     for (int i = 0; i < 3; i++) {
         int attempts = 0;
         do {
             if (dng_rng_int(100) < 3)
                 cs->reward_choices[i] = CARD_OVERCHARGE; /* 3% super rare */
+            else if (upgraded_count > 0 && dng_rng_int(100) < upgraded_pct)
+                cs->reward_choices[i] = upgraded[dng_rng_int(upgraded_count)];
             else if (dng_rng_int(100) < elem_pct)
                 cs->reward_choices[i] = elems[dng_rng_int(4)];
             else
@@ -1190,6 +1255,154 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
             }
             combat_set_message(cs, "QUICKSTEP! +1 MOVE");
             break;
+
+        /* ── Upgraded class-specific cards ──────────────────── */
+        case CARD_SNIPER_UP: {
+            sr_audio_play_sfx(&audio_sfx_shoot);
+            int t = cs->target;
+            while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
+            if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
+            if (t >= 0 && cs->enemies[t].distance >= 2) {
+                int dmg = 8 + cs->fire_atk_bonus;
+                combat_deal_damage_enemy(cs, t, dmg);
+                snprintf(buf, sizeof(buf), "SNIPE+ %s -%dHP!", enemy_templates[cs->enemies[t].type].name, dmg);
+                combat_set_message(cs, buf);
+            } else {
+                sr_audio_play_sfx(&audio_sfx_error);
+                int d = (t >= 0) ? cs->enemies[t].distance : 0;
+                snprintf(buf, sizeof(buf), "TOO CLOSE! DIST: %d (NEED 2+)", d);
+                combat_set_message(cs, buf);
+                cs->energy += cost;
+                return;
+            }
+            break;
+        }
+
+        case CARD_SHOTGUN_UP: {
+            sr_audio_play_sfx(&audio_sfx_shotgun);
+            int t = cs->target;
+            while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
+            if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
+            if (t >= 0) {
+                int dist = cs->enemies[t].distance;
+                int base_dmg = (dist <= 0) ? 5 : (dist <= 1) ? 3 : 2;
+                int dmg = base_dmg + cs->fire_atk_bonus;
+                combat_deal_damage_enemy(cs, t, dmg);
+                snprintf(buf, sizeof(buf), "SHOTGUN+ %s -%dHP!", enemy_templates[cs->enemies[t].type].name, dmg);
+                combat_set_message(cs, buf);
+            }
+            break;
+        }
+
+        case CARD_WELDER_UP: {
+            sr_audio_play_sfx(&audio_sfx_welder);
+            int t = cs->target;
+            while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
+            if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
+            if (t >= 0 && cs->enemies[t].distance <= 2) {
+                int dmg = 6 + cs->fire_atk_bonus;
+                combat_deal_damage_enemy(cs, t, dmg);
+                cs->player_shield += 3;
+                snprintf(buf, sizeof(buf), "WELD+ %s -%dHP +3SH!", enemy_templates[cs->enemies[t].type].name, dmg);
+                combat_set_message(cs, buf);
+            } else {
+                sr_audio_play_sfx(&audio_sfx_error);
+                int d = (t >= 0) ? cs->enemies[t].distance : 0;
+                snprintf(buf, sizeof(buf), "TOO FAR! DIST: %d", d);
+                combat_set_message(cs, buf);
+                cs->energy += cost;
+                return;
+            }
+            break;
+        }
+
+        case CARD_CHAINSAW_UP: {
+            sr_audio_play_sfx(&audio_sfx_chainsaw);
+            int t = cs->target;
+            while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
+            if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
+            if (t >= 0 && cs->enemies[t].distance <= 2) {
+                int dmg = 12 + cs->fire_atk_bonus;
+                combat_deal_damage_enemy(cs, t, dmg);
+                cs->player_shield += 5;
+                snprintf(buf, sizeof(buf), "CHNSAW+ %s -%dHP +5SH!!", enemy_templates[cs->enemies[t].type].name, dmg);
+                combat_set_message(cs, buf);
+            } else {
+                sr_audio_play_sfx(&audio_sfx_error);
+                int d = (t >= 0) ? cs->enemies[t].distance : 0;
+                snprintf(buf, sizeof(buf), "TOO FAR! DIST: %d", d);
+                combat_set_message(cs, buf);
+                cs->energy += cost;
+                return;
+            }
+            break;
+        }
+
+        case CARD_LASER_UP: {
+            sr_audio_play_sfx(&audio_sfx_laser);
+            int t = cs->target;
+            while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
+            if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
+            if (t >= 0) {
+                int dmg = 6 + cs->fire_atk_bonus;
+                combat_enemy *le = &cs->enemies[t];
+                le->hp -= dmg;
+                le->flash_timer = 16;
+                combat_log(cs, "LASER+ %s -%d (bypass shield)", enemy_templates[le->type].name, dmg);
+                if (le->hp <= 0) {
+                    le->hp = 0; le->alive = false;
+                    combat_log(cs, "  %s DESTROYED", enemy_templates[le->type].name);
+                }
+                snprintf(buf, sizeof(buf), "LASER+ %s -%dHP!", enemy_templates[cs->enemies[t].type].name, dmg);
+                combat_set_message(cs, buf);
+            }
+            break;
+        }
+
+        case CARD_DEFLECTOR_UP:
+            sr_audio_play_sfx(&audio_sfx_deflector);
+            cs->player_shield += 6;
+            cs->player_deflect = true;
+            combat_set_message(cs, "DEFLECTOR+ +6 SHIELD, REFLECT ON");
+            break;
+
+        case CARD_STUN_GUN_UP: {
+            sr_audio_play_sfx(&audio_sfx_stun_gun);
+            int t = cs->target;
+            while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
+            if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
+            if (t >= 0) {
+                cs->enemies[t].lightning_stun = 2;
+                combat_deal_damage_enemy(cs, t, 2);
+                snprintf(buf, sizeof(buf), "STUNGUN+ %s! STUN 2T", enemy_templates[cs->enemies[t].type].name);
+                combat_set_message(cs, buf);
+            }
+            break;
+        }
+
+        case CARD_MICROWAVE_UP: {
+            sr_audio_play_sfx(&audio_sfx_microwave);
+            int t = cs->target;
+            while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
+            if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
+            if (t >= 0) {
+                int dmg = 7 + cs->fire_atk_bonus;
+                combat_deal_damage_enemy(cs, t, dmg);
+                if (!cs->enemies[t].alive) {
+                    for (int i = 0; i < cs->enemy_count; i++) {
+                        if (i != t && cs->enemies[i].alive)
+                            combat_deal_damage_enemy(cs, i, 5);
+                    }
+                    snprintf(buf, sizeof(buf), "MCRWAV+ %s KILL! 5DMG ALL",
+                             enemy_templates[cs->enemies[t].type].name);
+                } else {
+                    snprintf(buf, sizeof(buf), "MCRWAV+ %s -%dHP",
+                             enemy_templates[cs->enemies[t].type].name, dmg);
+                }
+                combat_set_message(cs, buf);
+            }
+            break;
+        }
     }
 
     /* Move card to discard (movement cards are exhausted instead) */
@@ -2064,14 +2277,14 @@ static void combat_draw_bar(uint32_t *px, int W, int H,
 
 /* ── Card text from YAML (set by dlgd_load_cards after startup) ── */
 
-static const char *card_yaml_effect[24];  /* populated from cards.yaml */
-static const char *card_yaml_desc[24];    /* populated from cards.yaml */
+static const char *card_yaml_effect[32];  /* populated from cards.yaml */
+static const char *card_yaml_desc[32];    /* populated from cards.yaml */
 
 /* ── Card effect text (used by combat and deck viewer) ──────────── */
 
 static const char *card_effect_text(int card_type) {
     /* Use YAML-loaded text if available */
-    if (card_type >= 0 && card_type < 24 && card_yaml_effect[card_type])
+    if (card_type >= 0 && card_type < 32 && card_yaml_effect[card_type])
         return card_yaml_effect[card_type];
     /* Fallback */
     switch (card_type) {
@@ -2099,13 +2312,21 @@ static const char *card_effect_text(int card_type) {
         case CARD_STUN_GUN:    return "STUN 1T\n1 DMG";
         case CARD_MICROWAVE:   return "5 DMG\n*3 DMG ALL";
         case CARD_QUICKSTEP:   return "+1 MOVE\nTO DISC";
+        case CARD_SNIPER_UP:   return "8 DMG\nDIST 2+";
+        case CARD_SHOTGUN_UP:  return "2-5 DMG\nANY RANGE";
+        case CARD_WELDER_UP:   return "6 DMG +3SH\nRANGE 2";
+        case CARD_CHAINSAW_UP: return "12 DMG +5SH\nRANGE 2";
+        case CARD_LASER_UP:    return "6 DMG\nPRECISION";
+        case CARD_DEFLECTOR_UP:return "+6 SHIELD\nREFLECT DMG";
+        case CARD_STUN_GUN_UP: return "STUN 2T\n2 DMG";
+        case CARD_MICROWAVE_UP:return "7 DMG\n*5 DMG ALL";
         default:               return "";
     }
 }
 
 static const char *card_description_text(int card_type) {
     /* Use YAML-loaded text if available */
-    if (card_type >= 0 && card_type < 24 && card_yaml_desc[card_type])
+    if (card_type >= 0 && card_type < 32 && card_yaml_desc[card_type])
         return card_yaml_desc[card_type];
     /* Fallback */
     switch (card_type) {
@@ -2133,6 +2354,14 @@ static const char *card_description_text(int card_type) {
         case CARD_STUN_GUN:    return "STUNS ONE ENEMY FOR\n1 TURN AND DEALS\nMINOR DAMAGE.";
         case CARD_MICROWAVE:   return "DEALS 5 DAMAGE. IF\nTHE TARGET DIES, ALL\nOTHER ENEMIES TAKE 3.";
         case CARD_QUICKSTEP:   return "GENERATES A MOVE\nCARD INTO YOUR\nDISCARD PILE.";
+        case CARD_SNIPER_UP:   return "UPGRADED SNIPER.\n8 DMG, REQUIRES\nDISTANCE 2+.";
+        case CARD_SHOTGUN_UP:  return "UPGRADED SHOTGUN.\n5 AT MELEE, 3 MID,\n2 AT FAR.";
+        case CARD_WELDER_UP:   return "UPGRADED WELDER.\n6 DMG + 3 SHIELD.\nRANGE 2.";
+        case CARD_CHAINSAW_UP: return "UPGRADED CHAINSAW.\n12 DMG + 5 SHIELD.\nRANGE 2.";
+        case CARD_LASER_UP:    return "UPGRADED LASER.\n6 PRECISION DMG.\nIGNORES SHIELD.";
+        case CARD_DEFLECTOR_UP:return "UPGRADED DEFLECTOR.\n+6 SHIELD, REFLECTS\n2 DMG BACK.";
+        case CARD_STUN_GUN_UP: return "UPGRADED STUN GUN.\nSTUN 2 TURNS AND\nDEAL 2 DAMAGE.";
+        case CARD_MICROWAVE_UP:return "UPGRADED MICROWAVE.\n7 DMG, IF KILL ALL\nOTHERS TAKE 5.";
         default:               return "";
     }
 }

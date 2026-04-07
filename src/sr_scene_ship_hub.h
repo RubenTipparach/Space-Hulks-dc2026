@@ -178,7 +178,7 @@ static dialog_state g_dialog;
 typedef struct {
     bool active;
     int card_count;
-    int cards[40];         /* copy of persistent deck */
+    int cards[COMBAT_DECK_MAX]; /* copy of persistent deck */
     int detail_idx;        /* -1 = none, >=0 = showing card detail */
     int scroll;            /* scroll offset for card grid */
 } kit_display_state;

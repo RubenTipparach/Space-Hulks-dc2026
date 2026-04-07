@@ -71,7 +71,7 @@ typedef struct {
 
     /* Card text (loaded from config/cards.yaml) */
     #define DLGD_CARD_TEXT_LEN 64
-    #define DLGD_MAX_CARDS 24
+    #define DLGD_MAX_CARDS 32
     char card_effect[DLGD_MAX_CARDS][DLGD_CARD_TEXT_LEN];   /* short effect text */
     char card_desc[DLGD_MAX_CARDS][DLGD_CARD_TEXT_LEN];     /* detail description */
     bool cards_loaded;
@@ -225,7 +225,8 @@ static const char *dlgd_card_keys[] = {
     "overcharge", "repair", "stun", "fortify", "double_shot", "dash",
     "ice", "acid", "fire", "lightning",
     "sniper", "shotgun", "welder", "chainsaw", "laser", "deflector", "stun_gun", "microwave",
-    "quickstep"
+    "quickstep",
+    "sniper_up", "shotgun_up", "welder_up", "chainsaw_up", "laser_up", "deflector_up", "stun_gun_up", "microwave_up"
 };
 
 /* Convert escaped \n sequences in YAML strings to actual newlines */

@@ -98,3 +98,37 @@ microwave:
 quickstep:
   effect: "+1 MOVE\nTO DISC"
   description: "GENERATES A MOVE\nCARD INTO YOUR\nDISCARD PILE."
+
+# Upgraded class-specific cards (dropped by brutes and harder enemies)
+
+sniper_up:
+  effect: "8 DMG\nDIST 2+"
+  description: "UPGRADED SNIPER.\n8 DMG, REQUIRES\nDISTANCE 2+."
+
+shotgun_up:
+  effect: "2-5 DMG\nANY RANGE"
+  description: "UPGRADED SHOTGUN.\n5 AT MELEE, 3 MID,\n2 AT FAR."
+
+welder_up:
+  effect: "6 DMG +3SH\nRANGE 2"
+  description: "UPGRADED WELDER.\n6 DMG + 3 SHIELD.\nRANGE 2."
+
+chainsaw_up:
+  effect: "12 DMG +5SH\nRANGE 2"
+  description: "UPGRADED CHAINSAW.\n12 DMG + 5 SHIELD.\nRANGE 2."
+
+laser_up:
+  effect: "6 DMG\nPRECISION"
+  description: "UPGRADED LASER.\n6 PRECISION DMG.\nIGNORES SHIELD."
+
+deflector_up:
+  effect: "+6 SHIELD\nREFLECT DMG"
+  description: "UPGRADED DEFLECTOR.\n+6 SHIELD, REFLECTS\n2 DMG BACK."
+
+stun_gun_up:
+  effect: "STUN 2T\n2 DMG"
+  description: "UPGRADED STUN GUN.\nSTUN 2 TURNS AND\nDEAL 2 DAMAGE."
+
+microwave_up:
+  effect: "7 DMG\n*5 DMG ALL"
+  description: "UPGRADED MICROWAVE.\n7 DMG, IF KILL ALL\nOTHERS TAKE 5."
