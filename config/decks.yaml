@@ -1,0 +1,41 @@
+# Deck composition configuration for each class
+# Each card key maps to the number of copies in the starting deck
+# Cards not listed default to 0
+
+scout:
+  hp: 18
+  shield: 2
+  burst: 1
+  move: 3
+  sniper: 2
+  shotgun: 2
+  quickstep: 2
+
+marine:
+  hp: 30
+  shield: 4
+  shoot: 3
+  burst: 1
+  move: 1
+  melee: 1
+
+engineer:
+  hp: 26
+  shield: 2
+  shoot: 1
+  burst: 1
+  move: 2
+  welder: 3
+  chainsaw: 2
+  quickstep: 1
+
+scientist:
+  hp: 22
+  shield: 1
+  shoot: 1
+  burst: 1
+  move: 1
+  laser: 2
+  deflector: 2
+  stun_gun: 1
+  microwave: 2

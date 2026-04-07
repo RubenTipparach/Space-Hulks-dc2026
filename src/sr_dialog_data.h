@@ -100,6 +100,7 @@ static void dlgd_load_block(const sr_config *cfg, const char *prefix, dlgd_block
 
 /* Forward declarations */
 static void dlgd_load_cards(void);
+static void dlgd_load_decks(void);
 
 /* ── Main loader ────────────────────────────────────────────────── */
 
@@ -217,6 +218,9 @@ static void dlgd_load(void) {
 
     /* Load card text from cards.yaml */
     dlgd_load_cards();
+
+    /* Load deck compositions from decks.yaml */
+    dlgd_load_decks();
 }
 
 /* Card key names mapping card type index → YAML key prefix */
@@ -283,6 +287,40 @@ static void dlgd_load_cards(void) {
     g_dlgd.cards_loaded = true;
     sr_config_free(&cfg);
     printf("[dlgd] Loaded %d card text entries\n", num_keys);
+}
+
+/* ── Deck composition loader ───────────────────────────────────── */
+
+static void dlgd_load_decks(void) {
+    sr_config cfg = sr_config_load("config/decks.yaml");
+    if (cfg.count == 0) {
+        fprintf(stderr, "[dlgd] ERROR: config/decks.yaml missing — all classes will have empty decks!\n");
+        return;
+    }
+
+    static const char *class_keys[] = { "scout", "marine", "engineer", "scientist" };
+    int num_classes = 4;
+    int num_card_keys = (int)(sizeof(dlgd_card_keys) / sizeof(dlgd_card_keys[0]));
+
+    for (int c = 0; c < num_classes; c++) {
+        char key[64];
+
+        /* Load HP */
+        snprintf(key, sizeof(key), "%s.hp", class_keys[c]);
+        const char *v = sr_config_get(&cfg, key);
+        if (v) char_classes[c].hp_max = atoi(v);
+
+        /* Reset deck composition to zero, then load from YAML */
+        memset(char_classes[c].deck_composition, 0, sizeof(char_classes[c].deck_composition));
+        for (int i = 0; i < num_card_keys && i < CARD_TYPE_COUNT; i++) {
+            snprintf(key, sizeof(key), "%s.%s", class_keys[c], dlgd_card_keys[i]);
+            v = sr_config_get(&cfg, key);
+            if (v) char_classes[c].deck_composition[i] = atoi(v);
+        }
+    }
+
+    sr_config_free(&cfg);
+    printf("[dlgd] Loaded deck compositions from decks.yaml\n");
 }
 
 #endif /* SR_DIALOG_DATA_H */

@@ -153,34 +153,12 @@ typedef struct {
     int stex_idx;
 } char_class;
 
-static const char_class char_classes[] = {
-    [CLASS_SCOUT] = {
-        .hp_max = 18,
-        /* 2 shield, 0 shoot, 1 burst, 3 move, 0 melee, ..., 2 sniper, 2 shotgun, ..., 2 quickstep */
-        .deck_composition = { 2, 0, 1, 3, 0, 0,0,0,0,0,0, 0,0,0,0, 2, 2, 0,0,0,0,0,0, 2 },
-        .name = "SCOUT",
-        .stex_idx = STEX_SCOUT,
-    },
-    [CLASS_MARINE] = {
-        .hp_max = 30,
-        .deck_composition = { 4, 3, 1, 1, 1 }, /* 4 shield, 3 shoot, 1 burst, 1 move, 1 melee */
-        .name = "MARINE",
-        .stex_idx = STEX_MARINE,
-    },
-    [CLASS_ENGINEER] = {
-        .hp_max = 26,
-        /* 2 shield, 1 shoot, 1 burst, 1 move, 0 melee, ..., welder 3, chainsaw 2, ..., quickstep 2 */
-        .deck_composition = { 2, 1, 1, 1, 0, 0,0,0,0,0,0, 0,0,0,0, 0,0, 3, 2, 0,0,0,0, 2 },
-        .name = "ENGINEER",
-        .stex_idx = STEX_ENGINEER,
-    },
-    [CLASS_SCIENTIST] = {
-        .hp_max = 22,
-        /* 1 shield, 1 shoot, 1 burst, 1 move, 0 melee, ..., laser 2, deflector 2, stun_gun 1, microwave 2 */
-        .deck_composition = { 1, 1, 1, 1, 0, 0,0,0,0,0,0, 0,0,0,0, 0,0,0,0, 2, 2, 1, 2 },
-        .name = "SCIENTIST",
-        .stex_idx = STEX_SCIENTIST,
-    },
+/* Deck compositions and HP loaded from config/decks.yaml at startup */
+static char_class char_classes[] = {
+    [CLASS_SCOUT]     = { .name = "SCOUT",     .stex_idx = STEX_SCOUT },
+    [CLASS_MARINE]    = { .name = "MARINE",    .stex_idx = STEX_MARINE },
+    [CLASS_ENGINEER]  = { .name = "ENGINEER",  .stex_idx = STEX_ENGINEER },
+    [CLASS_SCIENTIST] = { .name = "SCIENTIST", .stex_idx = STEX_SCIENTIST },
 };
 
 /* ── Enemy types (defined in sr_dungeon.h) ───────────────────────── */
