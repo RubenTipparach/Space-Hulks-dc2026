@@ -82,8 +82,16 @@ typedef struct {
 
 /* ── Star map ───────────────────────────────────────────────────── */
 
-#define STARMAP_MAX_NODES 16
-#define STARMAP_MAX_CHOICES 3
+#define STARMAP_MAX_NODES 24
+#define STARMAP_MAX_CHOICES 4
+
+/* Node types for the star map */
+enum {
+    NODE_NORMAL,    /* regular derelict ship */
+    NODE_MINIBOSS,  /* derelict with a miniboss fight */
+    NODE_EVENT,     /* dilemma / random event (no dungeon) */
+    NODE_BOSS       /* final boss node */
+};
 
 typedef struct {
     char name[24];
@@ -93,6 +101,8 @@ typedef struct {
     bool visited;
     bool is_boss;       /* true = boss node (rightmost) */
     int boss_room;      /* room index where boss spawns (-1 = none) */
+    int node_type;      /* NODE_NORMAL, NODE_MINIBOSS, NODE_EVENT, NODE_BOSS */
+    int event_id;       /* index into event table (NODE_EVENT only, -1 = none) */
     int next[STARMAP_MAX_CHOICES]; /* indices of next nodes, -1 = none */
     int next_count;
     int x, y;           /* screen position for drawing */
@@ -112,6 +122,136 @@ typedef struct {
 } starmap_state;
 
 static starmap_state g_starmap;
+
+/* ── Space events / dilemmas ───────────────────────────────────── */
+
+#define EVENT_MAX_CHOICES 3
+#define EVENT_MAX_EVENTS  8
+
+/* Outcome types */
+enum {
+    OUTCOME_SCRAP,           /* gain scrap */
+    OUTCOME_BIOMASS,         /* gain biomass */
+    OUTCOME_CARD,            /* gain a random good card */
+    OUTCOME_HEALTH_LOSS,     /* lose HP */
+    OUTCOME_JUNK_CARD,       /* add junk card to deck */
+    OUTCOME_MAX_HP_LOSS,     /* permanently lose max HP */
+    OUTCOME_HEAL,            /* restore HP */
+};
+
+typedef struct {
+    char text[48];              /* choice button text */
+    int outcome_good;           /* OUTCOME_* for success */
+    int good_amount;            /* amount of reward */
+    int outcome_bad;            /* OUTCOME_* for failure */
+    int bad_amount;             /* amount of penalty */
+    int success_chance;         /* 0-100 percent chance of good outcome */
+    char good_text[64];         /* message on success */
+    char bad_text[64];          /* message on failure */
+} event_choice;
+
+typedef struct {
+    char title[32];
+    char description[128];
+    event_choice choices[EVENT_MAX_CHOICES];
+    int choice_count;
+} space_event;
+
+static const space_event g_events[EVENT_MAX_EVENTS] = {
+    { /* 0: Distress Signal */
+        "DISTRESS SIGNAL",
+        "Scanners detect a weak distress\nsignal from a damaged vessel.\nCould be survivors... or a trap.",
+        {
+            { "INVESTIGATE", OUTCOME_SCRAP, 40, OUTCOME_HEALTH_LOSS, 15, 60,
+              "Found survivors! +40 SCRAP", "It was a trap! -15 HP" },
+            { "IGNORE", OUTCOME_SCRAP, 0, OUTCOME_SCRAP, 0, 100,
+              "You move on.", "" },
+        }, 2
+    },
+    { /* 1: Anomalous Readings */
+        "ANOMALOUS READINGS",
+        "Strange energy signatures ahead.\nScans reveal alien technology\nof unknown origin.",
+        {
+            { "SCAN CLOSER", OUTCOME_CARD, 1, OUTCOME_JUNK_CARD, 2, 50,
+              "Found alien tech! +1 CARD", "Corrupted data! +2 JUNK CARDS" },
+            { "KEEP DISTANCE", OUTCOME_SCRAP, 10, OUTCOME_SCRAP, 10, 100,
+              "Cautious scan. +10 SCRAP", "" },
+        }, 2
+    },
+    { /* 2: Ruins on a Planet */
+        "PLANETARY RUINS",
+        "Ancient ruins on a nearby planet.\nBiomass readings are strong but\nthe structure looks unstable.",
+        {
+            { "EXPLORE RUINS", OUTCOME_BIOMASS, 25, OUTCOME_MAX_HP_LOSS, 8, 55,
+              "Rich biomass deposits! +25 BIO", "Collapse! -8 MAX HP permanently" },
+            { "SURFACE SCAN", OUTCOME_BIOMASS, 8, OUTCOME_BIOMASS, 8, 100,
+              "Surface samples. +8 BIOMASS", "" },
+        }, 2
+    },
+    { /* 3: Abandoned Cargo Pod */
+        "ABANDONED CARGO",
+        "A jettisoned cargo pod drifts\nin the void. Salvage markings\nsuggest military equipment.",
+        {
+            { "SALVAGE IT", OUTCOME_SCRAP, 50, OUTCOME_HEALTH_LOSS, 20, 65,
+              "Military supplies! +50 SCRAP", "Booby-trapped! -20 HP" },
+            { "LEAVE IT", OUTCOME_SCRAP, 0, OUTCOME_SCRAP, 0, 100,
+              "Better safe than sorry.", "" },
+        }, 2
+    },
+    { /* 4: Strange Transmission */
+        "STRANGE TRANSMISSION",
+        "An encoded signal repeats on\nloop. Your AI can try to decode\nit but risks system damage.",
+        {
+            { "DECODE IT", OUTCOME_CARD, 2, OUTCOME_JUNK_CARD, 3, 45,
+              "Intel decoded! +2 CARDS", "System corrupted! +3 JUNK CARDS" },
+            { "BLOCK SIGNAL", OUTCOME_SCRAP, 15, OUTCOME_SCRAP, 15, 100,
+              "Signal blocked. +15 SCRAP", "" },
+        }, 2
+    },
+    { /* 5: Alien Artifact */
+        "ALIEN ARTIFACT",
+        "A pulsing artifact floats in\nspace. It radiates power but\nalso an unsettling presence.",
+        {
+            { "TOUCH IT", OUTCOME_BIOMASS, 30, OUTCOME_MAX_HP_LOSS, 10, 40,
+              "Power absorbed! +30 BIOMASS", "Cursed! -10 MAX HP permanently" },
+            { "SELL TO TRADERS", OUTCOME_SCRAP, 35, OUTCOME_SCRAP, 35, 100,
+              "Traded for parts. +35 SCRAP", "" },
+            { "ABSORB + RISK", OUTCOME_CARD, 1, OUTCOME_HEALTH_LOSS, 25, 50,
+              "Gained alien weapon! +1 CARD", "Energy backlash! -25 HP" },
+        }, 3
+    },
+    { /* 6: Derelict Medbay */
+        "DERELICT MEDBAY",
+        "A destroyed ship's medbay still\nhas power. Medical supplies\nremain but so do parasites.",
+        {
+            { "ENTER MEDBAY", OUTCOME_HEAL, 30, OUTCOME_HEALTH_LOSS, 10, 60,
+              "Medical supplies! +30 HP", "Parasite attack! -10 HP" },
+            { "SCAVENGE OUTSIDE", OUTCOME_SCRAP, 20, OUTCOME_SCRAP, 20, 100,
+              "Found spare parts. +20 SCRAP", "" },
+        }, 2
+    },
+    { /* 7: Void Storm */
+        "VOID STORM",
+        "A subspace anomaly creates a\nvoid storm. You can ride it\nfor a boost or wait it out.",
+        {
+            { "RIDE THE STORM", OUTCOME_SCRAP, 35, OUTCOME_MAX_HP_LOSS, 5, 50,
+              "Storm boost! +35 SCRAP", "Hull stress! -5 MAX HP permanently" },
+            { "WAIT IT OUT", OUTCOME_BIOMASS, 5, OUTCOME_BIOMASS, 5, 100,
+              "Collected ambient spores. +5 BIO", "" },
+        }, 2
+    },
+};
+
+/* Event state machine */
+typedef struct {
+    bool active;
+    int event_id;           /* index into g_events */
+    int result_timer;       /* countdown for showing result */
+    char result_text[64];   /* outcome message */
+    bool showing_result;
+} event_state;
+
+static event_state g_event;
 
 /* ── Shop state ─────────────────────────────────────────────────── */
 
@@ -1415,6 +1555,8 @@ static void starmap_generate(starmap_state *sm, int start_sector) {
     sm->nodes[0].scrap_reward = 0;
     sm->nodes[0].visited = true;
     sm->nodes[0].is_boss = false;
+    sm->nodes[0].node_type = NODE_NORMAL;
+    sm->nodes[0].event_id = -1;
     sm->nodes[0].x = 40;
     sm->nodes[0].y = FB_HEIGHT / 2;
     snprintf(sm->nodes[0].name, 24, "SECTOR %s", sector_names[start_sector % NUM_SECTOR_NAMES]);
@@ -1434,6 +1576,8 @@ static void starmap_generate(starmap_state *sm, int start_sector) {
             nd->difficulty = diff;
             nd->visited = false;
             nd->is_boss = is_boss_col;
+            nd->node_type = is_boss_col ? NODE_BOSS : NODE_NORMAL;
+            nd->event_id = -1;
 
             if (is_boss_col) {
                 nd->scrap_reward = 40 + diff * 10;
@@ -1521,8 +1665,17 @@ static void starmap_save_json(const starmap_state *sm, const char *path) {
             fprintf(f, "      \"levelFile\": \"%s\",\n", nd->level_file);
         fprintf(f, "      \"difficulty\": %d,\n", nd->difficulty);
         fprintf(f, "      \"isBoss\": %s,\n", nd->is_boss ? "true" : "false");
+        {
+            const char *type_str = "normal";
+            if (nd->node_type == NODE_MINIBOSS) type_str = "miniboss";
+            else if (nd->node_type == NODE_EVENT) type_str = "event";
+            else if (nd->node_type == NODE_BOSS) type_str = "boss";
+            fprintf(f, "      \"nodeType\": \"%s\",\n", type_str);
+        }
         if (nd->boss_room >= 0)
             fprintf(f, "      \"bossRoom\": %d,\n", nd->boss_room);
+        if (nd->event_id >= 0)
+            fprintf(f, "      \"eventId\": %d,\n", nd->event_id);
         fprintf(f, "      \"x\": %d,\n", nd->x);
         fprintf(f, "      \"y\": %d,\n", nd->y);
         fprintf(f, "      \"next\": [");
@@ -1570,9 +1723,22 @@ static bool starmap_load_json(starmap_state *sm, const char *path) {
         nd->difficulty = sr_json_int(&json, sr_json_find(&json, nt, "difficulty"), 0);
         nd->is_boss = sr_json_bool(&json, sr_json_find(&json, nt, "isBoss"), false);
         nd->boss_room = sr_json_int(&json, sr_json_find(&json, nt, "bossRoom"), -1);
+        nd->event_id = sr_json_int(&json, sr_json_find(&json, nt, "eventId"), -1);
         nd->visited = (i == 0); /* only start node visited by default */
         nd->x = sr_json_int(&json, sr_json_find(&json, nt, "x"), 0);
         nd->y = sr_json_int(&json, sr_json_find(&json, nt, "y"), 0);
+
+        /* Parse nodeType string → enum */
+        {
+            char type_str[16] = {0};
+            sr_json_str(&json, sr_json_find(&json, nt, "nodeType"), type_str, sizeof(type_str));
+            if (strcmp(type_str, "miniboss") == 0)      nd->node_type = NODE_MINIBOSS;
+            else if (strcmp(type_str, "event") == 0)     nd->node_type = NODE_EVENT;
+            else if (strcmp(type_str, "boss") == 0)      nd->node_type = NODE_BOSS;
+            else                                         nd->node_type = NODE_NORMAL;
+        }
+        /* Sync is_boss from node_type */
+        if (nd->node_type == NODE_BOSS) nd->is_boss = true;
 
         int next_arr = sr_json_find(&json, nt, "next");
         if (next_arr >= 0) {
@@ -1692,11 +1858,19 @@ static void draw_starmap(uint32_t *px, int W, int H) {
     /* Draw nodes */
     for (int i = 0; i < g_starmap.node_count; i++) {
         starmap_node *nd = &g_starmap.nodes[i];
+
+        /* Color based on node type */
         uint32_t col;
         if (i == g_starmap.current_node) col = 0xFF22CC22;
         else if (nd->visited) col = 0xFF555555;
-        else if (nd->is_boss) col = 0xFF4444FF;
-        else col = 0xFFCCCCFF;
+        else {
+            switch (nd->node_type) {
+                case NODE_BOSS:     col = 0xFF4444FF; break;
+                case NODE_MINIBOSS: col = 0xFF44CCFF; break; /* yellow-orange */
+                case NODE_EVENT:    col = 0xFFDDDD00; break; /* cyan */
+                default:            col = 0xFFCCCCFF; break; /* white-blue */
+            }
+        }
 
         bool selectable = false;
         for (int c = 0; c < reachable_count; c++) {
@@ -1709,42 +1883,67 @@ static void draw_starmap(uint32_t *px, int W, int H) {
 
         bool is_hovered = (i == hovered_node);
 
-        /* Node circle — larger glow ring when hovered */
+        /* Node icon — draw 8x8 sprite if available, else fallback to circle */
+        int icon_stex = -1;
+        switch (nd->node_type) {
+            case NODE_BOSS:     icon_stex = STEX_MAP_BOSS; break;
+            case NODE_MINIBOSS: icon_stex = STEX_MAP_MINIBOSS; break;
+            case NODE_EVENT:    icon_stex = STEX_MAP_EVENT; break;
+            default:            icon_stex = STEX_MAP_NORMAL; break;
+        }
+
+        /* Hover glow ring */
         if (is_hovered) {
             uint32_t glow = 0xFF005555;
-            for (int dy = -4; dy <= 4; dy++)
-                for (int dx = -4; dx <= 4; dx++) {
+            for (int dy = -6; dy <= 6; dy++)
+                for (int dx = -6; dx <= 6; dx++) {
                     int d2 = dx*dx + dy*dy;
-                    if (d2 > 16 || d2 <= 5) continue;
+                    if (d2 > 36 || d2 <= 20) continue;
                     int rx = nd->x + dx, ry = nd->y + dy;
                     if (rx >= 0 && rx < W && ry >= 0 && ry < H)
                         px[ry * W + rx] = glow;
                 }
         }
 
-        int node_r = nd->is_boss ? 4 : 2;
-        int node_r2 = node_r * node_r + node_r;
-        for (int dy = -node_r; dy <= node_r; dy++)
-            for (int dx = -node_r; dx <= node_r; dx++) {
-                if (dx*dx + dy*dy > node_r2) continue;
-                int rx = nd->x + dx, ry = nd->y + dy;
-                if (rx >= 0 && rx < W && ry >= 0 && ry < H)
-                    px[ry * W + rx] = is_hovered ? 0xFF00FFFF : col;
-            }
+        if (icon_stex >= 0 && stextures[icon_stex].pixels && !nd->visited) {
+            /* Draw icon centered on node position */
+            spr_draw_tex(px, W, H, &stextures[icon_stex], nd->x - 4, nd->y - 4, 1);
+        } else {
+            /* Fallback: filled circle */
+            int node_r = (nd->node_type == NODE_BOSS) ? 4 :
+                         (nd->node_type == NODE_MINIBOSS) ? 3 : 2;
+            int node_r2 = node_r * node_r + node_r;
+            for (int dy = -node_r; dy <= node_r; dy++)
+                for (int dx = -node_r; dx <= node_r; dx++) {
+                    if (dx*dx + dy*dy > node_r2) continue;
+                    int rx = nd->x + dx, ry = nd->y + dy;
+                    if (rx >= 0 && rx < W && ry >= 0 && ry < H)
+                        px[ry * W + rx] = is_hovered ? 0xFF00FFFF : col;
+                }
+        }
 
         /* Label */
         if (i == g_starmap.current_node || selectable) {
-            int label_y = nd->is_boss ? nd->y + 8 : nd->y + 6;
+            int label_y = (nd->node_type == NODE_BOSS) ? nd->y + 8 : nd->y + 6;
             sr_draw_text_shadow(px, W, H, nd->x - 20, label_y,
                                 nd->name, col, shadow);
             if (selectable) {
                 char rbuf[24];
-                if (nd->is_boss)
-                    snprintf(rbuf, sizeof(rbuf), "BOSS");
-                else
-                    snprintf(rbuf, sizeof(rbuf), "D%d", nd->difficulty);
+                switch (nd->node_type) {
+                    case NODE_BOSS:     snprintf(rbuf, sizeof(rbuf), "BOSS"); break;
+                    case NODE_MINIBOSS: snprintf(rbuf, sizeof(rbuf), "ELITE D%d", nd->difficulty); break;
+                    case NODE_EVENT:    snprintf(rbuf, sizeof(rbuf), "EVENT"); break;
+                    default:            snprintf(rbuf, sizeof(rbuf), "D%d", nd->difficulty); break;
+                }
+                uint32_t tag_col;
+                switch (nd->node_type) {
+                    case NODE_BOSS:     tag_col = 0xFFCC8844; break;
+                    case NODE_MINIBOSS: tag_col = 0xFF44AACC; break;
+                    case NODE_EVENT:    tag_col = 0xFFCCCC44; break;
+                    default:            tag_col = 0xFF888888; break;
+                }
                 sr_draw_text_shadow(px, W, H, nd->x - 20, label_y + 10,
-                                    rbuf, nd->is_boss ? 0xFFCC8844 : 0xFF888888, shadow);
+                                    rbuf, tag_col, shadow);
             }
         }
     }
@@ -1771,28 +1970,54 @@ static void draw_starmap(uint32_t *px, int W, int H) {
             }
             sr_draw_text_shadow(px, W, H, dbx + 10, dby + 6, "JUMP TO", 0xFFCCCCCC, shadow);
             sr_draw_text_shadow(px, W, H, dbx + 10, dby + 16, tgt->name, 0xFF00DDDD, shadow);
-            char dbuf[32];
-            snprintf(dbuf, sizeof(dbuf), "D%d", tgt->difficulty);
-            sr_draw_text_shadow(px, W, H, dbx + 10, dby + 26, dbuf, 0xFF888888, shadow);
+            {
+                char dbuf[32];
+                switch (tgt->node_type) {
+                    case NODE_BOSS:     snprintf(dbuf, sizeof(dbuf), "BOSS FIGHT"); break;
+                    case NODE_MINIBOSS: snprintf(dbuf, sizeof(dbuf), "ELITE D%d", tgt->difficulty); break;
+                    case NODE_EVENT:    snprintf(dbuf, sizeof(dbuf), "EVENT"); break;
+                    default:            snprintf(dbuf, sizeof(dbuf), "D%d", tgt->difficulty); break;
+                }
+                sr_draw_text_shadow(px, W, H, dbx + 10, dby + 26, dbuf, 0xFF888888, shadow);
+            }
 
             if (ui_button(px, W, H, dbx + 10, dby + dbh - 16, 60, 14, "YES",
                           0xFF112211, 0xFF223322, 0xFF44CC44)) {
                 tgt->visited = true;
                 g_starmap.current_node = ct;
-                g_starmap.derelicts_visited++;
                 if (g_starmap.visited_path_count < STARMAP_MAX_NODES)
                     g_starmap.visited_path[g_starmap.visited_path_count++] = ct;
                 player_sector = tgt->difficulty;
-                current_mission_is_boss = tgt->is_boss;
                 g_starmap.confirm_active = false;
-                /* Clear pregen so new ship loads from starmap node's levelFile */
-                memset(dng_state.floor_generated, 0, sizeof(dng_state.floor_generated));
-                remote_hull_computed = false;
-                hub_generate(&g_hub);
-                g_hub.mission_available = true;
-                app_state = STATE_SHIP_HUB;
-                snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "JUMPED TO %s", tgt->name);
-                g_hub.hud_msg_timer = 90;
+
+                if (tgt->node_type == NODE_EVENT) {
+                    /* Event node: show event dialog instead of loading a dungeon */
+                    g_event.active = true;
+                    g_event.event_id = tgt->event_id;
+                    if (g_event.event_id < 0 || g_event.event_id >= EVENT_MAX_EVENTS)
+                        g_event.event_id = 0;
+                    g_event.showing_result = false;
+                    g_event.result_timer = 0;
+                    /* Stay on starmap — event overlay will draw on top */
+                } else {
+                    /* Derelict node (normal, miniboss, boss): load dungeon */
+                    g_starmap.derelicts_visited++;
+                    current_mission_is_boss = tgt->is_boss;
+                    current_mission_is_miniboss = (tgt->node_type == NODE_MINIBOSS);
+                    if (current_mission_is_miniboss) {
+                        /* Pick a miniboss type based on difficulty */
+                        int mb_idx = tgt->difficulty % 4;
+                        current_miniboss_type = ENEMY_MINIBOSS_1 + mb_idx;
+                    }
+                    /* Clear pregen so new ship loads from starmap node's levelFile */
+                    memset(dng_state.floor_generated, 0, sizeof(dng_state.floor_generated));
+                    remote_hull_computed = false;
+                    hub_generate(&g_hub);
+                    g_hub.mission_available = true;
+                    app_state = STATE_SHIP_HUB;
+                    snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "JUMPED TO %s", tgt->name);
+                    g_hub.hud_msg_timer = 90;
+                }
                 game_save();
             }
             if (ui_button(px, W, H, dbx + dbw - 70, dby + dbh - 16, 60, 14, "NO",
@@ -1814,12 +2039,119 @@ static void draw_starmap(uint32_t *px, int W, int H) {
         }
     }
 
-    /* Back button */
-    if (ui_button(px, W, H, W/2 - 30, H - 14, 60, 12, "BACK",
-                  0xFF111122, 0xFF222244, 0xFF333366)) {
-        g_starmap.active = false;
-        g_starmap.confirm_active = false;
-        app_state = STATE_SHIP_HUB;
+    /* ── Event overlay ─────────────────────────────────────────── */
+    if (g_event.active) {
+        const space_event *ev = &g_events[g_event.event_id];
+        int ebw = 260, ebh = 160;
+        int ebx = W/2 - ebw/2, eby = H/2 - ebh/2;
+        /* Background */
+        for (int ry = eby; ry < eby + ebh && ry < H; ry++)
+            for (int rx = ebx; rx < ebx + ebw && rx < W; rx++)
+                if (rx >= 0 && ry >= 0) px[ry * W + rx] = 0xFF0C0C1E;
+        /* Border */
+        for (int rx = ebx; rx < ebx + ebw && rx < W; rx++) {
+            if (eby >= 0 && eby < H) px[eby * W + rx] = 0xFF4488AA;
+            if (eby+ebh-1 >= 0 && eby+ebh-1 < H) px[(eby+ebh-1) * W + rx] = 0xFF4488AA;
+        }
+        for (int ry = eby; ry < eby + ebh && ry < H; ry++) {
+            if (ebx >= 0 && ebx < W) px[ry * W + ebx] = 0xFF4488AA;
+            if (ebx+ebw-1 >= 0 && ebx+ebw-1 < W) px[ry * W + ebx+ebw-1] = 0xFF4488AA;
+        }
+
+        if (g_event.showing_result) {
+            /* Show outcome text */
+            sr_draw_text_shadow(px, W, H, ebx + 10, eby + 8, ev->title, 0xFF00DDDD, shadow);
+            sr_draw_text_wrap(px, W, H, ebx + 10, eby + 24, g_event.result_text, 240, 10, 0xFFCCCCCC, shadow);
+
+            /* Continue button */
+            if (ui_button(px, W, H, W/2 - 30, eby + ebh - 20, 60, 14, "CONTINUE",
+                          0xFF112211, 0xFF223322, 0xFF44CC44)) {
+                g_event.active = false;
+                /* Return to starmap (node already visited) */
+            }
+        } else {
+            /* Show event description + choices */
+            sr_draw_text_shadow(px, W, H, ebx + 10, eby + 8, ev->title, 0xFF00DDDD, shadow);
+            sr_draw_text_wrap(px, W, H, ebx + 10, eby + 24, ev->description, 240, 10, 0xFFCCCCCC, shadow);
+
+            /* Draw choice buttons */
+            int btn_y = eby + 80;
+            for (int c = 0; c < ev->choice_count; c++) {
+                const event_choice *ch = &ev->choices[c];
+                if (ui_button(px, W, H, ebx + 10, btn_y, 240, 14, ch->text,
+                              0xFF111133, 0xFF222255, 0xFF6688AA)) {
+                    /* Resolve outcome */
+                    int roll = dng_rng_int(100);
+                    bool success = (roll < ch->success_chance);
+
+                    if (success && ch->good_amount > 0) {
+                        switch (ch->outcome_good) {
+                            case OUTCOME_SCRAP:
+                                player_scrap += ch->good_amount;
+                                break;
+                            case OUTCOME_BIOMASS:
+                                player_biomass += ch->good_amount;
+                                break;
+                            case OUTCOME_CARD: {
+                                /* Add random good cards */
+                                int good_cards[] = { CARD_DOUBLE_SHOT, CARD_FORTIFY, CARD_STUN,
+                                                     CARD_REPAIR, CARD_OVERCHARGE, CARD_DASH,
+                                                     CARD_SNIPER, CARD_SHOTGUN, CARD_LASER };
+                                for (int k = 0; k < ch->good_amount; k++) {
+                                    int card = good_cards[dng_rng_int(9)];
+                                    if (g_player.persistent_deck_count < COMBAT_DECK_MAX)
+                                        g_player.persistent_deck[g_player.persistent_deck_count++] = card;
+                                }
+                                break;
+                            }
+                            case OUTCOME_HEAL:
+                                g_player.hp += ch->good_amount;
+                                if (g_player.hp > g_player.hp_max) g_player.hp = g_player.hp_max;
+                                break;
+                        }
+                        snprintf(g_event.result_text, sizeof(g_event.result_text), "%s", ch->good_text);
+                    } else if (!success && ch->bad_amount > 0) {
+                        switch (ch->outcome_bad) {
+                            case OUTCOME_HEALTH_LOSS:
+                                g_player.hp -= ch->bad_amount;
+                                if (g_player.hp < 1) g_player.hp = 1;
+                                break;
+                            case OUTCOME_JUNK_CARD:
+                                for (int k = 0; k < ch->bad_amount; k++) {
+                                    if (g_player.persistent_deck_count < COMBAT_DECK_MAX)
+                                        g_player.persistent_deck[g_player.persistent_deck_count++] = CARD_JUNK;
+                                }
+                                break;
+                            case OUTCOME_MAX_HP_LOSS:
+                                g_player.hp_max -= ch->bad_amount;
+                                if (g_player.hp_max < 20) g_player.hp_max = 20;
+                                if (g_player.hp > g_player.hp_max) g_player.hp = g_player.hp_max;
+                                break;
+                        }
+                        snprintf(g_event.result_text, sizeof(g_event.result_text), "%s", ch->bad_text);
+                    } else {
+                        /* No effect (safe choice or 100% success with amount 0) */
+                        snprintf(g_event.result_text, sizeof(g_event.result_text), "%s",
+                                 success ? ch->good_text : ch->bad_text);
+                        if (g_event.result_text[0] == '\0')
+                            snprintf(g_event.result_text, sizeof(g_event.result_text), "Nothing happened.");
+                    }
+                    g_event.showing_result = true;
+                    game_save();
+                }
+                btn_y += 20;
+            }
+        }
+    }
+
+    /* Back button (disabled during event) */
+    if (!g_event.active) {
+        if (ui_button(px, W, H, W/2 - 30, H - 14, 60, 12, "BACK",
+                      0xFF111122, 0xFF222244, 0xFF333366)) {
+            g_starmap.active = false;
+            g_starmap.confirm_active = false;
+            app_state = STATE_SHIP_HUB;
+        }
     }
 }
 
@@ -1832,21 +2164,37 @@ static void starmap_handle_key(int key_code) {
             key_code == SAPP_KEYCODE_SPACE) {
             int ct = g_starmap.confirm_target;
             if (ct >= 0 && ct < g_starmap.node_count) {
-                g_starmap.nodes[ct].visited = true;
+                starmap_node *tgt = &g_starmap.nodes[ct];
+                tgt->visited = true;
                 g_starmap.current_node = ct;
-                g_starmap.derelicts_visited++;
                 if (g_starmap.visited_path_count < STARMAP_MAX_NODES)
                     g_starmap.visited_path[g_starmap.visited_path_count++] = ct;
-                player_sector = g_starmap.nodes[ct].difficulty;
-                current_mission_is_boss = g_starmap.nodes[ct].is_boss;
+                player_sector = tgt->difficulty;
                 g_starmap.confirm_active = false;
-                memset(dng_state.floor_generated, 0, sizeof(dng_state.floor_generated));
-                remote_hull_computed = false;
-                hub_generate(&g_hub);
-                g_hub.mission_available = true;
-                app_state = STATE_SHIP_HUB;
-                snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "JUMPED TO %s", g_starmap.nodes[ct].name);
-                g_hub.hud_msg_timer = 90;
+
+                if (tgt->node_type == NODE_EVENT) {
+                    g_event.active = true;
+                    g_event.event_id = tgt->event_id;
+                    if (g_event.event_id < 0 || g_event.event_id >= EVENT_MAX_EVENTS)
+                        g_event.event_id = 0;
+                    g_event.showing_result = false;
+                    g_event.result_timer = 0;
+                } else {
+                    g_starmap.derelicts_visited++;
+                    current_mission_is_boss = tgt->is_boss;
+                    current_mission_is_miniboss = (tgt->node_type == NODE_MINIBOSS);
+                    if (current_mission_is_miniboss) {
+                        int mb_idx = tgt->difficulty % 4;
+                        current_miniboss_type = ENEMY_MINIBOSS_1 + mb_idx;
+                    }
+                    memset(dng_state.floor_generated, 0, sizeof(dng_state.floor_generated));
+                    remote_hull_computed = false;
+                    hub_generate(&g_hub);
+                    g_hub.mission_available = true;
+                    app_state = STATE_SHIP_HUB;
+                    snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "JUMPED TO %s", tgt->name);
+                    g_hub.hud_msg_timer = 90;
+                }
                 game_save();
             }
         } else if (key_code == SAPP_KEYCODE_N || key_code == SAPP_KEYCODE_ESCAPE) {

@@ -132,3 +132,7 @@ stun_gun_up:
 microwave_up:
   effect: "7 DMG\n*5 DMG ALL"
   description: "UPGRADED MICROWAVE.\n7 DMG, IF KILL ALL\nOTHERS TAKE 5."
+
+junk:
+  effect: "DOES\nNOTHING"
+  description: "WORTHLESS JUNK.\nDOES NOTHING BUT\nCLOG YOUR DECK."

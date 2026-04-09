@@ -22,6 +22,8 @@ enum { ENEMY_LURKER, ENEMY_BRUTE, ENEMY_SPITTER, ENEMY_HIVEGUARD,
        /* Evolved tier 2 — advanced dragon parasite */
        ENEMY_STALKER, ENEMY_MAULER, ENEMY_ACID_THROWER, ENEMY_WARDEN,
        ENEMY_BOSS_1, ENEMY_BOSS_2, ENEMY_BOSS_3,
+       /* Minibosses — tier 2 elites with boosted HP/damage */
+       ENEMY_MINIBOSS_1, ENEMY_MINIBOSS_2, ENEMY_MINIBOSS_3, ENEMY_MINIBOSS_4,
        ENEMY_TYPE_COUNT };
 
 /* Map enemy type -> sprite texture index (STEX_*). Declared here, defined after STEX enum exists. */
