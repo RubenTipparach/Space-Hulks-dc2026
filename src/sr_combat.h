@@ -265,9 +265,9 @@ static enemy_template enemy_templates[] = {
     [ENEMY_MAULER]       = { "MAULER",      28,  5,  8, 1 }, /* heavy hitter, buffs often */
     [ENEMY_ACID_THROWER] = { "ACID THROWER",16,  3,  6, 4 }, /* long range, acid DoT */
     [ENEMY_WARDEN]       = { "WARDEN",      32,  4,  6, 2 }, /* shields allies, high HP */
-    [ENEMY_BOSS_1]       = { "RAVAGER",    115,  7, 12, 2 },
-    [ENEMY_BOSS_2]       = { "VOID WYRM",  130,  8, 14, 3 },
-    [ENEMY_BOSS_3]       = { "HIVEMIND",   150,  9, 16, 2 },
+    [ENEMY_BOSS_1]       = { "RAVAGER",    180,  9, 14, 2 },
+    [ENEMY_BOSS_2]       = { "VOID WYRM",  210, 10, 16, 3 },
+    [ENEMY_BOSS_3]       = { "HIVEMIND",   240, 11, 18, 2 },
     /* Minibosses - tier 2 elites with boosted HP/damage */
     [ENEMY_MINIBOSS_1]   = { "SHADOW ALPHA",  50,  5,  8, 2 }, /* based on Stalker */
     [ENEMY_MINIBOSS_2]   = { "RAVAGER BROOD", 55,  6,  9, 1 }, /* based on Mauler */
@@ -813,9 +813,29 @@ static int combat_first_alive_enemy(combat_state *cs) {
     return -1;
 }
 
+/* Set to true immediately before combat_deal_damage_enemy is called from
+   an elemental card path. combat_deal_damage_enemy reads and clears it.
+   When false, bosses take half damage to encourage elemental play. */
+static bool combat_damage_is_elemental = false;
+
 static void combat_deal_damage_enemy(combat_state *cs, int idx, int dmg) {
-    if (idx < 0 || idx >= cs->enemy_count || !cs->enemies[idx].alive) return;
+    if (idx < 0 || idx >= cs->enemy_count || !cs->enemies[idx].alive) {
+        combat_damage_is_elemental = false;
+        return;
+    }
     combat_enemy *e = &cs->enemies[idx];
+
+    /* Bosses resist non-elemental damage by 50% (round up, min 1). This is
+       the main incentive to find and spam the right elemental card. */
+    bool is_boss = (e->type >= ENEMY_BOSS_1 && e->type <= ENEMY_BOSS_3);
+    if (is_boss && !combat_damage_is_elemental && dmg > 1) {
+        int reduced = (dmg + 1) / 2;
+        combat_log(cs, "  %s resists (%d -> %d)",
+                   enemy_templates[e->type].name, dmg, reduced);
+        dmg = reduced;
+    }
+    combat_damage_is_elemental = false;
+
     /* Shield absorbs before HP */
     if (e->shield > 0) {
         int absorbed = dmg < e->shield ? dmg : e->shield;
@@ -1011,6 +1031,7 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
                 bool is_weak = weakness_check(cs->enemies[t].type, ELEM_ICE);
                 if (is_weak) dmg *= 2;
                 bool just_found = weakness_discover(cs->enemies[t].type, ELEM_ICE);
+                combat_damage_is_elemental = true;
                 combat_deal_damage_enemy(cs, t, dmg);
                 if (just_found) {
                     snprintf(buf, sizeof(buf), "ICE %s! WEAK! x2!", enemy_templates[cs->enemies[t].type].name);
@@ -1036,6 +1057,7 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
                 bool is_weak = weakness_check(cs->enemies[t].type, ELEM_ACID);
                 if (is_weak) dmg *= 2;
                 bool just_found = weakness_discover(cs->enemies[t].type, ELEM_ACID);
+                combat_damage_is_elemental = true;
                 combat_deal_damage_enemy(cs, t, dmg);
                 if (just_found) {
                     snprintf(buf, sizeof(buf), "ACID %s! WEAK! x2!", enemy_templates[cs->enemies[t].type].name);
@@ -1061,6 +1083,7 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
                 bool is_weak = weakness_check(cs->enemies[t].type, ELEM_FIRE);
                 if (is_weak) dmg *= 2;
                 bool just_found = weakness_discover(cs->enemies[t].type, ELEM_FIRE);
+                combat_damage_is_elemental = true;
                 combat_deal_damage_enemy(cs, t, dmg);
                 if (just_found) {
                     snprintf(buf, sizeof(buf), "FIRE %s! WEAK! x2!", enemy_templates[cs->enemies[t].type].name);
@@ -1087,6 +1110,7 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
                 bool is_weak = weakness_check(cs->enemies[t].type, ELEM_LIGHTNING);
                 if (is_weak) dmg *= 2;
                 bool just_found = weakness_discover(cs->enemies[t].type, ELEM_LIGHTNING);
+                combat_damage_is_elemental = true;
                 combat_deal_damage_enemy(cs, t, dmg);
                 if (just_found) {
                     snprintf(buf, sizeof(buf), "ZAP %s! WEAK! x2!", enemy_templates[cs->enemies[t].type].name);
@@ -3286,30 +3310,36 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
         }
         ty += 12;
 
-        /* Weakness info (from elemental discovery system) */
-        if (g_weakness.initialized && g_weakness.weakness_known[etype]) {
-            int wk = g_weakness.weakness[etype];
-            spr_draw_tex(px, W, H, &stextures[elem_icon_stex[wk]],
-                         tx, ty, 1);
-            char wbuf[32];
-            snprintf(wbuf, sizeof(wbuf), "WEAK: %s (2x)", elem_names[wk]);
-            sr_draw_text_shadow(px, W, H, tx + 18, ty + 2, wbuf, elem_colors[wk], shadow);
-        } else {
-            sr_draw_text_shadow(px, W, H, tx, ty, "WEAK: ???", 0xFF888888, shadow);
-            /* Show discovered elements */
-            int ex = tx + 64;
-            for (int el = 0; el < ELEM_COUNT; el++) {
-                const char *eshort[] = { "I", "A", "F", "L" };
-                if (g_weakness.discovered[etype][el]) {
-                    uint32_t c = 0xFF555555;
-                    sr_draw_text_shadow(px, W, H, ex, ty, eshort[el], c, shadow);
-                } else {
-                    sr_draw_text_shadow(px, W, H, ex, ty, "?", 0xFF444444, shadow);
-                }
-                ex += 12;
+        /* Weakness info - Persona style list of all four elements. Each
+           element shows its tested status:
+             not tested:     dim "?"
+             tested normal:  dim "NORMAL"
+             tested weak:    bright "VERY EFFECTIVE!"
+           The player learns by poking at enemies with elemental cards. */
+        sr_draw_text_shadow(px, W, H, tx, ty, "ELEMENTS:", dim, shadow);
+        ty += 10;
+        for (int el = 0; el < ELEM_COUNT; el++) {
+            int ex = tx + 8;
+            spr_draw_tex(px, W, H, &stextures[elem_icon_stex[el]],
+                         ex, ty - 2, 1);
+            sr_draw_text_shadow(px, W, H, ex + 18, ty,
+                                elem_names[el], elem_colors[el], shadow);
+            const char *tag;
+            uint32_t tag_col;
+            if (!g_weakness.initialized || !g_weakness.discovered[etype][el]) {
+                tag = "?";
+                tag_col = 0xFF555555;
+            } else if (g_weakness.weakness[etype] == el) {
+                tag = "VERY EFFECTIVE!";
+                tag_col = 0xFF44CC44;
+            } else {
+                tag = "NORMAL";
+                tag_col = 0xFF777777;
             }
+            sr_draw_text_shadow(px, W, H, ex + 96, ty, tag, tag_col, shadow);
+            ty += 10;
         }
-        ty += 14;
+        ty += 4;
 
         /* Status effects (debuffs) */
         sr_draw_text_shadow(px, W, H, tx, ty, "STATUS:", dim, shadow);

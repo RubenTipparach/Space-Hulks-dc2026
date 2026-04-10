@@ -278,6 +278,25 @@ static shop_state g_medbay_shop; /* medbay (elemental/biomass cards) */
 #define MEDBAY_KIT_STOCK_MAX 2
 static int g_medbay_kit_stock = MEDBAY_KIT_STOCK_MAX;
 
+/* Teleporter elemental gift state - one-time gift before the first
+   boss mission. elem_gift_active is the overlay visibility flag,
+   g_elem_gift_given persists across jumps/saves so the gift only
+   triggers once per run. */
+static bool elem_gift_active = false;
+static bool g_elem_gift_given = false;
+static int  elem_gift_choices[3];
+
+/* Roll 3 unique elemental card choices and show the gift overlay. */
+static void teleporter_offer_elem_gift(void) {
+    int elems[] = { CARD_ICE, CARD_ACID, CARD_FIRE, CARD_LIGHTNING };
+    for (int i = 3; i > 0; i--) {
+        int j = dng_rng_int(i + 1);
+        int tmp = elems[i]; elems[i] = elems[j]; elems[j] = tmp;
+    }
+    for (int i = 0; i < 3; i++) elem_gift_choices[i] = elems[i];
+    elem_gift_active = true;
+}
+
 /* Which shop is active for STATE_SHOP - 0=armory, 1=medbay */
 static int active_shop_type = 0;
 
@@ -2582,7 +2601,7 @@ static void hub_draw_hud(uint32_t *px, int W, int H) {
 
     /* Room/NPC interaction button - merged room name + action into one button */
     /* Skip when deck viewer is open (modal) or dialog is active */
-    if (deck_view_active || g_dialog.active) return;
+    if (deck_view_active || g_dialog.active || elem_gift_active) return;
 
     int room_idx = hub_room_at_pos(g_hub.player.gx, g_hub.player.gy);
     int look_gx = g_hub.player.gx + dng_dir_dx[g_hub.player.dir];
@@ -2644,7 +2663,10 @@ static void hub_draw_hud(uint32_t *px, int W, int H) {
             if (action != DIALOG_ACTION_NONE) {
                 if (ui_button(px, W, H, W/2 - bw/2, H - 18, bw, bh, btn_label, base, hover, rc)) {
                     if (action == DIALOG_ACTION_TELEPORT) {
-                        hub_show_teleport_confirm();
+                        if (current_mission_is_boss && !g_elem_gift_given)
+                            teleporter_offer_elem_gift();
+                        else
+                            hub_show_teleport_confirm();
                     } else {
                         memset(&g_dialog, 0, sizeof(g_dialog));
                         snprintf(g_dialog.speaker, sizeof(g_dialog.speaker), "%s", hub_room_names[rt]);

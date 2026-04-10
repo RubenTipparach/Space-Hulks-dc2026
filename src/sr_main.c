@@ -256,6 +256,9 @@ typedef struct {
 
     /* Medbay persistent stock */
     int  medbay_kit_stock;
+
+    /* One-shot flags */
+    bool elem_gift_given;
 } save_header;
 
 /* Variables used by save/load - declared here so they're visible to game_save/game_load */
@@ -362,6 +365,7 @@ static void game_save(void) {
     hdr.is_miniboss_mission = current_mission_is_miniboss;
     hdr.miniboss_type = current_miniboss_type;
     hdr.medbay_kit_stock = g_medbay_kit_stock;
+    hdr.elem_gift_given = g_elem_gift_given;
 
     FILE *f = fopen(SAVE_FILE, "wb");
     if (!f) return;
@@ -467,6 +471,7 @@ static bool game_load(void) {
     g_medbay_kit_stock = hdr.medbay_kit_stock;
     if (g_medbay_kit_stock < 0) g_medbay_kit_stock = 0;
     if (g_medbay_kit_stock > MEDBAY_KIT_STOCK_MAX) g_medbay_kit_stock = MEDBAY_KIT_STOCK_MAX;
+    g_elem_gift_given = hdr.elem_gift_given;
     /* Also check starmap node in case save predates this field */
     if (!current_mission_is_boss && g_starmap.current_node >= 0 &&
         g_starmap.current_node < g_starmap.node_count &&
@@ -1037,6 +1042,10 @@ static bool chest_overlay_active = false;
 static int  chest_choices[3];        /* 3 elemental card choices */
 static int  chest_gx, chest_gy;     /* position of opened chest */
 static bool chest_is_rare = false;   /* true for miniboss/boss ship chests */
+
+/* Teleporter elemental gift state (defined in sr_scene_ship_hub.h):
+   elem_gift_active, g_elem_gift_given, elem_gift_choices[3],
+   teleporter_offer_elem_gift(). */
 
 static void game_init_ship(void) {
     printf("[game_init_ship] Starting ship initialization\n");
@@ -1813,6 +1822,8 @@ static void draw_class_select(sr_framebuffer *fb_ptr) {
             player_biomass = 0;
             memset(player_consumables, 0, sizeof(player_consumables));
             g_medbay_kit_stock = MEDBAY_KIT_STOCK_MAX;
+            g_elem_gift_given = false;
+            elem_gift_active = false;
             player_sector = 0;
             captain_briefing_page = 0;
             player_samples = 0;
@@ -2448,8 +2459,12 @@ static void dispatch_dialog_action(int action) {
             app_state = STATE_SHOP;
             break;
         case DIALOG_ACTION_TELEPORT:
-            if (g_hub.mission_available)
-                hub_show_teleport_confirm();
+            if (g_hub.mission_available) {
+                if (current_mission_is_boss && !g_elem_gift_given)
+                    teleporter_offer_elem_gift();
+                else
+                    hub_show_teleport_confirm();
+            }
             break;
         case DIALOG_ACTION_TELEPORT_GO:
             if (g_hub.mission_available) {
@@ -2568,6 +2583,30 @@ static void frame(void) {
         }
         if (deck_view_active)
             draw_deck_viewer(fb.color, fb.width, fb.height);
+        if (elem_gift_active) {
+            int W = fb.width, H = fb.height;
+            uint32_t *px = fb.color;
+            uint32_t shadow = 0xFF000000;
+            /* Darken */
+            for (int i = 0; i < W * H; i++) {
+                uint32_t c = px[i];
+                px[i] = 0xFF000000 | ((((c>>16)&0xFF)/3)<<16) |
+                        ((((c>>8)&0xFF)/3)<<8) | (((c)&0xFF)/3);
+            }
+            sr_draw_text_centered(px, W, H,  8, "TELEPORTER TECH",   0xFFAACCFF, shadow);
+            sr_draw_text_centered(px, W, H, 20, "I SCAVENGED THIS OFF A WRECK.",   0xFFCCCCCC, shadow);
+            sr_draw_text_centered(px, W, H, 30, "PICK ONE. IT HITS HARDER AGAINST",0xFFCCCCCC, shadow);
+            sr_draw_text_centered(px, W, H, 40, "CERTAIN ENEMIES. TAP TO CHECK.",  0xFFCCCCCC, shadow);
+
+            int cw = 72, ch = 80, cgap = 12;
+            int ctotal = 3 * (cw + cgap) - cgap;
+            int cx0 = (W - ctotal) / 2, cy0 = 56;
+            for (int i = 0; i < 3; i++) {
+                int cx = cx0 + i * (cw + cgap);
+                combat_draw_card_content(px, W, H, cx, cy0, cw, ch,
+                                         elem_gift_choices[i], false, shadow, -1);
+            }
+        }
         if (g_dialog.active)
             draw_dialog(fb.color, fb.width, fb.height);
         if (g_kit.active)
@@ -3195,6 +3234,24 @@ static void handle_screen_tap(float sx, float sy) {
     }
 
     if (app_state == STATE_SHIP_HUB) {
+        if (elem_gift_active) {
+            /* Pick one of the three free elemental cards. */
+            int cw = 72, ch = 80, cgap = 12;
+            int ctotal = 3 * (cw + cgap) - cgap;
+            int cx0 = (FB_WIDTH - ctotal) / 2, cy0 = 56;
+            for (int i = 0; i < 3; i++) {
+                int cx = cx0 + i * (cw + cgap);
+                if (fx >= cx && fx < cx + cw && fy >= cy0 && fy < cy0 + ch) {
+                    if (g_player.persistent_deck_count < COMBAT_DECK_MAX)
+                        g_player.persistent_deck[g_player.persistent_deck_count++] = elem_gift_choices[i];
+                    elem_gift_active = false;
+                    g_elem_gift_given = true;
+                    hub_show_teleport_confirm();
+                    return;
+                }
+            }
+            return;
+        }
         if (deck_view_active) {
             /* Close button handled by ui_button in draw_deck_viewer via ui_mouse_clicked */
             return;
@@ -3347,8 +3404,12 @@ static void handle_screen_tap(float sx, float sy) {
                         break;
                     }
                     case DIALOG_ACTION_TELEPORT:
-                        if (g_hub.mission_available)
-                            hub_show_teleport_confirm();
+                        if (g_hub.mission_available) {
+                            if (current_mission_is_boss && !g_elem_gift_given)
+                                teleporter_offer_elem_gift();
+                            else
+                                hub_show_teleport_confirm();
+                        }
                         break;
                     case DIALOG_ACTION_TELEPORT_GO:
                         if (g_hub.mission_available) {
@@ -3909,8 +3970,12 @@ static void event(const sapp_event *ev) {
                             break;
                         }
                         case DIALOG_ACTION_TELEPORT:
-                            if (g_hub.mission_available)
-                                hub_show_teleport_confirm();
+                            if (g_hub.mission_available) {
+                                if (current_mission_is_boss && !g_elem_gift_given)
+                                    teleporter_offer_elem_gift();
+                                else
+                                    hub_show_teleport_confirm();
+                            }
                             break;
                         case DIALOG_ACTION_TELEPORT_GO:
                             if (g_hub.mission_available) {

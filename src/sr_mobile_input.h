@@ -134,8 +134,8 @@ static void hub_touch_ended(float sx, float sy, double time) {
     double duration = time - touch_start_time;
 
     if (dist < TOUCH_SWIPE_MIN_DIST && duration < TOUCH_TAP_MAX_TIME) {
-        /* Check dialog/deck/expanded map first */
-        if (g_dialog.active || deck_view_active || dng_expanded_map) {
+        /* Check dialog/deck/expanded map/elem gift first */
+        if (g_dialog.active || deck_view_active || dng_expanded_map || elem_gift_active) {
             handle_screen_tap(sx, sy);
             return;
         }
