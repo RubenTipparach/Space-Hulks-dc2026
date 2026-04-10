@@ -1673,18 +1673,18 @@ static void check_random_encounter(void) {
                     /* Sentinel defense combat based on room type */
                     combat_init(&combat, selected_class, dng_state.current_floor, 0);
 
-                    /* Terminal sentinels — hiveguards serve as robotic defenders */
-                    int num_drones = 1;
-                    int drone_type = ENEMY_HIVEGUARD;
+                    /* Terminal sentinels — every terminal has at least 2
+                       sentinels. Sentinels are BRUTE-strength (HP/dmg from
+                       the BRUTE template); high-priority rooms get a 3rd. */
+                    int num_drones = 2;
+                    int drone_type = ENEMY_BRUTE;
                     switch (rm->type) {
-                        case ROOM_BRIDGE:  num_drones = 2; break;
-                        case ROOM_REACTOR: num_drones = 2; break;
-                        case ROOM_WEAPONS: num_drones = 2; break;
-                        case ROOM_ENGINES: num_drones = 1; break;
-                        case ROOM_SHIELDS: num_drones = 1; break;
-                        case ROOM_CARGO:   num_drones = 1; break;
+                        case ROOM_BRIDGE:  num_drones = 3; break;
+                        case ROOM_REACTOR: num_drones = 3; break;
+                        case ROOM_WEAPONS: num_drones = 3; break;
                         default: break;
                     }
+                    if (num_drones < 2) num_drones = 2;
 
                     combat.enemy_count = num_drones;
                     for (int i = 0; i < num_drones; i++) {
@@ -2880,9 +2880,13 @@ static void frame(void) {
                 }
                 total_terminals += current_ship.terminals_destroyed; /* add already destroyed */
 
-                char termbuf[32];
-                snprintf(termbuf, sizeof(termbuf), "TERMINALS %d/%d",
-                         current_ship.terminals_destroyed, total_terminals);
+                /* "TERMINALS X/GOAL (N TOTAL)" — goal is the number needed to
+                   clear the ship, total is how many exist on the ship. */
+                char termbuf[48];
+                snprintf(termbuf, sizeof(termbuf), "TERMINALS %d/%d (%d TOTAL)",
+                         current_ship.terminals_destroyed,
+                         current_ship.terminals_required,
+                         total_terminals);
                 sr_draw_text_shadow(fb.color, fb.width, fb.height,
                                     hx, hy, termbuf, dim, shadow);
                 hy += 10;

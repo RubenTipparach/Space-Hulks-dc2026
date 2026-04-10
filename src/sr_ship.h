@@ -196,8 +196,9 @@ static void ship_generate(ship_state *ship, int difficulty, uint32_t seed) {
     ship->num_decks = 1 + (difficulty >= 3 ? 1 : 0) + (difficulty >= 6 ? 1 : 0);
     if (ship->num_decks > SHIP_MAX_DECKS) ship->num_decks = SHIP_MAX_DECKS;
 
-    /* Terminals required to destroy ship scales with size */
-    ship->terminals_required = 1 + ship->num_decks; /* small=2, medium=3, large=4 */
+    /* Fixed goal: destroy 3 terminals to clear any ship. The ship can have
+       more than 3 terminals in total (shown as "X/3 (N total)" in HUD). */
+    ship->terminals_required = 3;
     ship->terminals_destroyed = 0;
 
     /* Generate rooms per deck */
@@ -492,11 +493,10 @@ static void ship_damage_subsystem(ship_state *ship, int room_idx, int dmg) {
 /* ── Check mission completion ───────────────────────────────────── */
 
 static void ship_check_missions(ship_state *ship) {
-    /* Primary: >50% terminals destroyed OR all aliens killed */
+    /* Primary: destroy the required number of terminals OR kill all aliens. */
     if (ship->mission.type == MISSION_DESTROY_SHIP) {
-        /* More than half of terminals destroyed */
         if (ship->terminals_required > 0 &&
-            ship->terminals_destroyed * 2 > ship->terminals_required)
+            ship->terminals_destroyed >= ship->terminals_required)
             ship->mission.completed = true;
         /* All aliens killed (checked via enemy_ship_destroyed or external flag) */
         if (ship->enemy_ship_destroyed)

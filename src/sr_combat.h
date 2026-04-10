@@ -407,6 +407,7 @@ typedef struct {
     /* Sequential enemy attack state */
     int enemy_atk_idx;    /* which enemy is currently attacking (-1 = none) */
     int enemy_atk_timer;  /* countdown for current enemy's wiggle+attack */
+    int enemy_atk_pause;  /* > 0 = inter-attacker pause frames (no enemy active) */
 
     /* Player visual feedback */
     int player_flash_timer;       /* > 0 = player flickers red (took damage) */
@@ -1481,9 +1482,10 @@ static void combat_tick_status_effects(combat_state *cs) {
 
 /* ── Enemy turn (sequential) ─────────────────────────────────────── */
 
-#define ENEMY_ATK_WIGGLE_FRAMES  20  /* wiggle before strike */
-#define ENEMY_ATK_HIT_FRAME      10  /* frame at which damage lands */
-#define ENEMY_ATK_TOTAL_FRAMES   30  /* total anim per enemy */
+#define ENEMY_ATK_WIGGLE_FRAMES  30  /* wiggle before strike */
+#define ENEMY_ATK_HIT_FRAME      15  /* frame at which damage lands */
+#define ENEMY_ATK_TOTAL_FRAMES   45  /* total anim per enemy */
+#define ENEMY_ATK_INTER_PAUSE    18  /* pause between one attacker and the next */
 
 /* Check if an enemy can attack at its current distance */
 static bool combat_enemy_in_range(combat_state *cs, int idx) {
@@ -1583,6 +1585,7 @@ static void combat_begin_enemy_turn(combat_state *cs) {
         }
     }
 
+    cs->enemy_atk_pause = 0;
     cs->enemy_atk_idx = combat_next_attacker(cs, 0);
     if (cs->enemy_atk_idx < 0) {
         /* No enemies can attack — decrement stun and skip to next draw */
@@ -1674,6 +1677,20 @@ static void combat_update(combat_state *cs) {
     }
 
     if (cs->phase == CPHASE_ENEMY_TURN) {
+        /* Inter-attacker pause: no enemy is active, just wait and let
+           shield/HP flashes from the previous attacker settle before the
+           next one starts. */
+        if (cs->enemy_atk_pause > 0) {
+            cs->enemy_atk_pause--;
+            if (cs->enemy_atk_pause == 0) {
+                int next = combat_next_attacker(cs, cs->enemy_atk_idx + 1);
+                cs->enemy_atk_idx = next;
+                if (next >= 0)
+                    cs->enemy_atk_timer = ENEMY_ATK_TOTAL_FRAMES;
+            }
+            return;
+        }
+
         if (cs->enemy_atk_idx < 0) {
             /* All enemies done — decrement stun counters now */
             for (int i = 0; i < cs->enemy_count; i++) {
@@ -1741,14 +1758,11 @@ static void combat_update(combat_state *cs) {
             }
         }
 
-        /* When this enemy's anim is done, move to next attacker */
+        /* When this enemy's anim is done, enter the inter-attacker pause so
+           the shield/HP flashes from this strike are clearly visible before
+           the next enemy begins its wind-up. */
         if (cs->enemy_atk_timer <= 0) {
-            int next = combat_next_attacker(cs, cs->enemy_atk_idx + 1);
-            cs->enemy_atk_idx = next;
-            if (next >= 0) {
-                cs->enemy_atk_timer = ENEMY_ATK_TOTAL_FRAMES;
-            }
-            /* if next < 0, the top-of-function check handles end-of-phase next frame */
+            cs->enemy_atk_pause = ENEMY_ATK_INTER_PAUSE;
         }
     }
 }
