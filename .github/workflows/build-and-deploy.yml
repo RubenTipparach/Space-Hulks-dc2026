@@ -2,7 +2,7 @@ name: Build & Deploy
 
 on:
   push:
-    branches: [main]
+    branches: ['**']
   workflow_dispatch:
 
 permissions:
@@ -75,6 +75,8 @@ jobs:
   build-windows:
     name: Windows Build
     runs-on: windows-latest
+    # Windows build only runs on main (itch.io pipeline)
+    if: github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@v4
 
@@ -128,6 +130,8 @@ jobs:
   #   name: Deploy to itch.io
   #   needs: [build-web, build-windows]
   #   runs-on: ubuntu-latest
+  #   # itch.io deploys only from main
+  #   if: github.ref == 'refs/heads/main'
   #   steps:
   #     - name: Download web build
   #       uses: actions/download-artifact@v4
