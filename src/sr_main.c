@@ -253,6 +253,9 @@ typedef struct {
     bool is_boss_mission;
     bool is_miniboss_mission;
     int  miniboss_type;
+
+    /* Medbay persistent stock */
+    int  medbay_kit_stock;
 } save_header;
 
 /* Variables used by save/load — declared here so they're visible to game_save/game_load */
@@ -358,6 +361,7 @@ static void game_save(void) {
     hdr.is_boss_mission = current_mission_is_boss;
     hdr.is_miniboss_mission = current_mission_is_miniboss;
     hdr.miniboss_type = current_miniboss_type;
+    hdr.medbay_kit_stock = g_medbay_kit_stock;
 
     FILE *f = fopen(SAVE_FILE, "wb");
     if (!f) return;
@@ -460,6 +464,9 @@ static bool game_load(void) {
     current_mission_is_boss = hdr.is_boss_mission;
     current_mission_is_miniboss = hdr.is_miniboss_mission;
     current_miniboss_type = hdr.miniboss_type;
+    g_medbay_kit_stock = hdr.medbay_kit_stock;
+    if (g_medbay_kit_stock < 0) g_medbay_kit_stock = 0;
+    if (g_medbay_kit_stock > MEDBAY_KIT_STOCK_MAX) g_medbay_kit_stock = MEDBAY_KIT_STOCK_MAX;
     /* Also check starmap node in case save predates this field */
     if (!current_mission_is_boss && g_starmap.current_node >= 0 &&
         g_starmap.current_node < g_starmap.node_count &&
@@ -1805,6 +1812,7 @@ static void draw_class_select(sr_framebuffer *fb_ptr) {
             player_scrap = 30;
             player_biomass = 0;
             memset(player_consumables, 0, sizeof(player_consumables));
+            g_medbay_kit_stock = MEDBAY_KIT_STOCK_MAX;
             player_sector = 0;
             captain_briefing_page = 0;
             player_samples = 0;

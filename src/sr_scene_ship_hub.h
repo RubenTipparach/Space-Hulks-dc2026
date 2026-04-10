@@ -274,6 +274,10 @@ typedef struct {
 static shop_state g_shop;       /* armory (scrap cards) */
 static shop_state g_medbay_shop; /* medbay (elemental/biomass cards) */
 
+/* Persistent medbay health-kit stock (restocks by 1 per jump, max 2). */
+#define MEDBAY_KIT_STOCK_MAX 2
+static int g_medbay_kit_stock = MEDBAY_KIT_STOCK_MAX;
+
 /* Which shop is active for STATE_SHOP — 0=armory, 1=medbay */
 static int active_shop_type = 0;
 
@@ -1052,8 +1056,11 @@ static void medbay_shop_generate(shop_state *shop) {
         shop->prices[idx] = 135;
         shop->is_bio[idx] = true;
     }
-    /* 2 health kits — cheap consumables, costs scrap */
-    for (int i = 0; i < 2 && idx < SHOP_MAX_CARDS; i++, idx++) {
+    /* Health kits — persistent stock, restocks by 1 per jump (max 2). */
+    int kit_count = g_medbay_kit_stock;
+    if (kit_count < 0) kit_count = 0;
+    if (kit_count > MEDBAY_KIT_STOCK_MAX) kit_count = MEDBAY_KIT_STOCK_MAX;
+    for (int i = 0; i < kit_count && idx < SHOP_MAX_CARDS; i++, idx++) {
         shop->cards[idx] = SHOP_CONSUMABLE_FLAG | CONSUMABLE_HEALTH_KIT;
         shop->prices[idx] = consumable_prices[CONSUMABLE_HEALTH_KIT];
         shop->is_bio[idx] = false;
@@ -1308,6 +1315,11 @@ static void draw_shop(uint32_t *px, int W, int H) {
                                 break;
                             }
                         }
+                        /* Buying a health kit from the medbay decrements
+                           the persistent kit stock (restocked on jump). */
+                        if (active_shop_type == 1 && ctype == CONSUMABLE_HEALTH_KIT &&
+                            g_medbay_kit_stock > 0)
+                            g_medbay_kit_stock--;
                     } else {
                         g_player.persistent_deck[g_player.persistent_deck_count++] = shop->cards[idx];
                     }
@@ -2017,6 +2029,9 @@ static void draw_starmap(uint32_t *px, int W, int H) {
                     app_state = STATE_SHIP_HUB;
                     snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "JUMPED TO %s", tgt->name);
                     g_hub.hud_msg_timer = 90;
+                    /* Restock medbay medpacks by 1, capped at the max. */
+                    if (g_medbay_kit_stock < MEDBAY_KIT_STOCK_MAX)
+                        g_medbay_kit_stock++;
                 }
                 game_save();
             }
@@ -2199,6 +2214,9 @@ static void starmap_handle_key(int key_code) {
                     app_state = STATE_SHIP_HUB;
                     snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "JUMPED TO %s", tgt->name);
                     g_hub.hud_msg_timer = 90;
+                    /* Restock medbay medpacks by 1, capped at the max. */
+                    if (g_medbay_kit_stock < MEDBAY_KIT_STOCK_MAX)
+                        g_medbay_kit_stock++;
                 }
                 game_save();
             }
@@ -2223,7 +2241,7 @@ static void starmap_handle_key(int key_code) {
 /* ── Deck viewer overlay ───────────────────────────────────────── */
 
 static bool deck_view_active = false;
-static int deck_view_selected = -1; /* index of selected card for detail view, -1 = none */
+static int deck_view_selected = 0; /* row cursor into player deck */
 
 /* card_description_text() is now in sr_combat.h */
 
@@ -2240,60 +2258,128 @@ static void draw_deck_viewer(uint32_t *px, int W, int H) {
         px[i] = 0xFF000000 | (b << 16) | (g << 8) | r;
     }
 
-    /* Title */
-    char title[32];
-    snprintf(title, sizeof(title), "DECK (%d CARDS)", g_player.persistent_deck_count);
-    sr_draw_text_shadow(px, W, H, 10, 4, title, 0xFF00DDDD, shadow);
+    /* Clamp cursor */
+    if (g_player.persistent_deck_count <= 0) deck_view_selected = 0;
+    else if (deck_view_selected < 0) deck_view_selected = 0;
+    else if (deck_view_selected >= g_player.persistent_deck_count)
+        deck_view_selected = g_player.persistent_deck_count - 1;
 
-    /* Card grid using full card rendering */
-    int cw = 50, ch = 66, pad = 6;
-    int cols = 7;
-    int startX = 10, startY = 14;
+    /* Header */
+    char hdr[48];
+    snprintf(hdr, sizeof(hdr), "YOUR DECK (%d CARDS)", g_player.persistent_deck_count);
+    sr_draw_text_shadow(px, W, H, 30, 6, hdr, 0xFFD0CDC7, shadow);
 
+    /* Bottom area reserved for HP / medpack / close — keeps list + detail
+       panel from colliding with the footer. */
+    int footer_y = H - 42;
+
+    /* Card list (left side) — matches trash menu layout */
+    int list_x = 30, list_y = 18;
+    int list_w = 100;
+    int row_h = 11;
+    int max_rows = (footer_y - list_y) / row_h;
+    if (max_rows < 1) max_rows = 1;
+    int scroll = 0;
+    if (deck_view_selected >= max_rows)
+        scroll = deck_view_selected - max_rows + 1;
     for (int i = 0; i < g_player.persistent_deck_count; i++) {
-        int col = i % cols;
-        int row = i / cols;
-        int cx = startX + col * (cw + pad);
-        int cy = startY + row * (ch + pad);
-        if (cy + ch > H - 20) break;
+        int row = i - scroll;
+        if (row < 0 || row >= max_rows) continue;
+        int cy = list_y + row * row_h;
 
-        bool sel = (i == deck_view_selected);
-        combat_draw_card_content(px, W, H, cx, cy, cw, ch,
-                                 g_player.persistent_deck[i], sel, shadow, -1);
+        bool hovered = false;
+        ui_row_hover(list_x, cy, list_w, row_h - 1, &hovered);
+        if (hovered) deck_view_selected = i;
+        bool sel = (deck_view_selected == i);
 
-        /* Click detection */
-        if (ui_mouse_clicked &&
-            ui_click_x >= cx && ui_click_x < cx + cw &&
-            ui_click_y >= cy && ui_click_y < cy + ch) {
-            deck_view_selected = (deck_view_selected == i) ? -1 : i;
+        int card_type = g_player.persistent_deck[i];
+        uint32_t ccol = sel ? 0xFFD0CDC7 : card_colors[card_type];
+        if (sel) {
+            /* Highlight bar */
+            for (int ry = cy; ry < cy + row_h - 1 && ry < H; ry++)
+                for (int rx = list_x; rx < list_x + list_w && rx < W; rx++)
+                    if (rx >= 0 && ry >= 0) px[ry * W + rx] = 0xFF46353E;
         }
+        sr_draw_text_shadow(px, W, H, list_x + 2, cy + 1,
+                            card_names[card_type], ccol, shadow);
+
+        /* Energy cost pip */
+        char ebuf[4];
+        snprintf(ebuf, sizeof(ebuf), "%d", card_energy_cost[card_type]);
+        sr_draw_text_shadow(px, W, H, list_x + list_w - 12, cy + 1,
+                            ebuf, 0xFF9BAF0E, shadow);
     }
 
-    /* Detail overlay for selected card */
+    /* Card detail panel (right side) */
     if (deck_view_selected >= 0 && deck_view_selected < g_player.persistent_deck_count) {
-        int card_type = g_player.persistent_deck[deck_view_selected];
+        int idx = deck_view_selected;
+        int card_type = g_player.persistent_deck[idx];
+        int px2 = 150, py = 18, pw = W - 180, ph = footer_y - py - 4;
+        uint32_t ccol = card_colors[card_type];
 
-        /* Centered large card */
-        int dw = 100, dh = 140;
-        int dx = (W - dw) / 2, dy = (H - dh) / 2 - 10;
-        /* Dark backdrop */
-        for (int ry = dy - 4; ry < dy + dh + 24 && ry < H; ry++)
-            for (int rx = dx - 4; rx < dx + dw + 4 && rx < W; rx++)
-                if (rx >= 0 && ry >= 0)
-                    px[ry * W + rx] = 0xFF000000;
-        combat_draw_card_content(px, W, H, dx, dy, dw, dh,
-                                 card_type, true, shadow, -1);
-        /* Description below card */
+        /* Panel background */
+        for (int ry = py; ry < py + ph && ry < H; ry++)
+            for (int rx = px2; rx < px2 + pw && rx < W; rx++)
+                if (rx >= 0 && ry >= 0) px[ry * W + rx] = 0xFF2F222E;
+
+        /* Border in card color */
+        combat_draw_rect_outline(px, W, H, px2, py, pw, ph, ccol);
+
+        /* Card art */
+        if (card_type < (int)(sizeof(spr_card_table)/sizeof(spr_card_table[0])) &&
+            spr_card_table[card_type])
+            spr_draw(px, W, H, spr_card_table[card_type], px2 + pw - 42, py + 4, 2);
+
+        /* Card name */
+        sr_draw_text_shadow(px, W, H, px2 + 6, py + 6,
+                            card_names[card_type], ccol, shadow);
+
+        /* Energy cost */
+        char ebuf2[16];
+        snprintf(ebuf2, sizeof(ebuf2), "COST: %d",
+                 card_energy_cost[card_type]);
+        sr_draw_text_shadow(px, W, H, px2 + 6, py + 16, ebuf2,
+                            0xFF9BAF0E, shadow);
+
+        /* Effect text */
+        const char *effect = card_effect_text(card_type);
+        int ey = sr_draw_text_wrap(px, W, H, px2 + 6, py + 28, effect,
+                                   pw - 50, 8, ccol, shadow);
+
+        /* Description */
         const char *desc = card_description_text(card_type);
-        sr_draw_text_wrap(px, W, H, dx, dy + dh + 4, desc,
-                          dw, 8, 0xFFAAAAAA, shadow);
+        sr_draw_text_wrap(px, W, H, px2 + 6, ey + 4, desc,
+                          pw - 12, 8, 0xFF8A707F, shadow);
+    }
+
+    /* Medpack slots — usable any time. Heal 10 HP, consumes the kit. */
+    {
+        int hp_x = 30, hp_y = footer_y;
+        char hpbuf[24];
+        snprintf(hpbuf, sizeof(hpbuf), "HP  %d/%d",
+                 g_player.hp, g_player.hp_max);
+        sr_draw_text_shadow(px, W, H, hp_x, hp_y, hpbuf, 0xFF22CC22, shadow);
+
+        int bx = hp_x + 60, by = hp_y - 2;
+        for (int s = 0; s < CONSUMABLE_SLOTS; s++) {
+            if (player_consumables[s] != CONSUMABLE_HEALTH_KIT) continue;
+            if (ui_button(px, W, H, bx, by, 74, 12, "USE MEDPACK",
+                          0xFF113322, 0xFF226644, 0xFF44CC88)) {
+                int heal = 10;
+                g_player.hp += heal;
+                if (g_player.hp > g_player.hp_max)
+                    g_player.hp = g_player.hp_max;
+                player_consumables[s] = CONSUMABLE_NONE;
+            }
+            bx += 78;
+        }
     }
 
     /* Close button */
     if (ui_button(px, W, H, W - 60, H - 18, 50, 14, "CLOSE",
                   0xFF111122, 0xFF222244, 0xFF333366)) {
         deck_view_active = false;
-        deck_view_selected = -1;
+        deck_view_selected = 0;
     }
 }
 
