@@ -48,6 +48,8 @@ enum {
     STEX_ICON_ICE, STEX_ICON_ACID, STEX_ICON_FIRE, STEX_ICON_LIGHTNING,
     STEX_LOOT_CHEST,
     STEX_BOSS_FRAME_0, STEX_BOSS_FRAME_1, STEX_BOSS_FRAME_2,
+    /* Starmap node icons */
+    STEX_MAP_NORMAL, STEX_MAP_MINIBOSS, STEX_MAP_EVENT, STEX_MAP_BOSS,
     STEX_COUNT
 };
 static sr_texture stextures[STEX_COUNT];
@@ -117,6 +119,8 @@ static int  player_samples = 0;     /* samples collected (0-3) */
 static int  player_starmap = 0;     /* which star map we're on (0-2) */
 static bool current_map_boss_done = false;  /* boss beaten on current star map */
 static bool current_mission_is_boss = false; /* true if currently on a boss node mission */
+static bool current_mission_is_miniboss = false; /* true if currently on a miniboss node */
+static int  current_miniboss_type = ENEMY_MINIBOSS_1; /* which miniboss to spawn */
 static bool epilogue_is_win = false; /* true = victory, false = game over */
 
 /* ── Run stats (accumulated across the entire run) ─────────────── */

@@ -45,6 +45,7 @@ enum {
     CARD_DEFLECTOR_UP, /* deflector+: +6 shield, reflects 2 dmg back, cost 1 */
     CARD_STUN_GUN_UP,  /* stun gun+: stun 2 turns, 2 dmg, cost 1 */
     CARD_MICROWAVE_UP, /* microwave+: 7 dmg, if kill -> 5 dmg all, cost 2 */
+    CARD_JUNK,         /* junk: does nothing, costs 1 energy, clogs deck */
     CARD_TYPE_COUNT
 };
 
@@ -55,6 +56,7 @@ static const char *card_names[] = {
     "SNIPER", "SHOTGUN", "WELDER", "CHAINSAW", "LASER", "DEFLECTR", "STUN GUN", "MCROWAVE",
     "QCKSTEP",
     "SNIPER+", "SHOTGUN+", "WELDER+", "CHAINSAW+", "LASER+", "DEFLCTR+", "STUNGUN+", "MCROWAV+",
+    "JUNK",
 };
 
 /* Card colors — NOT-64 palette only (ABGR: 0xFFBBGGRR from #RRGGBB) */
@@ -92,6 +94,7 @@ static const uint32_t card_colors[] = {
     0xFF8A707F,  /* DEFLCTR+  - same as DEFLECTOR */
     0xFFF384A8,  /* STUNGUN+  - same as STUN GUN */
     0xFF4A7DF5,  /* MCROWAV+  - same as MICROWAVE */
+    0xFF444444,  /* JUNK      - grey */
 };
 
 static const int card_energy_cost[] = {
@@ -101,6 +104,7 @@ static const int card_energy_cost[] = {
     1, 1, 1, 2, 1, 1, 1, 2, /* class-specific: sniper, shotgun, welder, chainsaw, laser, deflector, stun gun, microwave */
     1, /* quickstep */
     1, 1, 1, 2, 1, 1, 1, 2, /* upgraded: sniper+, shotgun+, welder+, chainsaw+, laser+, deflector+, stun gun+, microwave+ */
+    1, /* junk */
 };
 
 /* Card target types */
@@ -140,6 +144,7 @@ static const int card_targets[] = {
     TARGET_SELF,          /* DEFLECTOR+ */
     TARGET_ENEMY,         /* STUN GUN+ */
     TARGET_ENEMY,         /* MICROWAVE+ */
+    TARGET_SELF,          /* JUNK (does nothing) */
 };
 
 /* ── Character classes ───────────────────────────────────────────── */
@@ -163,7 +168,7 @@ static char_class char_classes[] = {
 
 /* ── Enemy types (defined in sr_dungeon.h) ───────────────────────── */
 
-/* Sprite size: 32 for bosses, 16 for normal enemies */
+/* Sprite size: 32 for bosses, 16 for normal enemies (minibosses use 16) */
 static int spr_enemy_size(int enemy_type) {
     if (enemy_type >= ENEMY_BOSS_1 && enemy_type <= ENEMY_BOSS_3) return 32;
     return 16;
@@ -263,6 +268,11 @@ static enemy_template enemy_templates[] = {
     [ENEMY_BOSS_1]       = { "RAVAGER",    115,  7, 12, 2 },
     [ENEMY_BOSS_2]       = { "VOID WYRM",  130,  8, 14, 3 },
     [ENEMY_BOSS_3]       = { "HIVEMIND",   150,  9, 16, 2 },
+    /* Minibosses — tier 2 elites with boosted HP/damage */
+    [ENEMY_MINIBOSS_1]   = { "SHADOW ALPHA",  50,  5,  8, 2 }, /* based on Stalker */
+    [ENEMY_MINIBOSS_2]   = { "RAVAGER BROOD", 55,  6,  9, 1 }, /* based on Mauler */
+    [ENEMY_MINIBOSS_3]   = { "VENOM QUEEN",   42,  5,  7, 3 }, /* based on Acid Thrower */
+    [ENEMY_MINIBOSS_4]   = { "HIVE SENTINEL", 60,  5,  8, 2 }, /* based on Warden */
 };
 
 /* Roll random damage for an enemy type */
@@ -308,6 +318,10 @@ static void enemy_load_config(void) {
     enemy_load_one(&cfg, "boss_1",       ENEMY_BOSS_1);
     enemy_load_one(&cfg, "boss_2",       ENEMY_BOSS_2);
     enemy_load_one(&cfg, "boss_3",       ENEMY_BOSS_3);
+    enemy_load_one(&cfg, "miniboss_1",   ENEMY_MINIBOSS_1);
+    enemy_load_one(&cfg, "miniboss_2",   ENEMY_MINIBOSS_2);
+    enemy_load_one(&cfg, "miniboss_3",   ENEMY_MINIBOSS_3);
+    enemy_load_one(&cfg, "miniboss_4",   ENEMY_MINIBOSS_4);
     /* Load alien name pools */
     const char *prefixes = sr_config_get(&cfg, "name_prefixes");
     if (prefixes) {
@@ -558,9 +572,12 @@ static void combat_generate_rewards(combat_state *cs) {
 
     /* Chance percentages based on enemy type */
     int elem_pct, upgraded_pct;
-    if (cs->primary_enemy_type >= ENEMY_BOSS_1) {
+    if (cs->primary_enemy_type >= ENEMY_BOSS_1 && cs->primary_enemy_type <= ENEMY_BOSS_3) {
         elem_pct = 100;
         upgraded_pct = 40;
+    } else if (cs->primary_enemy_type >= ENEMY_MINIBOSS_1 && cs->primary_enemy_type <= ENEMY_MINIBOSS_4) {
+        elem_pct = 30;
+        upgraded_pct = 35;
     } else if (cs->primary_enemy_type >= ENEMY_STALKER) {
         /* Tier 2: stalker, mauler, acid thrower, warden */
         elem_pct = 5;
@@ -754,6 +771,17 @@ static void combat_roll_intents(combat_state *cs) {
                 else if (roll == 1) e->intent = INTENT_MOVE;
                 else if (roll == 2) e->intent = INTENT_BUFF;
                 else e->intent = INTENT_DEBUFF;
+            }
+        }
+        /* Miniboss: attack every 2 rounds, defend/buff in between */
+        else if (e->type >= ENEMY_MINIBOSS_1 && e->type <= ENEMY_MINIBOSS_4) {
+            if ((cs->turn % 2) == 0) {
+                e->intent = INTENT_ATTACK;
+            } else {
+                int roll = dng_rng_int(3);
+                if (roll == 0) e->intent = INTENT_DEFEND;
+                else if (roll == 1) e->intent = INTENT_BUFF;
+                else e->intent = INTENT_ATTACK;
             }
         }
         /* In range: usually attack, but sometimes defend or buff based on type */
@@ -1381,6 +1409,10 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
             }
             break;
         }
+
+        case CARD_JUNK:
+            combat_set_message(cs, "JUNK... USELESS!");
+            break;
     }
 
     /* Move card to discard (movement cards are exhausted instead) */
@@ -1509,13 +1541,14 @@ static void combat_begin_enemy_turn(combat_state *cs) {
         if (!e->alive) continue;
         if (e->lightning_stun > 0 || e->flash_timer > 10) continue;
         if (e->intent == INTENT_DEFEND) {
-            /* Tier 2 enemies get stronger shields */
+            /* Tier 2 and miniboss enemies get stronger shields */
             bool tier2 = (e->type >= ENEMY_STALKER && e->type <= ENEMY_WARDEN);
-            e->shield = tier2 ? 6 : 4;
+            bool miniboss = (e->type >= ENEMY_MINIBOSS_1 && e->type <= ENEMY_MINIBOSS_4);
+            e->shield = miniboss ? 8 : (tier2 ? 6 : 4);
             combat_log(cs, "%s raises shield (%d)",
                        enemy_templates[e->type].name, e->shield);
-            /* Warden: also shields all allies */
-            if (e->type == ENEMY_WARDEN) {
+            /* Warden/Hive Sentinel: also shields all allies */
+            if (e->type == ENEMY_WARDEN || e->type == ENEMY_MINIBOSS_4) {
                 for (int j = 0; j < cs->enemy_count; j++) {
                     if (j == i || !cs->enemies[j].alive) continue;
                     cs->enemies[j].shield += 2;
@@ -1525,10 +1558,13 @@ static void combat_begin_enemy_turn(combat_state *cs) {
             }
         } else if (e->intent == INTENT_BUFF) {
             e->atk_buff = 3;
-            /* Mauler: stronger rage buff */
-            if (e->type == ENEMY_MAULER) e->atk_buff = 5;
+            /* Mauler/Ravager Brood: stronger rage buff */
+            if (e->type == ENEMY_MAULER || e->type == ENEMY_MINIBOSS_2) e->atk_buff = 5;
             /* Boss: bigger buff */
-            if (e->type >= ENEMY_BOSS_1) e->atk_buff = 4;
+            if (e->type >= ENEMY_BOSS_1 && e->type <= ENEMY_BOSS_3) e->atk_buff = 4;
+            /* Miniboss: moderate buff */
+            if (e->type >= ENEMY_MINIBOSS_1 && e->type <= ENEMY_MINIBOSS_4 &&
+                e->type != ENEMY_MINIBOSS_2) e->atk_buff = 4;
             combat_log(cs, "%s enrages (+%d atk)",
                        enemy_templates[e->type].name, e->atk_buff);
         } else if (e->intent == INTENT_DEBUFF) {
@@ -1681,8 +1717,8 @@ static void combat_update(combat_state *cs) {
                 combat_set_message(cs, buf);
             } else {
                 combat_deal_damage_player(cs, dmg);
-                /* Stalker: double strike */
-                if (e->type == ENEMY_STALKER) {
+                /* Stalker/Shadow Alpha: double strike */
+                if (e->type == ENEMY_STALKER || e->type == ENEMY_MINIBOSS_1) {
                     int dmg2 = enemy_roll_damage(e->type);
                     if (e->ice_turns > 0) dmg2 = dmg2 / 2;
                     if (dmg2 < 1) dmg2 = 1;
@@ -1691,8 +1727,8 @@ static void combat_update(combat_state *cs) {
                     snprintf(buf, sizeof(buf), "%s x2 -%dHP",
                              enemy_templates[e->type].name, dmg + dmg2);
                 }
-                /* Acid Thrower: applies acid stacks to player (extra DoT damage) */
-                else if (e->type == ENEMY_ACID_THROWER) {
+                /* Acid Thrower/Venom Queen: applies acid stacks to player */
+                else if (e->type == ENEMY_ACID_THROWER || e->type == ENEMY_MINIBOSS_3) {
                     /* Log acid effect — actual acid damage on player is through the hit */
                     combat_log(cs, "  ACID THROWER corrodes armor!");
                     snprintf(buf, sizeof(buf), "%s ACID -%dHP",
@@ -2298,6 +2334,7 @@ static const char *card_effect_text(int card_type) {
         case CARD_DEFLECTOR_UP:return "+6 SHIELD\nREFLECT DMG";
         case CARD_STUN_GUN_UP: return "STUN 2T\n2 DMG";
         case CARD_MICROWAVE_UP:return "7 DMG\n*5 DMG ALL";
+        case CARD_JUNK:        return "DOES\nNOTHING";
         default:               return "";
     }
 }
@@ -2340,6 +2377,7 @@ static const char *card_description_text(int card_type) {
         case CARD_DEFLECTOR_UP:return "UPGRADED DEFLECTOR.\n+6 SHIELD, REFLECTS\n2 DMG BACK.";
         case CARD_STUN_GUN_UP: return "UPGRADED STUN GUN.\nSTUN 2 TURNS AND\nDEAL 2 DAMAGE.";
         case CARD_MICROWAVE_UP:return "UPGRADED MICROWAVE.\n7 DMG, IF KILL ALL\nOTHERS TAKE 5.";
+        case CARD_JUNK:        return "WORTHLESS JUNK.\nDOES NOTHING BUT\nCLOG YOUR DECK.";
         default:               return "";
     }
 }

@@ -59,6 +59,35 @@ warden:
   dmg_max: 6
   range: 2
 
+# ── Minibosses (Tier 2 elites) ──────────────────────
+miniboss_1:
+  name: SHADOW ALPHA
+  hp: 50
+  dmg_min: 5
+  dmg_max: 8
+  range: 2
+
+miniboss_2:
+  name: RAVAGER BROOD
+  hp: 55
+  dmg_min: 6
+  dmg_max: 9
+  range: 1
+
+miniboss_3:
+  name: VENOM QUEEN
+  hp: 42
+  dmg_min: 5
+  dmg_max: 7
+  range: 3
+
+miniboss_4:
+  name: HIVE SENTINEL
+  hp: 60
+  dmg_min: 5
+  dmg_max: 8
+  range: 2
+
 # ── Bosses ───────────────────────────────────────────
 boss_1:
   name: RAVAGER

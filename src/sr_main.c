@@ -251,6 +251,8 @@ typedef struct {
 
     /* Boss mission state */
     bool is_boss_mission;
+    bool is_miniboss_mission;
+    int  miniboss_type;
 } save_header;
 
 /* Variables used by save/load — declared here so they're visible to game_save/game_load */
@@ -354,6 +356,8 @@ static void game_save(void) {
     memcpy(hdr.starmap_visited_path, g_starmap.visited_path, sizeof(hdr.starmap_visited_path));
     hdr.starmap_visited_path_count = g_starmap.visited_path_count;
     hdr.is_boss_mission = current_mission_is_boss;
+    hdr.is_miniboss_mission = current_mission_is_miniboss;
+    hdr.miniboss_type = current_miniboss_type;
 
     FILE *f = fopen(SAVE_FILE, "wb");
     if (!f) return;
@@ -452,16 +456,25 @@ static bool game_load(void) {
         app_state = STATE_RUNNING;
     }
 
-    /* Restore boss mission state */
+    /* Restore boss/miniboss mission state */
     current_mission_is_boss = hdr.is_boss_mission;
+    current_mission_is_miniboss = hdr.is_miniboss_mission;
+    current_miniboss_type = hdr.miniboss_type;
     /* Also check starmap node in case save predates this field */
     if (!current_mission_is_boss && g_starmap.current_node >= 0 &&
         g_starmap.current_node < g_starmap.node_count &&
         g_starmap.nodes[g_starmap.current_node].is_boss)
         current_mission_is_boss = true;
+    if (!current_mission_is_miniboss && g_starmap.current_node >= 0 &&
+        g_starmap.current_node < g_starmap.node_count &&
+        g_starmap.nodes[g_starmap.current_node].node_type == NODE_MINIBOSS)
+        current_mission_is_miniboss = true;
 
     if (current_mission_is_boss)
         printf("[LOAD] Boss mission active (node %d)\n", g_starmap.current_node);
+    if (current_mission_is_miniboss)
+        printf("[LOAD] Miniboss mission active (node %d, type %d)\n",
+               g_starmap.current_node, current_miniboss_type);
 
     /* Initialize enemy AI from restored dungeon grid */
     dng_enemies_init(dng_state.dungeon);
@@ -1215,6 +1228,39 @@ static void game_init_ship(void) {
                 }
             }
 
+            /* Place miniboss in a random room if this is a miniboss mission */
+            if (current_mission_is_miniboss && !current_mission_is_boss) {
+                int mb_type = current_miniboss_type;
+                bool placed = false;
+                /* Place in a random non-bridge room on the last floor */
+                int fl = current_ship.num_decks - 1;
+                if (fl >= 0 && fl < DNG_MAX_FLOORS) {
+                    sr_dungeon *dd = &dng_state.floors[fl];
+                    /* Try rooms in random order */
+                    for (int attempts = 0; attempts < dd->room_count * 2 && !placed; attempts++) {
+                        int r = dng_rng_int(dd->room_count);
+                        /* Skip bridge (room 0 usually) and spawn room */
+                        if (r == 0) continue;
+                        int bx = dd->room_cx[r] + 1;
+                        int by = dd->room_cy[r] + 1;
+                        if (bx < 1 || bx > dd->w) bx = dd->room_cx[r];
+                        if (by < 1 || by > dd->h) by = dd->room_cy[r];
+                        if (dd->aliens[by][bx] != 0) continue; /* already occupied */
+                        dd->aliens[by][bx] = (uint8_t)(mb_type + 1);
+                        snprintf(dd->alien_names[by][bx], 16, "%s",
+                                 enemy_templates[mb_type].name);
+                        printf("[MINIBOSS] %s placed on floor %d, room %d at gx=%d gy=%d\n",
+                               enemy_templates[mb_type].name, fl, r, bx, by);
+                        fflush(stdout);
+                        placed = true;
+                    }
+                }
+                if (!placed) {
+                    printf("[MINIBOSS] WARNING: Could not place miniboss!\n");
+                    fflush(stdout);
+                }
+            }
+
             /* Re-init player at the JSON floor's spawn point */
             dng_player_init(&dng_state.player,
                             dng_state.dungeon->spawn_gx,
@@ -1357,6 +1403,7 @@ static void mission_complete_return_to_hub(int base_reward, const char *msg, boo
     if (current_mission_is_boss) {
         player_samples++;
         current_mission_is_boss = false;
+        current_mission_is_miniboss = false;
         current_map_boss_done = true;
 
         /* Demo ends after first boss — show epilogue */
@@ -1761,6 +1808,7 @@ static void draw_class_select(sr_framebuffer *fb_ptr) {
             player_starmap = 0;
             current_map_boss_done = false;
             current_mission_is_boss = false;
+            current_mission_is_miniboss = false;
             /* Reset starmap and run stats for new game */
             memset(&g_starmap, 0, sizeof(g_starmap));
             memset(&g_run_stats, 0, sizeof(g_run_stats));
@@ -2225,6 +2273,11 @@ static void init(void) {
     stextures[STEX_BOSS_FRAME_0]       = sr_texture_load("assets/sprites/final_boss/astrozom_side00.png");
     stextures[STEX_BOSS_FRAME_1]       = sr_texture_load("assets/sprites/final_boss/astrozom_side01.png");
     stextures[STEX_BOSS_FRAME_2]       = sr_texture_load("assets/sprites/final_boss/astrozom_side02.png");
+    /* Starmap node icons */
+    stextures[STEX_MAP_NORMAL]         = sr_texture_load("assets/sprites/map_normal.png");
+    stextures[STEX_MAP_MINIBOSS]       = sr_texture_load("assets/sprites/map_miniboss.png");
+    stextures[STEX_MAP_EVENT]          = sr_texture_load("assets/sprites/map_event.png");
+    stextures[STEX_MAP_BOSS]           = sr_texture_load("assets/sprites/map_boss.png");
 
     /* Map enemy types to sprite texture indices (-1 = use raw index) */
     memset(enemy_to_stex, -1, sizeof(enemy_to_stex));
@@ -2239,6 +2292,11 @@ static void init(void) {
     enemy_to_stex[ENEMY_BOSS_1]       = STEX_BOSS_FRAME_0;
     enemy_to_stex[ENEMY_BOSS_2]       = STEX_BOSS_FRAME_0;
     enemy_to_stex[ENEMY_BOSS_3]       = STEX_BOSS_FRAME_0;
+    /* Minibosses reuse tier 2 sprites */
+    enemy_to_stex[ENEMY_MINIBOSS_1]   = STEX_STALKER;      /* Shadow Alpha → Stalker sprite */
+    enemy_to_stex[ENEMY_MINIBOSS_2]   = STEX_MAULER;       /* Ravager Brood → Mauler sprite */
+    enemy_to_stex[ENEMY_MINIBOSS_3]   = STEX_ACID_THROWER; /* Venom Queen → Acid Thrower sprite */
+    enemy_to_stex[ENEMY_MINIBOSS_4]   = STEX_WARDEN;       /* Hive Sentinel → Warden sprite */
     enemy_to_stex_init = true;
 
     /* Build console textures from embedded sprite data for 3D billboard rendering */
@@ -3619,6 +3677,7 @@ static void event(const sapp_event *ev) {
                 player_starmap = 0;
                 current_map_boss_done = false;
                 current_mission_is_boss = false;
+                current_mission_is_miniboss = false;
                 memset(&g_starmap, 0, sizeof(g_starmap));
                 memset(&g_run_stats, 0, sizeof(g_run_stats));
                 if (skip_intro) {

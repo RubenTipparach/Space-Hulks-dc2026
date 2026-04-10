@@ -5,89 +5,189 @@
       "levelFile": "sample_enemy_ship.json",
       "difficulty": 0,
       "isBoss": false,
-      "x": 40,
+      "nodeType": "normal",
+      "x": 30,
       "y": 135,
-      "next": [2, 1, 3]
+      "next": [1, 2, 3]
     },
     {
       "name": "SECTOR DELTA-1",
       "levelFile": "enemy_ship_small_2.json",
       "difficulty": 1,
       "isBoss": false,
-      "x": 140,
-      "y": 67,
+      "nodeType": "normal",
+      "x": 90,
+      "y": 55,
       "next": [4, 5]
     },
     {
-      "name": "SECTOR EPSILON-1",
-      "levelFile": "enemy_ship_small_3.json",
+      "name": "DISTRESS BEACON",
       "difficulty": 1,
       "isBoss": false,
-      "x": 140,
-      "y": 134,
-      "next": [6, 4]
+      "nodeType": "event",
+      "eventId": 0,
+      "x": 90,
+      "y": 135,
+      "next": [5, 6]
     },
     {
       "name": "SECTOR ZETA-1",
-      "levelFile": "enemy_ship_small_4.json",
+      "levelFile": "enemy_ship_small_3.json",
       "difficulty": 1,
       "isBoss": false,
-      "x": 140,
-      "y": 202,
-      "next": [6, 4]
+      "nodeType": "normal",
+      "x": 90,
+      "y": 215,
+      "next": [5, 6]
     },
     {
       "name": "SECTOR SIGMA-2",
+      "levelFile": "enemy_ship_small_4.json",
+      "difficulty": 1,
+      "isBoss": false,
+      "nodeType": "normal",
+      "x": 150,
+      "y": 55,
+      "next": [7, 8]
+    },
+    {
+      "name": "SHADOW DEN",
       "levelFile": "enemy_ship_small_5.json",
-      "difficulty": 1,
+      "difficulty": 2,
       "isBoss": false,
-      "x": 240,
-      "y": 67,
-      "next": [8]
+      "nodeType": "miniboss",
+      "x": 150,
+      "y": 135,
+      "next": [7, 8]
     },
     {
-      "name": "SECTOR OMEGA-2",
-      "levelFile": "enemy_ship_small_6.json",
+      "name": "ANOMALY SCAN",
       "difficulty": 1,
       "isBoss": false,
-      "x": 240,
-      "y": 134,
+      "nodeType": "event",
+      "eventId": 1,
+      "x": 150,
+      "y": 215,
       "next": [8]
-    },
-    {
-      "name": "SECTOR THETA-2",
-      "levelFile": "enemy_ship_small_7.json",
-      "difficulty": 1,
-      "isBoss": false,
-      "x": 240,
-      "y": 202,
-      "next": [8, 7]
     },
     {
       "name": "SECTOR KAPPA-3",
-      "levelFile": "enemy_ship_medium_1_long.json",
+      "levelFile": "enemy_ship_small_6.json",
       "difficulty": 2,
       "isBoss": false,
-      "x": 340,
-      "y": 67,
-      "next": [9]
+      "nodeType": "normal",
+      "x": 210,
+      "y": 100,
+      "next": [9, 10, 11, 12]
     },
     {
-      "name": "SECTOR NOVA-3",
+      "name": "RUINS DETECTED",
+      "difficulty": 2,
+      "isBoss": false,
+      "nodeType": "event",
+      "eventId": 2,
+      "x": 210,
+      "y": 190,
+      "next": [10, 11, 12]
+    },
+    {
+      "name": "SECTOR NOVA-4",
+      "levelFile": "enemy_ship_small_7.json",
+      "difficulty": 2,
+      "isBoss": false,
+      "nodeType": "normal",
+      "x": 270,
+      "y": 40,
+      "next": [13, 14]
+    },
+    {
+      "name": "BROOD NEST",
       "levelFile": "enemy_ship_medium_1_long.json",
       "difficulty": 2,
       "isBoss": false,
+      "nodeType": "miniboss",
+      "x": 270,
+      "y": 105,
+      "next": [13, 14]
+    },
+    {
+      "name": "CARGO DRIFT",
+      "difficulty": 2,
+      "isBoss": false,
+      "nodeType": "event",
+      "eventId": 3,
+      "x": 270,
+      "y": 175,
+      "next": [14, 15]
+    },
+    {
+      "name": "SECTOR RIGEL-4",
+      "levelFile": "enemy_ship_small_5.json",
+      "difficulty": 2,
+      "isBoss": false,
+      "nodeType": "normal",
+      "x": 270,
+      "y": 240,
+      "next": [14, 15]
+    },
+    {
+      "name": "VENOM PIT",
+      "levelFile": "enemy_ship_small_6.json",
+      "difficulty": 3,
+      "isBoss": false,
+      "nodeType": "miniboss",
       "x": 340,
-      "y": 202,
-      "next": [9]
+      "y": 65,
+      "next": [16, 17]
+    },
+    {
+      "name": "SECTOR ORION-5",
+      "levelFile": "enemy_ship_small_7.json",
+      "difficulty": 3,
+      "isBoss": false,
+      "nodeType": "normal",
+      "x": 340,
+      "y": 145,
+      "next": [16, 17]
+    },
+    {
+      "name": "VOID STORM",
+      "difficulty": 3,
+      "isBoss": false,
+      "nodeType": "event",
+      "eventId": 7,
+      "x": 340,
+      "y": 225,
+      "next": [17]
+    },
+    {
+      "name": "HIVE OUTPOST",
+      "levelFile": "enemy_ship_medium_1_long.json",
+      "difficulty": 3,
+      "isBoss": false,
+      "nodeType": "miniboss",
+      "x": 400,
+      "y": 90,
+      "next": [18]
+    },
+    {
+      "name": "SECTOR LYRA-6",
+      "levelFile": "enemy_ship_small_4.json",
+      "difficulty": 3,
+      "isBoss": false,
+      "nodeType": "normal",
+      "x": 400,
+      "y": 190,
+      "next": [18]
     },
     {
       "name": "HIVE VESSEL ALPHA",
       "levelFile": "enemy_ship_medium_2_boss.json",
-      "difficulty": 3,
+      "difficulty": 4,
       "isBoss": true,
+      "nodeType": "boss",
       "bossRoom": 5,
-      "x": 440,
+      "x": 455,
       "y": 135,
       "next": []
     }
