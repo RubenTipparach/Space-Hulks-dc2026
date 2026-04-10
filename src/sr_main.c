@@ -1029,6 +1029,7 @@ static int  console_confirm_gx = -1, console_confirm_gy = -1; /* pending console
 static bool chest_overlay_active = false;
 static int  chest_choices[3];        /* 3 elemental card choices */
 static int  chest_gx, chest_gy;     /* position of opened chest */
+static bool chest_is_rare = false;   /* true for miniboss/boss ship chests */
 
 static void game_init_ship(void) {
     printf("[game_init_ship] Starting ship initialization\n");
@@ -1576,6 +1577,8 @@ static void check_random_encounter(void) {
             g_run_stats.chests_found++;
             chest_gx = p->gx;
             chest_gy = p->gy;
+            /* Miniboss / boss ships yield rare rewards. */
+            chest_is_rare = current_mission_is_miniboss || current_mission_is_boss;
             /* Generate 3 unique elemental card choices */
             int elems[] = { CARD_ICE, CARD_ACID, CARD_FIRE, CARD_LIGHTNING };
             for (int i = 3; i > 0; i--) {
@@ -2400,17 +2403,14 @@ static void dispatch_dialog_action(int action) {
     if (app_state != STATE_SHIP_HUB) return;
     switch (action) {
         case DIALOG_ACTION_STARMAP:
-            if (g_hub.mission_available) {
-                snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "NEUTRALIZE THE ENEMY SHIP FIRST");
-                g_hub.hud_msg_timer = 90;
-            } else {
-                if (current_map_boss_done) { player_starmap++; current_map_boss_done = false; g_starmap.active = false; }
-                if (!g_starmap.active) {
-                    dng_rng_seed((uint32_t)(player_sector * 1337 + 42 + player_starmap * 9999));
-                    starmap_generate_or_load(&g_starmap, player_sector);
-                }
-                app_state = STATE_STARMAP;
+            /* Always allow viewing the starmap — jumping is blocked inside
+               the starmap scene when g_hub.mission_available is true. */
+            if (current_map_boss_done) { player_starmap++; current_map_boss_done = false; g_starmap.active = false; }
+            if (!g_starmap.active) {
+                dng_rng_seed((uint32_t)(player_sector * 1337 + 42 + player_starmap * 9999));
+                starmap_generate_or_load(&g_starmap, player_sector);
             }
+            app_state = STATE_STARMAP;
             break;
         case DIALOG_ACTION_SHOP:
             dng_rng_seed((uint32_t)(player_sector * 7777 + 123));
@@ -2936,8 +2936,13 @@ static void frame(void) {
                 px[i] = 0xFF000000 | ((((c>>16)&0xFF)/3)<<16) |
                         ((((c>>8)&0xFF)/3)<<8) | (((c)&0xFF)/3);
             }
-            sr_draw_text_centered(px, W, H, 20, "CHEST FOUND!", 0xFF44CC44, shadow);
-            sr_draw_text_centered(px, W, H, 34, "PICK AN ELEMENTAL CARD", 0xFFCCCCCC, shadow);
+            if (chest_is_rare) {
+                sr_draw_text_centered(px, W, H, 20, "RARE CACHE!", 0xFFFFDD44, shadow);
+                sr_draw_text_centered(px, W, H, 34, "PICK AN ELEMENTAL CARD", 0xFFFFE088, shadow);
+            } else {
+                sr_draw_text_centered(px, W, H, 20, "CHEST FOUND!", 0xFF44CC44, shadow);
+                sr_draw_text_centered(px, W, H, 34, "PICK AN ELEMENTAL CARD", 0xFFCCCCCC, shadow);
+            }
             /* 3 card choices */
             int cw = 72, ch = 80, cgap = 12;
             int ctotal = 3 * (cw + cgap) - cgap;
@@ -2946,6 +2951,8 @@ static void frame(void) {
                 int cx = cx0 + i * (cw + cgap);
                 combat_draw_card_content(px, W, H, cx, cy0, cw, ch,
                                          chest_choices[i], false, shadow, -1);
+                if (chest_is_rare)
+                    combat_draw_rare_outline(px, W, H, cx, cy0, cw, ch);
             }
             /* SKIP button */
             int skip_x = (W - 50) / 2, skip_y = cy0 + ch + 14;
@@ -3289,22 +3296,19 @@ static void handle_screen_tap(float sx, float sy) {
                     case DIALOG_ACTION_STARMAP:
                         printf("[STARMAP] mission_available=%d boss_done=%d sector=%d\n",
                                g_hub.mission_available, current_map_boss_done, player_sector);
-                        if (g_hub.mission_available) {
-                            printf("[STARMAP] BLOCKED: mission active\n");
-                            snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "NEUTRALIZE THE ENEMY SHIP FIRST");
-                            g_hub.hud_msg_timer = 90;
-                        } else {
-                            if (current_map_boss_done) {
-                                player_starmap++;
-                                current_map_boss_done = false;
-                                g_starmap.active = false; /* force new map for next sector */
-                            }
-                            if (!g_starmap.active) {
-                                dng_rng_seed((uint32_t)(player_sector * 1337 + 42 + player_starmap * 9999));
-                                starmap_generate_or_load(&g_starmap, player_sector);
-                            }
-                            app_state = STATE_STARMAP;
+                        /* Always allow viewing the starmap. The JUMP button
+                           inside the starmap scene is hidden while a mission
+                           is active. */
+                        if (current_map_boss_done) {
+                            player_starmap++;
+                            current_map_boss_done = false;
+                            g_starmap.active = false; /* force new map for next sector */
                         }
+                        if (!g_starmap.active) {
+                            dng_rng_seed((uint32_t)(player_sector * 1337 + 42 + player_starmap * 9999));
+                            starmap_generate_or_load(&g_starmap, player_sector);
+                        }
+                        app_state = STATE_STARMAP;
                         break;
                     case DIALOG_ACTION_SHOP:
                         dng_rng_seed((uint32_t)(player_sector * 7777 + 123));
@@ -3389,7 +3393,8 @@ static void handle_screen_tap(float sx, float sy) {
 
     if (app_state == STATE_STARMAP) {
         if (g_starmap.confirm_active) return; /* clicks handled by ui_button in draw */
-        /* Click on selectable nodes — select or open confirm */
+        /* Click on selectable nodes — select; only open confirm if the
+           player is free to jump (no active mission). */
         starmap_node *cur = &g_starmap.nodes[g_starmap.current_node];
         for (int c = 0; c < cur->next_count; c++) {
             int target = cur->next[c];
@@ -3397,8 +3402,8 @@ static void handle_screen_tap(float sx, float sy) {
             starmap_node *nd = &g_starmap.nodes[target];
             float ddx = fx - nd->x, ddy = fy - nd->y;
             if (ddx * ddx + ddy * ddy <= 14 * 14) {
-                if (g_starmap.cursor == c) {
-                    /* Already selected — open confirm dialog */
+                if (g_starmap.cursor == c && !g_hub.mission_available) {
+                    /* Already selected and no blocking mission — open confirm */
                     g_starmap.confirm_active = true;
                     g_starmap.confirm_target = target;
                 } else {
@@ -3854,21 +3859,19 @@ static void event(const sapp_event *ev) {
                             break;
                         }
                         case DIALOG_ACTION_STARMAP:
-                            if (g_hub.mission_available) {
-                                snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "INVESTIGATE THE DERELICT FIRST");
-                                g_hub.hud_msg_timer = 90;
-                            } else {
-                                if (current_map_boss_done) {
-                                    player_starmap++;
-                                    current_map_boss_done = false;
-                                    g_starmap.active = false;
-                                }
-                                if (!g_starmap.active) {
-                                    dng_rng_seed((uint32_t)(player_sector * 1337 + 42 + player_starmap * 9999));
-                                    starmap_generate_or_load(&g_starmap, player_sector);
-                                }
-                                app_state = STATE_STARMAP;
+                            /* Always allow viewing the starmap. The JUMP
+                               button inside the starmap scene is hidden
+                               while a mission is active. */
+                            if (current_map_boss_done) {
+                                player_starmap++;
+                                current_map_boss_done = false;
+                                g_starmap.active = false;
                             }
+                            if (!g_starmap.active) {
+                                dng_rng_seed((uint32_t)(player_sector * 1337 + 42 + player_starmap * 9999));
+                                starmap_generate_or_load(&g_starmap, player_sector);
+                            }
+                            app_state = STATE_STARMAP;
                             break;
                         case DIALOG_ACTION_SHOP:
                             dng_rng_seed((uint32_t)(player_sector * 7777 + 123));
@@ -4027,13 +4030,16 @@ static void event(const sapp_event *ev) {
             app_state = STATE_SHIP_HUB;
         } else if (ev->key_code == SAPP_KEYCODE_ENTER || ev->key_code == SAPP_KEYCODE_SPACE) {
             if (!g_starmap.confirm_active) {
-                /* Open confirm dialog */
-                starmap_node *cur = &g_starmap.nodes[g_starmap.current_node];
-                if (cur->next_count > 0 && g_starmap.cursor >= 0 && g_starmap.cursor < cur->next_count) {
-                    int next = cur->next[g_starmap.cursor];
-                    if (next >= 0 && next < g_starmap.node_count) {
-                        g_starmap.confirm_active = true;
-                        g_starmap.confirm_target = next;
+                /* Open confirm dialog — only if the player is free to jump
+                   (no active mission). */
+                if (!g_hub.mission_available) {
+                    starmap_node *cur = &g_starmap.nodes[g_starmap.current_node];
+                    if (cur->next_count > 0 && g_starmap.cursor >= 0 && g_starmap.cursor < cur->next_count) {
+                        int next = cur->next[g_starmap.cursor];
+                        if (next >= 0 && next < g_starmap.node_count) {
+                            g_starmap.confirm_active = true;
+                            g_starmap.confirm_target = next;
+                        }
                     }
                 }
             } else {

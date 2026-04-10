@@ -2277,6 +2277,43 @@ static void combat_draw_rect_outline(uint32_t *px, int W, int H,
     }
 }
 
+/* Draw a shiny, slightly flickering gold double-outline used to mark rare
+   card drops (e.g. rewards from miniboss encounters). Uses the global
+   frame_counter to drive the animation so it works in any scene. */
+static void combat_draw_rare_outline(uint32_t *px, int W, int H,
+                                     int x0, int y0, int w, int h) {
+    /* Two gold shades that slowly pulse between each other. */
+    int phase = (frame_counter / 4) & 0x7;
+    /* Triangle wave 0..4..0 */
+    int t = phase <= 4 ? phase : (8 - phase);
+    /* Base 0xFFCCAA33 → bright 0xFFFFE066 */
+    int r = 0x33 + (0x66 - 0x33) * t / 4;
+    int g = 0xAA + (0xE0 - 0xAA) * t / 4;
+    int b = 0xCC + (0xFF - 0xCC) * t / 4;
+    uint32_t gold      = 0xFF000000 | ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
+    uint32_t gold_dark = 0xFF000000 | ((uint32_t)(r/2) << 16) | ((uint32_t)(g/2) << 8) | (uint32_t)(b/2);
+
+    /* Outer bright ring just outside the card */
+    combat_draw_rect_outline(px, W, H, x0 - 1, y0 - 1, w + 2, h + 2, gold);
+    /* Inner card-edge ring */
+    combat_draw_rect_outline(px, W, H, x0, y0, w, h, gold);
+    /* Dim inset ring for a slight double-line "shine" feel */
+    combat_draw_rect_outline(px, W, H, x0 + 1, y0 + 1, w - 2, h - 2, gold_dark);
+
+    /* Occasional sparkle pixels at the corners (tied to frame counter) */
+    int spark = (frame_counter / 6) & 0x3;
+    uint32_t sparkle = 0xFFFFFFFF;
+    if (spark == 0 && x0 >= 0 && y0 >= 0 && x0 < W && y0 < H)
+        px[y0 * W + x0] = sparkle;
+    if (spark == 1 && x0 + w - 1 < W && y0 >= 0 && x0 + w - 1 >= 0 && y0 < H)
+        px[y0 * W + (x0 + w - 1)] = sparkle;
+    if (spark == 2 && x0 >= 0 && y0 + h - 1 < H && x0 < W && y0 + h - 1 >= 0)
+        px[(y0 + h - 1) * W + x0] = sparkle;
+    if (spark == 3 && x0 + w - 1 < W && y0 + h - 1 < H &&
+        x0 + w - 1 >= 0 && y0 + h - 1 >= 0)
+        px[(y0 + h - 1) * W + (x0 + w - 1)] = sparkle;
+}
+
 static void combat_draw_bar(uint32_t *px, int W, int H,
                             int x, int y, int w, int h,
                             int val, int max_val, uint32_t fg, uint32_t bg) {

@@ -1034,7 +1034,7 @@ static void shop_generate(shop_state *shop) {
     shop->active = true;
 }
 
-/* Generate medbay shop: expensive elemental cards (biomass) + cheap consumables (scrap) */
+/* Generate medbay shop: mostly elemental cards (biomass) + health consumables (scrap) */
 static void medbay_shop_generate(shop_state *shop) {
     memset(shop, 0, sizeof(*shop));
 
@@ -1046,8 +1046,8 @@ static void medbay_shop_generate(shop_state *shop) {
     }
 
     int idx = 0;
-    /* 2 elemental cards — expensive, costs biomass */
-    for (int i = 0; i < 2 && idx < SHOP_MAX_CARDS; i++, idx++) {
+    /* 4 elemental cards (one of each, shuffled order) — costs biomass */
+    for (int i = 0; i < 4 && idx < SHOP_MAX_CARDS; i++, idx++) {
         shop->cards[idx] = elem[i];
         shop->prices[idx] = 135;
         shop->is_bio[idx] = true;
@@ -2026,8 +2026,13 @@ static void draw_starmap(uint32_t *px, int W, int H) {
             }
         }
     } else {
-        /* Jump button — opens confirm dialog */
-        if (reachable_count > 0) {
+        /* Jump button — opens confirm dialog. Hidden while a mission is
+           active; the player can still browse the starmap but cannot jump
+           until the current derelict is cleared. */
+        if (g_hub.mission_available) {
+            sr_draw_text_shadow(px, W, H, W/2 - 17 * 3, H - 26,
+                                "CLEAR THE DERELICT TO JUMP", 0xFFCC8822, shadow);
+        } else if (reachable_count > 0) {
             if (ui_button(px, W, H, W/2 - 30, H - 30, 60, 14, "JUMP",
                           0xFF111133, 0xFF222255, 0xFF333377)) {
                 int next = reachable[g_starmap.cursor];
