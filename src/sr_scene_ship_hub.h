@@ -2435,16 +2435,16 @@ static void hub_draw_hud(uint32_t *px, int W, int H) {
     sr_draw_text_shadow(px, W, H, 4, 34, "BIO", 0xFFCCCCCC, shadow);
     sr_draw_text_shadow(px, W, H, 4 + 4 * 6, 34, bio_num, 0xFF44CC88, shadow);
 
-    /* Sector + Samples */
+    /* Sector + Samples — right-aligned, leaving room for hamburger menu at W-16..W-4 */
     char sec_buf[32];
     snprintf(sec_buf, sizeof(sec_buf), "SECTOR %d", player_sector + 1);
-    sr_draw_text_shadow(px, W, H, W - 60, 4, sec_buf, 0xFF888888, shadow);
+    sr_draw_text_shadow(px, W, H, W - 18 - sr_text_width(sec_buf), 4, sec_buf, 0xFF888888, shadow);
 
     if (mission_briefed) {
         char samp_buf[32];
         snprintf(samp_buf, sizeof(samp_buf), "SAMPLES %d/%d", player_samples, SAMPLES_REQUIRED);
         uint32_t samp_col = (player_samples >= SAMPLES_REQUIRED) ? 0xFF44CC44 : 0xFFCC8822;
-        sr_draw_text_shadow(px, W, H, W - 78, 14, samp_buf, samp_col, shadow);
+        sr_draw_text_shadow(px, W, H, W - 18 - sr_text_width(samp_buf), 14, samp_buf, samp_col, shadow);
     }
 
     /* Mission objectives */
@@ -2478,10 +2478,11 @@ static void hub_draw_hud(uint32_t *px, int W, int H) {
         }
     }
 
-    /* Deck button (clickable) */
+    /* Deck button (clickable) — placed below the minimap to avoid overlap.
+       Hub minimap is at y=28 with height g_hub.dungeon.h * 2. */
     char deck_buf[32];
     snprintf(deck_buf, sizeof(deck_buf), "DECK %d", g_player.persistent_deck_count);
-    int deck_btn_y = 26;
+    int deck_btn_y = 28 + g_hub.dungeon.h * 2 + 4;
     if (ui_button(px, W, H, W - 70, deck_btn_y, 66, 12, deck_buf,
                   0xFF1A1A2A, 0xFF222244, 0xFF333366)) {
         deck_view_active = true;

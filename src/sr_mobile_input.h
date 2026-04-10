@@ -12,6 +12,10 @@ static float  touch_cur_sx, touch_cur_sy;
 
 #define TOUCH_TAP_MAX_TIME   0.25
 #define TOUCH_SWIPE_MIN_DIST 30.0f
+/* Central horizontal deadzone (fraction of screen width). Taps inside this
+   zone do NOT trigger a strafe — prevents accidental side-steps when the
+   player taps near the middle of the screen. 0.4 = middle 40%. */
+#define TOUCH_STRAFE_DEADZONE 0.4f
 
 
 static void dng_touch_began(float sx, float sy, double time) {
@@ -74,13 +78,17 @@ static void dng_touch_ended(float sx, float sy, double time) {
         /* Set click state for ui_button detection */
         handle_screen_tap(sx, sy);
 
-        /* Short tap — strafe based on screen half, only if not on a button */
+        /* Short tap — strafe based on screen half, only if not on a button.
+           A central deadzone (middle TOUCH_STRAFE_DEADZONE of the screen)
+           ignores the tap to prevent accidental strafes. */
         if (!in_button_zone) {
-            float mid_x = sapp_widthf() * 0.5f;
-            if (sx < mid_x) {
+            float screen_w = sapp_widthf();
+            float mid_x = screen_w * 0.5f;
+            float half_dead = screen_w * TOUCH_STRAFE_DEADZONE * 0.5f;
+            if (sx < mid_x - half_dead) {
                 dng_player_try_move(&dng_state.player, dng_state.dungeon,
                                     (dng_state.player.dir + 3) % 4);
-            } else {
+            } else if (sx > mid_x + half_dead) {
                 dng_player_try_move(&dng_state.player, dng_state.dungeon,
                                     (dng_state.player.dir + 1) % 4);
             }
@@ -152,20 +160,27 @@ static void hub_touch_ended(float sx, float sy, double time) {
         float fbx, fby;
         screen_to_fb(sx, sy, &fbx, &fby);
 
-        /* Check if tap is in a button zone (bottom bar or top-right deck button) */
+        /* Check if tap is in a button zone (bottom bar, or the right-side
+           column which hosts the SECTOR/SAMPLES text, the minimap, and the
+           DECK button below it). */
+        int hub_deck_btn_y = 28 + g_hub.dungeon.h * 2 + 4;
         bool in_button_zone = (fby >= FB_HEIGHT - 22) ||
-                              (fbx >= FB_WIDTH - 74 && fby <= 28);
+                              (fbx >= FB_WIDTH - 74 && fby <= hub_deck_btn_y + 14);
 
         /* Set click state for ui_button detection */
         handle_screen_tap(sx, sy);
 
-        /* Tap strafe — only if not on a button and no dialog active */
+        /* Tap strafe — only if not on a button and no dialog active.
+           Central deadzone (middle TOUCH_STRAFE_DEADZONE of screen) is
+           ignored to prevent accidental strafes. */
         if (!in_button_zone && !g_dialog.active) {
-            float mid_x = sapp_widthf() * 0.5f;
-            if (sx < mid_x) {
+            float screen_w = sapp_widthf();
+            float mid_x = screen_w * 0.5f;
+            float half_dead = screen_w * TOUCH_STRAFE_DEADZONE * 0.5f;
+            if (sx < mid_x - half_dead) {
                 dng_player_try_move(&g_hub.player, &g_hub.dungeon,
                                     (g_hub.player.dir + 3) % 4);
-            } else {
+            } else if (sx > mid_x + half_dead) {
                 dng_player_try_move(&g_hub.player, &g_hub.dungeon,
                                     (g_hub.player.dir + 1) % 4);
             }
