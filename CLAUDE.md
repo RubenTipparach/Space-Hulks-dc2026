@@ -6,6 +6,13 @@
   string literals, documentation, commit messages, or replies. Use a regular
   hyphen (`-`) or restructure the sentence. Also avoid en-dash (`–`) unless it
   is explicitly required by a numeric range.
+- **Dashes in dialog and in-game UI text are especially bad.** Avoid em-dashes,
+  en-dashes, and plain hyphens (`-`) in anything the player reads on screen:
+  NPC dialog lines (`config/dialog.yaml`), objective strings, HUD messages,
+  button labels, shop text, event descriptions, mission briefings, etc.
+  Restructure the sentence, use a comma, period, or colon, or split into
+  two lines instead. Hyphenated compound words (e.g. `LOW-POWER`) are the
+  only acceptable exception.
 
 ## Build & Validation
 
