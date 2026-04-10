@@ -97,6 +97,7 @@ static bool dng_skip_stairs = false;  /* true = render stair cells as flat floor
 static bool dng_skip_floor = false;  /* true = don't draw floor quads */
 static bool dng_skip_ceiling = false;/* true = don't draw ceiling quads */
 static bool dng_skip_roof = false;   /* true = don't draw exterior roof */
+static int  dng_minimap_y = 28;       /* top-Y of the minimap; overridden by some scenes */
 static bool dng_skip_bottom = false; /* true = don't draw exterior bottom */
 static bool dng_alien_exterior = false; /* true = use alien textures for exterior */
 static float dng_hull_padding = 0.25f; /* hull expansion padding (in cells) */
@@ -1740,7 +1741,7 @@ static void draw_dungeon_minimap(sr_framebuffer *fb_ptr) {
     dng_player *p = &dng_state.player;
     int scale = 2;
     int mx = FB_WIDTH - d->w * scale - 4;
-    int my = 28;  /* below HUD text */
+    int my = dng_minimap_y;  /* below HUD text */
     uint32_t *px = fb_ptr->color;
 
     for (int y = 1; y <= d->h; y++) {
@@ -1798,7 +1799,7 @@ static void draw_minimap_player(sr_framebuffer *fb_ptr) {
     dng_player *p = &dng_state.player;
     int scale = 2;
     int mx = FB_WIDTH - d->w * scale - 4;
-    int my = 28;  /* match minimap offset */
+    int my = dng_minimap_y;  /* match minimap offset */
     uint32_t *px = fb_ptr->color;
 
     /* Player dot */

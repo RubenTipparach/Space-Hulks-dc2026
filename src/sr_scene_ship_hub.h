@@ -2478,11 +2478,11 @@ static void hub_draw_hud(uint32_t *px, int W, int H) {
         }
     }
 
-    /* Deck button (clickable) — placed below the minimap to avoid overlap.
-       Hub minimap is at y=28 with height g_hub.dungeon.h * 2. */
+    /* Deck button (clickable) — sits above the hub minimap. The hub scene
+       sets dng_minimap_y = 42 so the button (y=26..38) has room. */
     char deck_buf[32];
     snprintf(deck_buf, sizeof(deck_buf), "DECK %d", g_player.persistent_deck_count);
-    int deck_btn_y = 28 + g_hub.dungeon.h * 2 + 4;
+    int deck_btn_y = 26;
     if (ui_button(px, W, H, W - 70, deck_btn_y, 66, 12, deck_buf,
                   0xFF1A1A2A, 0xFF222244, 0xFF333366)) {
         deck_view_active = true;

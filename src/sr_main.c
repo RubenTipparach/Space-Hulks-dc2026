@@ -2540,6 +2540,9 @@ static void frame(void) {
         }
         draw_combat_scene(&fb);
     } else if (app_state == STATE_SHIP_HUB) {
+        /* Push hub minimap below the top-right DECK button so they don't
+           overlap. The button sits at y=26..38, leave a 2px gap. */
+        dng_minimap_y = 42;
         dng_player_update(&g_hub.player);
         draw_starfield(&fb, &g_hub.player);
         hub_draw_scene(&fb);
@@ -2574,6 +2577,7 @@ static void frame(void) {
         (void)vp;
         sr_fog_disable();
         dng_alien_exterior = true; /* enemy ship uses alien exterior textures */
+        dng_minimap_y = 28; /* default position (no DECK button stacked above) */
 
         {
             static bool _dng_first_frame = true;
@@ -2751,7 +2755,7 @@ static void frame(void) {
                 sr_dungeon *md = dng_state.dungeon;
                 int mscale = 2;
                 int mmx = fb.width - md->w * mscale - 4;
-                int mmy = 28;
+                int mmy = dng_minimap_y;
                 for (int my = 1; my <= md->h; my++) {
                     for (int mx = 1; mx <= md->w; mx++) {
                         if (md->map[my][mx] == 1) continue;
@@ -3372,7 +3376,7 @@ static void handle_screen_tap(float sx, float sy) {
         sr_dungeon *hd = &g_hub.dungeon;
         int mscale = 2;
         int mmx = FB_WIDTH - hd->w * mscale - 4;
-        int mmy = 28;  /* hub minimap matches dungeon minimap position */
+        int mmy = dng_minimap_y;  /* hub minimap matches dungeon minimap position */
         int mmw = hd->w * mscale;
         int mmh = hd->h * mscale;
         if (fx >= mmx && fx <= mmx + mmw && fy >= mmy && fy <= mmy + mmh) {

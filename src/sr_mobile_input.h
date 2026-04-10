@@ -59,7 +59,7 @@ static void dng_touch_ended(float sx, float sy, double time) {
             sr_dungeon *md = dng_state.dungeon;
             int mscale = 2;
             int mmx = FB_WIDTH - md->w * mscale - 4;
-            int mmy = 28;
+            int mmy = dng_minimap_y;
             int mmw = md->w * mscale;
             int mmh = md->h * mscale;
             if (fbx >= mmx && fbx <= mmx + mmw && fby >= mmy && fby <= mmy + mmh) {
@@ -147,7 +147,7 @@ static void hub_touch_ended(float sx, float sy, double time) {
             sr_dungeon *md = &g_hub.dungeon;
             int mscale = 2;
             int mmx = FB_WIDTH - md->w * mscale - 4;
-            int mmy = 28;
+            int mmy = dng_minimap_y;
             int mmw = md->w * mscale;
             int mmh = md->h * mscale;
             if (fbx >= mmx && fbx <= mmx + mmw && fby >= mmy && fby <= mmy + mmh) {
@@ -161,11 +161,10 @@ static void hub_touch_ended(float sx, float sy, double time) {
         screen_to_fb(sx, sy, &fbx, &fby);
 
         /* Check if tap is in a button zone (bottom bar, or the right-side
-           column which hosts the SECTOR/SAMPLES text, the minimap, and the
-           DECK button below it). */
-        int hub_deck_btn_y = 28 + g_hub.dungeon.h * 2 + 4;
+           column holding SECTOR/SAMPLES text and the DECK button above the
+           minimap). The DECK button spans y=26..38. */
         bool in_button_zone = (fby >= FB_HEIGHT - 22) ||
-                              (fbx >= FB_WIDTH - 74 && fby <= hub_deck_btn_y + 14);
+                              (fbx >= FB_WIDTH - 74 && fby <= 40);
 
         /* Set click state for ui_button detection */
         handle_screen_tap(sx, sy);
