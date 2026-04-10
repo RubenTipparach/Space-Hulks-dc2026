@@ -247,7 +247,7 @@ static void rasterize_triangle(sr_framebuffer *fb,
             uint32_t color;
             if (tex && tex->pixels) {
                 color = sr_texture_sample(tex, u, v);
-                /* Alpha test — skip transparent pixels (depth NOT written yet) */
+                /* Alpha test - skip transparent pixels (depth NOT written yet) */
                 if ((color >> 24) < 128) continue;
             } else {
                 color = 0xFFFFFFFF;
@@ -313,7 +313,7 @@ void sr_draw_triangle(sr_framebuffer *fb,
     if (tri[0].clip.w < NEAR_W && tri[1].clip.w < NEAR_W && tri[2].clip.w < NEAR_W)
         return;
 
-    /* Fast path: all vertices in front — no clipping needed */
+    /* Fast path: all vertices in front - no clipping needed */
     if (tri[0].clip.w >= NEAR_W && tri[1].clip.w >= NEAR_W && tri[2].clip.w >= NEAR_W) {
         rasterize_triangle(fb, tri[0], tri[1], tri[2], tex);
         return;
@@ -426,7 +426,7 @@ static void rasterize_triangle_indexed(sr_framebuffer *fb,
             if (tex && tex->indices)
                 pal_idx = sr_indexed_sample(tex, u, v);
 
-            /* Alpha test — palette index PAL_TRANSPARENT is transparent
+            /* Alpha test - palette index PAL_TRANSPARENT is transparent
                (depth NOT written yet, so geometry behind remains visible) */
             if (pal_idx == PAL_TRANSPARENT) continue;
 
@@ -577,7 +577,7 @@ static void rasterize_triangle_indexed_pixellit(sr_framebuffer *fb,
             if (tex && tex->indices)
                 pal_idx = sr_indexed_sample(tex, u, v);
 
-            /* Alpha test — palette index PAL_TRANSPARENT is transparent
+            /* Alpha test - palette index PAL_TRANSPARENT is transparent
                (depth NOT written yet, so geometry behind remains visible) */
             if (pal_idx == PAL_TRANSPARENT) continue;
 
@@ -679,7 +679,7 @@ static void rasterize_triangle_depth_only(sr_framebuffer *fb,
     float sx2 = (cv2.clip.x * inv_w2 + 1.0f) * 0.5f * W;
     float sy2 = (1.0f - cv2.clip.y * inv_w2) * 0.5f * H;
 
-    /* No backface culling for shadow maps — both sides cast shadows */
+    /* No backface culling for shadow maps - both sides cast shadows */
     float area = edge_func(sx0, sy0, sx1, sy1, sx2, sy2);
     if (area == 0.0f) return;
     float inv_area = 1.0f / fabsf(area);

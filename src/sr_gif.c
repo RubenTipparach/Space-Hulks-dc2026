@@ -313,7 +313,7 @@ void sr_gif_capture_frame(const uint32_t *pixels) {
     }
 
     /* Only copy if capture thread is idle (state==0).
-       If busy, skip this frame — keeps main thread non-blocking. */
+       If busy, skip this frame - keeps main thread non-blocking. */
     if (capture.state != 0) return;
 
     int n = recorder.width * recorder.height;

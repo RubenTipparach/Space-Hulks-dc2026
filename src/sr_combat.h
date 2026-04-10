@@ -1,4 +1,4 @@
-/*  sr_combat.h — Card-based combat system for Space Hulks.
+/*  sr_combat.h - Card-based combat system for Space Hulks.
  *  Single-TU header-only. Depends on sr_app.h, sr_font.h, sr_sprites.h. */
 #ifndef SR_COMBAT_H
 #define SR_COMBAT_H
@@ -59,7 +59,7 @@ static const char *card_names[] = {
     "JUNK",
 };
 
-/* Card colors — NOT-64 palette only (ABGR: 0xFFBBGGRR from #RRGGBB) */
+/* Card colors - NOT-64 palette only (ABGR: 0xFFBBGGRR from #RRGGBB) */
 static const uint32_t card_colors[] = {
     0xFFB4654D,  /* SHIELD    - #4d65b4 pal blue */
     0xFF3138B3,  /* SHOOT     - #b33831 pal red */
@@ -85,7 +85,7 @@ static const uint32_t card_colors[] = {
     0xFFF384A8,  /* STUN GUN  - #a884f3 pal lavender */
     0xFF4A7DF5,  /* MCROWAVE  - #f57d4a pal salmon */
     0xFF6CDF34,  /* QCKSTEP   - #34df6c (close to #cddf6c) pal yellow-green */
-    /* Upgraded cards — reuse base card colors */
+    /* Upgraded cards - reuse base card colors */
     0xFF4C5A16,  /* SNIPER+   - same as SNIPER */
     0xFF3D68CD,  /* SHOTGUN+  - same as SHOTGUN */
     0xFF1797F7,  /* WELDER+   - same as WELDER */
@@ -135,7 +135,7 @@ static const int card_targets[] = {
     TARGET_ENEMY,         /* STUN GUN */
     TARGET_ENEMY,         /* MICROWAVE */
     TARGET_SELF,          /* QUICKSTEP */
-    /* Upgraded cards — same targets as base */
+    /* Upgraded cards - same targets as base */
     TARGET_ENEMY,         /* SNIPER+ */
     TARGET_ENEMY,         /* SHOTGUN+ */
     TARGET_ENEMY,         /* WELDER+ (melee) */
@@ -260,7 +260,7 @@ static enemy_template enemy_templates[] = {
     [ENEMY_BRUTE]        = { "BRUTE",       18,  4,  6, 1 },
     [ENEMY_SPITTER]      = { "SPITTER",     10,  2,  4, 3 },
     [ENEMY_HIVEGUARD]    = { "HIVEGUARD",   24,  3,  5, 2 },
-    /* Evolved tier 2 — advanced parasite forms */
+    /* Evolved tier 2 - advanced parasite forms */
     [ENEMY_STALKER]      = { "STALKER",     14,  3,  5, 2 }, /* fast, attacks twice */
     [ENEMY_MAULER]       = { "MAULER",      28,  5,  8, 1 }, /* heavy hitter, buffs often */
     [ENEMY_ACID_THROWER] = { "ACID THROWER",16,  3,  6, 4 }, /* long range, acid DoT */
@@ -268,7 +268,7 @@ static enemy_template enemy_templates[] = {
     [ENEMY_BOSS_1]       = { "RAVAGER",    115,  7, 12, 2 },
     [ENEMY_BOSS_2]       = { "VOID WYRM",  130,  8, 14, 3 },
     [ENEMY_BOSS_3]       = { "HIVEMIND",   150,  9, 16, 2 },
-    /* Minibosses — tier 2 elites with boosted HP/damage */
+    /* Minibosses - tier 2 elites with boosted HP/damage */
     [ENEMY_MINIBOSS_1]   = { "SHADOW ALPHA",  50,  5,  8, 2 }, /* based on Stalker */
     [ENEMY_MINIBOSS_2]   = { "RAVAGER BROOD", 55,  6,  9, 1 }, /* based on Mauler */
     [ENEMY_MINIBOSS_3]   = { "VENOM QUEEN",   42,  5,  7, 3 }, /* based on Acid Thrower */
@@ -540,7 +540,7 @@ static void combat_draw_hand(combat_state *cs) {
 
 static void combat_generate_rewards(combat_state *cs) {
     int elems[] = { CARD_ICE, CARD_ACID, CARD_FIRE, CARD_LIGHTNING };
-    /* Non-elemental droppable pool (overcharge excluded — super rare) */
+    /* Non-elemental droppable pool (overcharge excluded - super rare) */
     int non_elem[] = { CARD_REPAIR, CARD_STUN, CARD_FORTIFY,
                        CARD_DOUBLE_SHOT, CARD_DASH };
     int non_elem_count = 5;
@@ -563,7 +563,7 @@ static void combat_generate_rewards(combat_state *cs) {
             upgraded[upgraded_count++] = CARD_STUN_GUN_UP;
             upgraded[upgraded_count++] = CARD_MICROWAVE_UP;
             break;
-        default: /* Marine has no class cards — gets random upgraded pool */
+        default: /* Marine has no class cards - gets random upgraded pool */
             upgraded[upgraded_count++] = CARD_SNIPER_UP;
             upgraded[upgraded_count++] = CARD_SHOTGUN_UP;
             upgraded[upgraded_count++] = CARD_WELDER_UP;
@@ -1588,7 +1588,7 @@ static void combat_begin_enemy_turn(combat_state *cs) {
     cs->enemy_atk_pause = 0;
     cs->enemy_atk_idx = combat_next_attacker(cs, 0);
     if (cs->enemy_atk_idx < 0) {
-        /* No enemies can attack — decrement stun and skip to next draw */
+        /* No enemies can attack - decrement stun and skip to next draw */
         for (int i = 0; i < cs->enemy_count; i++) {
             if (cs->enemies[i].lightning_stun > 0)
                 cs->enemies[i].lightning_stun--;
@@ -1610,7 +1610,7 @@ static void combat_update(combat_state *cs) {
     if (cs->message_timer > 0) cs->message_timer--;
     if (cs->player_flash_timer > 0) cs->player_flash_timer--;
     if (cs->player_shield_flash_timer > 0) cs->player_shield_flash_timer--;
-    /* info_popup_timer no longer auto-dismisses — closed by tap/key only */
+    /* info_popup_timer no longer auto-dismisses - closed by tap/key only */
     for (int i = 0; i < cs->enemy_count; i++)
         if (cs->enemies[i].flash_timer > 0) cs->enemies[i].flash_timer--;
 
@@ -1692,7 +1692,7 @@ static void combat_update(combat_state *cs) {
         }
 
         if (cs->enemy_atk_idx < 0) {
-            /* All enemies done — decrement stun counters now */
+            /* All enemies done - decrement stun counters now */
             for (int i = 0; i < cs->enemy_count; i++) {
                 if (cs->enemies[i].lightning_stun > 0)
                     cs->enemies[i].lightning_stun--;
@@ -1703,7 +1703,7 @@ static void combat_update(combat_state *cs) {
                 cs->phase = CPHASE_RESULT;
                 cs->player_won = false;
                 cs->combat_over = true;
-                combat_log(cs, "DEFEATED — HP: %d/%d", cs->player_hp, cs->player_hp_max);
+                combat_log(cs, "DEFEATED - HP: %d/%d", cs->player_hp, cs->player_hp_max);
                 combat_set_message(cs, "DEFEATED...");
             } else {
                 cs->turn++;
@@ -1746,7 +1746,7 @@ static void combat_update(combat_state *cs) {
                 }
                 /* Acid Thrower/Venom Queen: applies acid stacks to player */
                 else if (e->type == ENEMY_ACID_THROWER || e->type == ENEMY_MINIBOSS_3) {
-                    /* Log acid effect — actual acid damage on player is through the hit */
+                    /* Log acid effect - actual acid damage on player is through the hit */
                     combat_log(cs, "  ACID THROWER corrodes armor!");
                     snprintf(buf, sizeof(buf), "%s ACID -%dHP",
                              enemy_templates[e->type].name, dmg);
@@ -1773,7 +1773,7 @@ static void combat_check_victory(combat_state *cs) {
     if (combat_all_enemies_dead(cs)) {
         cs->player_won = true;
         g_player.hp = cs->player_hp;
-        combat_log(cs, "VICTORY — HP: %d/%d", cs->player_hp, cs->player_hp_max);
+        combat_log(cs, "VICTORY - HP: %d/%d", cs->player_hp, cs->player_hp_max);
         combat_generate_rewards(cs);
         /* Calculate per-combat rewards for summary screen */
         cs->reward_biomass = 3 + player_sector * 2;
@@ -1968,7 +1968,7 @@ static void combat_touch_began(combat_state *cs, float fx, float fy) {
 
     if (cs->phase == CPHASE_RESULT) return;
 
-    /* Reward summary — tap CONTINUE to proceed to card pick */
+    /* Reward summary - tap CONTINUE to proceed to card pick */
     if (cs->phase == CPHASE_REWARD_SUMMARY) {
         int cb_w = 80, cb_h = 20;
         int cb_x = (FB_WIDTH - cb_w) / 2, cb_y = 150;
@@ -1979,7 +1979,7 @@ static void combat_touch_began(combat_state *cs, float fx, float fy) {
         return;
     }
 
-    /* Reward phase — tap a card to pick it */
+    /* Reward phase - tap a card to pick it */
     if (cs->phase == CPHASE_REWARD) {
         int rw = 72, rh = 80, rgap = 12;
         int rtotal = 3 * (rw + rgap) - rgap;
@@ -2215,7 +2215,7 @@ static void combat_handle_key(combat_state *cs, int key) {
 
     if (cs->phase == CPHASE_RESULT) return;
 
-    /* Reward summary — any key advances to card pick */
+    /* Reward summary - any key advances to card pick */
     if (cs->phase == CPHASE_REWARD_SUMMARY) {
         if (key == SAPP_KEYCODE_ENTER || key == SAPP_KEYCODE_SPACE || key == SAPP_KEYCODE_F) {
             cs->phase = CPHASE_REWARD;
@@ -2659,7 +2659,7 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
                     }
                 }
 
-                /* Target highlight removed — drag-to-target provides the highlight */
+                /* Target highlight removed - drag-to-target provides the highlight */
 
                 /* Intent indicator (above sprite) */
                 if (combat.phase == CPHASE_PLAYER_TURN || combat.phase == CPHASE_DRAW) {
@@ -2696,7 +2696,7 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
                 sr_draw_text_shadow(px, W, H, cx - 12, sprite_y_dead + 12, "DEAD", 0xFF444444, shadow);
             }
 
-            /* Info below sprite — tight, just 2px gap */
+            /* Info below sprite - tight, just 2px gap */
             int info_y = sprite_y + spr_sz + 2;
 
             /* Enemy name + weakness indicator */

@@ -93,7 +93,7 @@ static bool lvl_load_floor(sr_dungeon *d, const sr_json *j, int floor_token) {
     d->spawn_gy = sr_json_int(j, sr_json_find(j, floor_token, "spawnGY"), 10);
     d->spawn_dir = sr_json_int(j, sr_json_find(j, floor_token, "spawnDir"), 1);
 
-    /* Stairs — single bidirectional set */
+    /* Stairs - single bidirectional set */
     d->has_up = sr_json_bool(j, sr_json_find(j, floor_token, "hasUp"), false);
     d->stairs_gx = sr_json_int(j, sr_json_find(j, floor_token, "stairsGX"), -1);
     d->stairs_gy = sr_json_int(j, sr_json_find(j, floor_token, "stairsGY"), -1);

@@ -1,4 +1,4 @@
-/*  sr_app.h — Shared application state, constants, and enums.
+/*  sr_app.h - Shared application state, constants, and enums.
  *  Included by all scene/input modules. Single-TU header-only. */
 #ifndef SR_APP_H
 #define SR_APP_H

@@ -1,4 +1,4 @@
-/*  sr_sprites.h — sprite drawing utilities for combat/dungeon rendering.
+/*  sr_sprites.h - sprite drawing utilities for combat/dungeon rendering.
  *  Single-TU header-only. Colors are ABGR (0xAABBGGRR). 0 = transparent.
  *  All character/enemy/boss sprites are loaded from PNG at runtime (stextures[]). */
 #ifndef SR_SPRITES_H

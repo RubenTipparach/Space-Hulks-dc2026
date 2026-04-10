@@ -73,7 +73,7 @@ vec3 starSprite() {
         float cellSize = (layer == 0) ? 24.0 : 40.0;
         float density = (layer == 0) ? 0.88 : 0.92;
 
-        // Raw pixel coords — no aspect distortion
+        // Raw pixel coords - no aspect distortion
         vec2 pixUV = gl_FragCoord.xy;
         vec2 cell = floor(pixUV / cellSize);
         vec2 local = mod(pixUV, cellSize); // pixel within cell
@@ -216,7 +216,7 @@ void main() {
     // Nebula background, stars always on top (additive)
     vec3 col = neb.rgb * 0.6 + stars;
 
-    // Very dark ambient — barely visible green tint
+    // Very dark ambient - barely visible green tint
     col += vec3(0.005, 0.01, 0.003) / (length(uv) + 0.5);
 
     // Strong vignette for darkness

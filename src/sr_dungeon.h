@@ -19,10 +19,10 @@
 /* ── Enemy type enum (needed by dungeon generation) ─────────────── */
 
 enum { ENEMY_LURKER, ENEMY_BRUTE, ENEMY_SPITTER, ENEMY_HIVEGUARD,
-       /* Evolved tier 2 — advanced dragon parasite */
+       /* Evolved tier 2 - advanced dragon parasite */
        ENEMY_STALKER, ENEMY_MAULER, ENEMY_ACID_THROWER, ENEMY_WARDEN,
        ENEMY_BOSS_1, ENEMY_BOSS_2, ENEMY_BOSS_3,
-       /* Minibosses — tier 2 elites with boosted HP/damage */
+       /* Minibosses - tier 2 elites with boosted HP/damage */
        ENEMY_MINIBOSS_1, ENEMY_MINIBOSS_2, ENEMY_MINIBOSS_3, ENEMY_MINIBOSS_4,
        ENEMY_TYPE_COUNT };
 
@@ -70,9 +70,9 @@ typedef struct {
     /* Alien entities (for FPS view) */
     uint8_t aliens[DNG_GRID_H + 1][DNG_GRID_W + 1]; /* 0=none, 1-4=enemy type (ENEMY_LURKER+1 etc) */
     char alien_names[DNG_GRID_H + 1][DNG_GRID_W + 1][16]; /* individual name per alien */
-    /* Console entities — interactable objects at room centers */
+    /* Console entities - interactable objects at room centers */
     uint8_t consoles[DNG_GRID_H + 1][DNG_GRID_W + 1]; /* 0=none, room_type (ROOM_BRIDGE etc) */
-    /* Chests — loot containers */
+    /* Chests - loot containers */
     uint8_t chests[DNG_GRID_H + 1][DNG_GRID_W + 1]; /* 0=none, 1=chest present */
     /* Room info for ship system */
     #define DNG_MAX_ROOMS 24
@@ -419,7 +419,7 @@ static void dng_generate_ex(sr_dungeon *d, int w, int h, bool has_down_stairs, b
         if (wx2 > rx + rw - 2) wx2 = rx + rw - 2;
         if (wx2 < rx + 1) wx2 = rx + 1;
         if (ry + rh <= mid_y) {
-            /* Room above corridor — S window on wall above (faces room) */
+            /* Room above corridor - S window on wall above (faces room) */
             int wy = ry - 1;
             if (wy >= 1 && wy <= h) {
                 if (wx1 >= 1 && wx1 <= w && d->map[wy][wx1] == 1)
@@ -428,7 +428,7 @@ static void dng_generate_ex(sr_dungeon *d, int w, int h, bool has_down_stairs, b
                     d->win_faces[wy][wx2] |= DNG_WIN_S;
             }
         } else if (ry > mid_y) {
-            /* Room below corridor — N window on wall below (faces room) */
+            /* Room below corridor - N window on wall below (faces room) */
             int wy = ry + rh;
             if (wy >= 1 && wy <= h) {
                 if (wx1 >= 1 && wx1 <= w && d->map[wy][wx1] == 1)
@@ -439,7 +439,7 @@ static void dng_generate_ex(sr_dungeon *d, int w, int h, bool has_down_stairs, b
         }
     }
 
-    /* Place alien entities (not spawn, not stairs) — ~half the rooms get aliens */
+    /* Place alien entities (not spawn, not stairs) - ~half the rooms get aliens */
     for (int i = 0; i < num_rooms; i++) {
         if (dng_rng_int(2) == 0) continue; /* skip ~half the rooms */
         int aliens_in_room = 1;
@@ -604,7 +604,7 @@ static void dng_build_visibility(const dng_player *p, const sr_dungeon *d) {
     int queue[VIS_Q_SIZE];
     int qhead = 0, qtail = 0;
 
-    /* Visited array for BFS (separate from dng_vis — tracks open cells we've queued) */
+    /* Visited array for BFS (separate from dng_vis - tracks open cells we've queued) */
     static bool visited[DNG_GRID_H + 2][DNG_GRID_W + 2];
     memset(visited, 0, sizeof(visited));
 
@@ -634,10 +634,10 @@ static void dng_build_visibility(const dng_player *p, const sr_dungeon *d) {
             if (ddx > dng_render_radius || ddz > dng_render_radius) continue;
 
             if (d->map[nz][nx] == 1) {
-                /* Wall cell — mark visible (for face rendering) but don't spread through */
+                /* Wall cell - mark visible (for face rendering) but don't spread through */
                 dng_vis[nz][nx] = true;
             } else if (!visited[nz][nx]) {
-                /* Open cell — mark visible and continue BFS */
+                /* Open cell - mark visible and continue BFS */
                 visited[nz][nx] = true;
                 dng_vis[nz][nx] = true;
                 if (qtail < VIS_Q_SIZE)
@@ -778,7 +778,7 @@ static bool dng_update_climb(dng_game *g) {
         float t = (float)c->timer / DNG_CLIMB_MOVE_FRAMES;
         if (t >= 1.0f) {
             t = 1.0f;
-            /* Teleport to new floor — player_init places at adjacent cell */
+            /* Teleport to new floor - player_init places at adjacent cell */
             if (c->direction_up) dng_go_up(g);
             else dng_go_down(g);
 
@@ -835,7 +835,7 @@ static bool dng_update_climb(dng_game *g) {
 }
 
 /* ══════════════════════════════════════════════════════════════════
- *  Enemy AI system — wandering, chasing, A* pathfinding
+ *  Enemy AI system - wandering, chasing, A* pathfinding
  * ══════════════════════════════════════════════════════════════════ */
 
 #define DNG_MAX_ENEMIES   64
@@ -1308,7 +1308,7 @@ static void dng_enemies_tick(sr_dungeon *d, int player_gx, int player_gy) {
         case DNG_AI_RETURN: {
             /* Walk back to spawn point */
             if (e->gx == e->spawn_gx && e->gy == e->spawn_gy) {
-                /* Arrived home — restore previous AI state */
+                /* Arrived home - restore previous AI state */
                 e->ai_state = e->prev_ai_state;
                 e->wander_cooldown = 2 + dng_rng_int(4);
                 break;

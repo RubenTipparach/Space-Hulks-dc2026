@@ -29,7 +29,7 @@ public static class HullGeometry
         bool oW = !hullInside[gy, gx - 1];
         bool oE = !hullInside[gy, gx + 1];
 
-        // Per-face window check — adjacent outside cell is a window cell
+        // Per-face window check - adjacent outside cell is a window cell
         bool wN = oN && IsWinCell(winSet, gx, gy - 1);
         bool wS = oS && IsWinCell(winSet, gx, gy + 1);
         bool wW = oW && IsWinCell(winSet, gx - 1, gy);
@@ -127,7 +127,7 @@ public static class HullGeometry
                     float iz = dir == WallDir.South ? wz - f : wz + f;
 
                     // Left neighbor: hull cell to the left also has an exposed north/south face
-                    // but it's inset by f — need a connector from flush to inset
+                    // but it's inset by f - need a connector from flush to inset
                     if (gx - 1 >= 1 && hullInside[iy, gx - 1] && !hullInside[dir == WallDir.South ? iy + 1 : iy - 1, gx - 1]
                         && !IsWinCell(winSet, gx - 1, gy))
                     {

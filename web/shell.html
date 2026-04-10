@@ -57,7 +57,7 @@ canvas {
             var canvas = document.getElementById('canvas');
             canvas.setAttribute('tabindex', '0');
             canvas.addEventListener('webglcontextlost', function(e) {
-                alert('WebGL context lost — please reload.');
+                alert('WebGL context lost - please reload.');
                 e.preventDefault();
             }, false);
             canvas.addEventListener('mousedown', function() { canvas.focus(); });

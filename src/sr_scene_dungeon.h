@@ -1,4 +1,4 @@
-/*  sr_scene_dungeon.h — Dungeon Crawler scene (rendering, config, game state).
+/*  sr_scene_dungeon.h - Dungeon Crawler scene (rendering, config, game state).
  *  Single-TU header-only. Depends on sr_dungeon.h, sr_config.h, sr_lighting.h, sr_app.h. */
 #ifndef SR_SCENE_DUNGEON_H
 #define SR_SCENE_DUNGEON_H
@@ -529,7 +529,7 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
             if (dng_hide_interior) continue; /* debug: skip all interior geometry */
 
             if (d->map[gy][gx] == 1) {
-                /* Wall cell — draw faces toward open cells.
+                /* Wall cell - draw faces toward open cells.
                  * Pick texture per-face: room faces get room_wall_tex, corridor faces get wall_tex.
                  * Window faces get a window texture (wall_A_window). */
                 const sr_indexed_texture *win_tex_ptr = (dng_window_texture >= 0)
@@ -732,7 +732,7 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
                             0,1,1,0, ceil_tex, 0,-1,0);
                     }
 
-                    /* Other floors rendered separately — no shaft walls needed */
+                    /* Other floors rendered separately - no shaft walls needed */
                 } else {
                     /* Normal floor + ceiling */
                     /* Skip floor at down-stairs position (hole for stairs from below) */
@@ -1036,7 +1036,7 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
                 bool winTexW = oW && gx > 1 && dng_has_win_face(d, gx-1, gy, DNG_WIN_E);
                 bool winTexE = oE && gx < d->w && dng_has_win_face(d, gx+1, gy, DNG_WIN_W);
 
-                /* North wall — trimmed at chamfer corners */
+                /* North wall - trimmed at chamfer corners */
                 if (oN && !(dng_hide_windows && winTexN)) {
                     const sr_indexed_texture *ft = winTexN ? ext_win_tex : ext_tex;
                     float nx0 = cNW ? ex0 + ch : ex0;
@@ -1230,7 +1230,7 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
                     bool oW = gx <= 1 || !dng_hull_inside[gy][gx-1];
                     bool oE = gx >= w || !dng_hull_inside[gy][gx+1];
 
-                    /* Skip roof for open cells — interior ceiling already covers them */
+                    /* Skip roof for open cells - interior ceiling already covers them */
                     bool is_open = (d->map[gy][gx] == 0);
 
                     /* Simple case: no chamfer/inset */
@@ -1323,14 +1323,14 @@ static void draw_dungeon_scene(sr_framebuffer *fb_ptr, const sr_mat4 *vp) {
                         float au = (pts_x[pi] - x0) * invCW, av = (pts_z[pi] - z0) * invCH;
                         float bu = (pts_x[ni] - x0) * invCW, bv = (pts_z[ni] - z0) * invCH;
 
-                        /* Roof (facing up) — skip for open cells or when another floor is above */
+                        /* Roof (facing up) - skip for open cells or when another floor is above */
                         if (!is_open && !dng_skip_roof)
                             dng_draw_tri(fb_ptr, &mvp,
                                 centx, y_hi, centz, cu, cv,
                                 pts_x[pi], y_hi, pts_z[pi], au, av,
                                 pts_x[ni], y_hi, pts_z[ni], bu, bv,
                                 roof_tex, 0, 1, 0);
-                        /* Bottom plate (facing down) — skip for open cells or when another floor is below */
+                        /* Bottom plate (facing down) - skip for open cells or when another floor is below */
                         if (!is_open && !dng_skip_bottom)
                             dng_draw_tri(fb_ptr, &mvp,
                                 centx, y_lo, centz, cu, cv,
@@ -1444,7 +1444,7 @@ static void remote_compute_hull_mask(sr_dungeon *d) {
 }
 
 /* Draw simplified interior of a remote dungeon at world offset (ox, oy, oz).
- * Renders walls, floors, ceilings — no stairs, sprites, pillars, or visibility. */
+ * Renders walls, floors, ceilings - no stairs, sprites, pillars, or visibility. */
 static void draw_remote_ship_interior(sr_framebuffer *fb_ptr, const sr_mat4 *mvp,
                                        sr_dungeon *d, float ox, float oy, float oz,
                                        bool alien) {
@@ -1468,7 +1468,7 @@ static void draw_remote_ship_interior(sr_framebuffer *fb_ptr, const sr_mat4 *mvp
             float z1 = oz + gy * DNG_CELL_SIZE;
 
             if (d->map[gy][gx] == 1) {
-                /* Wall cell — draw faces toward adjacent open (0) cells only, NOT void (2) */
+                /* Wall cell - draw faces toward adjacent open (0) cells only, NOT void (2) */
                 uint8_t wf = d->win_faces[gy][gx];
                 if (gy < d->h && d->map[gy+1][gx] == 0) {
                     const sr_indexed_texture *ft = (wf & DNG_WIN_S) ? win_tex : wall_tex;
@@ -1487,7 +1487,7 @@ static void draw_remote_ship_interior(sr_framebuffer *fb_ptr, const sr_mat4 *mvp
                     dng_draw_wall(fb_ptr, mvp, x0,y_hi,z0, x0,y_hi,z1, x0,y_lo,z1, x0,y_lo,z0, ft, -1,0,0);
                 }
             } else if (d->map[gy][gx] == 0) {
-                /* Open cell — floor + ceiling (skip void cells) */
+                /* Open cell - floor + ceiling (skip void cells) */
                 uint32_t unlit = 0xFF606060;
                 sr_draw_quad_indexed(fb_ptr,
                     sr_vert_c(x0,y_lo,z0, 0,0, unlit), sr_vert_c(x1,y_lo,z0, 1,0, unlit),
@@ -1502,7 +1502,7 @@ static void draw_remote_ship_interior(sr_framebuffer *fb_ptr, const sr_mat4 *mvp
     }
 }
 
-/* Floor above pointer — set before calling draw_remote_ship_exterior to skip roof where floor exists above */
+/* Floor above pointer - set before calling draw_remote_ship_exterior to skip roof where floor exists above */
 static sr_dungeon *_remote_floor_above = NULL;
 
 /* Draw exterior hull of a remote dungeon at world offset (ox, oy, oz) */
@@ -1682,14 +1682,14 @@ static void draw_remote_ship_exterior(sr_framebuffer *fb_ptr, const sr_mat4 *mvp
                         float bxf = pts_x[(pi+1)%pc], bzf = pts_z[(pi+1)%pc];
                         float au = (ax2-x0)*inv_cw, av = (az2-z0)*inv_ch2;
                         float bu = (bxf-x0)*inv_cw, bv = (bzf-z0)*inv_ch2;
-                        /* Roof (top) — skip if floor above */
+                        /* Roof (top) - skip if floor above */
                         if (!has_floor_above)
                             sr_draw_triangle_indexed(fb_ptr,
                                 sr_vert_c(centx,y_hi,centz, cent_u,cent_v, unlit),
                                 sr_vert_c(ax2,y_hi,az2, au,av, unlit),
                                 sr_vert_c(bxf,y_hi,bzf, bu,bv, unlit),
                                 roof_tex, mvp);
-                        /* Bottom — reversed winding for exterior */
+                        /* Bottom - reversed winding for exterior */
                         sr_draw_triangle_indexed(fb_ptr,
                             sr_vert_c(centx,y_lo,centz, cent_u,cent_v, unlit),
                             sr_vert_c(bxf,y_lo,bzf, bu,bv, unlit),
@@ -1895,7 +1895,7 @@ static void draw_expanded_map(sr_framebuffer *fb_ptr) {
         if (ct > 0 && ct < EMAP_ROOM_TYPE_COUNT) room_types[ri] = ct;
         /* Also check ship_idx for rooms assigned via ship system */
         if (room_types[ri] == 0 && d->room_ship_idx[ri] >= 0)
-            room_types[ri] = -1; /* has ship data but no console — will be colored by overlay */
+            room_types[ri] = -1; /* has ship data but no console - will be colored by overlay */
     }
 
     /* Draw cells */

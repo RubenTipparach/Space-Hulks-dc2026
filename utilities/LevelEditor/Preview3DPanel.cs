@@ -400,7 +400,7 @@ void main(){
 
             // Diagonal corner fill: if both perpendicular cardinal neighbors are inside,
             // include the corner cell (averaged normal at 45 degrees)
-            // Skip cells with window faces — hull should stop at windows
+            // Skip cells with window faces - hull should stop at windows
             var toDiag = new List<(int y, int x)>();
             for (int gy = 1; gy <= h; gy++)
                 for (int gx = 1; gx <= w; gx++)
@@ -734,7 +734,7 @@ void main(){
                 bool oW = !_hullInside[gy, gx - 1];
                 bool oE = !_hullInside[gy, gx + 1];
 
-                // Per-face window check — adjacent outside cell is a window cell
+                // Per-face window check - adjacent outside cell is a window cell
                 bool wN = oN && IsWindowCell(gx, gy - 1);
                 bool wS = oS && IsWindowCell(gx, gy + 1);
                 bool wW = oW && IsWindowCell(gx - 1, gy);
@@ -764,7 +764,7 @@ void main(){
                 bool winTexW = oW && _winSet != null && _winSet.Contains((gx - 1, gy, WallDir.East));
                 bool winTexE = oE && _winSet != null && _winSet.Contains((gx + 1, gy, WallDir.West));
 
-                // North wall (x0,z0) to (x1,z0) — trimmed at corners
+                // North wall (x0,z0) to (x1,z0) - trimmed at corners
                 if (oN)
                 {
                     int ft = winTexN ? extWin : extW;
@@ -899,7 +899,7 @@ void main(){
                     bool oW = !_hullInside[gy, gx - 1];
                     bool oE = !_hullInside[gy, gx + 1];
 
-                    // Per-face window detection — flush (no inset) if adjacent outside cell is a window cell
+                    // Per-face window detection - flush (no inset) if adjacent outside cell is a window cell
                     bool rwN = oN && _winSet != null && IsWindowCell(gx, gy - 1);
                     bool rwS = oS && _winSet != null && IsWindowCell(gx, gy + 1);
                     bool rwW = oW && _winSet != null && IsWindowCell(gx - 1, gy);
@@ -1013,14 +1013,14 @@ void main(){
                     {
                         var a = pts[i];
                         var b = pts[(i + 1) % pts.Count];
-                        // Roof (top) — CW winding facing up
+                        // Roof (top) - CW winding facing up
                         if (hasRoof)
                             Tri(hullTex,
                                 cx, roofY, cz, cu, cv,
                                 b.x, roofY, b.z, (b.x - x0) * invW, (b.z - z0) * invH,
                                 a.x, roofY, a.z, (a.x - x0) * invW, (a.z - z0) * invH,
                                 rc);
-                        // Bottom hull plate — CCW winding facing down
+                        // Bottom hull plate - CCW winding facing down
                         Tri(hullTex,
                             cx, bottomY, cz, cu, cv,
                             a.x, bottomY, a.z, (a.x - x0) * invW, (a.z - z0) * invH,

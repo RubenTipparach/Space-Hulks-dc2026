@@ -119,7 +119,7 @@ static sr_config sr_config_load(const char *path) {
         }
 
         if (val_buf[0] == '\0') {
-            /* No value — this is a parent key, push prefix */
+            /* No value - this is a parent key, push prefix */
             prefix_depth = depth + 1;
             prev_indent = indent;
             continue;

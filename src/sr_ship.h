@@ -1,4 +1,4 @@
-/*  sr_ship.h — FTL/Void Bastards-style ship system for Space Hulks.
+/*  sr_ship.h - FTL/Void Bastards-style ship system for Space Hulks.
  *  Defines ship layouts, room types, officers, missions, and ship status.
  *  Single-TU header-only. Depends on sr_dungeon.h. */
 #ifndef SR_SHIP_H
@@ -16,7 +16,7 @@ enum {
     ROOM_SHIELDS,    /* shield generator */
     ROOM_CARGO,      /* cargo hold / artifact storage */
     ROOM_BARRACKS,   /* crew quarters */
-    ROOM_TELEPORTER, /* teleporter — lets player escape back to hub */
+    ROOM_TELEPORTER, /* teleporter - lets player escape back to hub */
     ROOM_TYPE_COUNT
 };
 
@@ -204,7 +204,7 @@ static void ship_generate(ship_state *ship, int difficulty, uint32_t seed) {
     /* Generate rooms per deck */
     ship->room_count = 0;
 
-    /* Build room type pool — no duplicates.
+    /* Build room type pool - no duplicates.
      * Bare minimum: Bridge, Engines, Weapons.
      * Then add from optional pool until we fill the ship. */
     int room_pool[SHIP_MAX_ROOMS];
@@ -215,7 +215,7 @@ static void ship_generate(ship_state *ship, int difficulty, uint32_t seed) {
     room_pool[pool_count++] = ROOM_ENGINES;
     room_pool[pool_count++] = ROOM_WEAPONS;
 
-    /* Optional unique rooms — shuffled, added as space allows */
+    /* Optional unique rooms - shuffled, added as space allows */
     int optional[] = {
         ROOM_SHIELDS, ROOM_REACTOR, ROOM_MEDBAY,
         ROOM_CARGO, ROOM_BARRACKS, ROOM_TELEPORTER
@@ -378,7 +378,7 @@ static void ship_populate_deck(ship_state *ship, sr_dungeon *d,
     }
 
     /* Place officers as aliens in their assigned rooms on this deck.
-     * Avoid console positions — try adjacent cells if center is taken. */
+     * Avoid console positions - try adjacent cells if center is taken. */
     for (int o = 0; o < ship->officer_count; o++) {
         ship_officer *off = &ship->officers[o];
         if (!off->alive || off->captured) continue;
@@ -446,7 +446,7 @@ static void ship_populate_deck(ship_state *ship, sr_dungeon *d,
 
 /* ── Ship damage / turn tick ────────────────────────────────────── */
 
-/* Ship simulation disabled — no hull damage over time */
+/* Ship simulation disabled - no hull damage over time */
 static void ship_tick_turn(ship_state *ship) {
     if (!ship->boarding_active) return;
     ship->turns_elapsed++;

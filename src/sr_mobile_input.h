@@ -1,4 +1,4 @@
-/*  sr_mobile_input.h — Touch / swipe input for mobile.
+/*  sr_mobile_input.h - Touch / swipe input for mobile.
  *  Single-TU header-only. Depends on sr_app.h, sr_scene_dungeon.h. */
 #ifndef SR_MOBILE_INPUT_H
 #define SR_MOBILE_INPUT_H
@@ -13,7 +13,7 @@ static float  touch_cur_sx, touch_cur_sy;
 #define TOUCH_TAP_MAX_TIME   0.25
 #define TOUCH_SWIPE_MIN_DIST 30.0f
 /* Central horizontal deadzone (fraction of screen width). Taps inside this
-   zone do NOT trigger a strafe — prevents accidental side-steps when the
+   zone do NOT trigger a strafe - prevents accidental side-steps when the
    player taps near the middle of the screen. 0.4 = middle 40%. */
 #define TOUCH_STRAFE_DEADZONE 0.4f
 
@@ -52,7 +52,7 @@ static void dng_touch_ended(float sx, float sy, double time) {
             return;
         }
 
-        /* Check if tap is on the minimap area — open expanded map */
+        /* Check if tap is on the minimap area - open expanded map */
         {
             float fbx, fby;
             screen_to_fb(sx, sy, &fbx, &fby);
@@ -78,7 +78,7 @@ static void dng_touch_ended(float sx, float sy, double time) {
         /* Set click state for ui_button detection */
         handle_screen_tap(sx, sy);
 
-        /* Short tap — strafe based on screen half, only if not on a button.
+        /* Short tap - strafe based on screen half, only if not on a button.
            A central deadzone (middle TOUCH_STRAFE_DEADZONE of the screen)
            ignores the tap to prevent accidental strafes. */
         if (!in_button_zone) {
@@ -94,7 +94,7 @@ static void dng_touch_ended(float sx, float sy, double time) {
             }
         }
     } else if (dist >= TOUCH_SWIPE_MIN_DIST) {
-        /* Swipe — determine cardinal direction */
+        /* Swipe - determine cardinal direction */
         float adx = dx < 0 ? -dx : dx;
         float ady = dy < 0 ? -dy : dy;
 
@@ -169,7 +169,7 @@ static void hub_touch_ended(float sx, float sy, double time) {
         /* Set click state for ui_button detection */
         handle_screen_tap(sx, sy);
 
-        /* Tap strafe — only if not on a button and no dialog active.
+        /* Tap strafe - only if not on a button and no dialog active.
            Central deadzone (middle TOUCH_STRAFE_DEADZONE of screen) is
            ignored to prevent accidental strafes. */
         if (!in_button_zone && !g_dialog.active) {
@@ -185,7 +185,7 @@ static void hub_touch_ended(float sx, float sy, double time) {
             }
         }
     } else if (dist >= TOUCH_SWIPE_MIN_DIST && !g_dialog.active) {
-        /* Swipe — move or turn (blocked during dialog) */
+        /* Swipe - move or turn (blocked during dialog) */
         float adx = dx < 0 ? -dx : dx;
         float ady = dy < 0 ? -dy : dy;
 
