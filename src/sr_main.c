@@ -1279,6 +1279,75 @@ static void game_init_ship(void) {
                 }
             }
 
+            /* Guarantee loot chests on JSON-loaded floors. JSON ships do
+               not go through dng_generate so d->chests is empty on load.
+               Target per floor depends on ship size:
+                 small  (num_decks == 1): 1 chest per floor
+                 medium (num_decks == 2): 2 chests per floor
+                 large  (num_decks >= 3): 2 chests per floor as well
+               Runs after boss / miniboss / hallway enemy placement so the
+               filters can avoid any cell that is already occupied. */
+            {
+                int chest_target = (current_ship.num_decks <= 1) ? 1 : 2;
+                for (int deck = 0; deck < current_ship.num_decks && deck < DNG_MAX_FLOORS; deck++) {
+                    if (!dng_state.floor_generated[deck]) continue;
+                    sr_dungeon *dd = &dng_state.floors[deck];
+                    int w = dd->w, h = dd->h;
+
+                    /* Count any chests that already exist on this floor. */
+                    int placed_ch = 0;
+                    for (int cy = 1; cy <= h; cy++)
+                        for (int cx = 1; cx <= w; cx++)
+                            if (dd->chests[cy][cx] != 0) placed_ch++;
+
+                    /* Random room placement, same filters dng_generate uses. */
+                    int rc = dd->room_count;
+                    if (rc > 0) {
+                        int max_attempts = rc * 20;
+                        for (int attempt = 0; attempt < max_attempts && placed_ch < chest_target; attempt++) {
+                            int ri = dng_rng_int(rc);
+                            int cx = dd->room_x[ri] + dng_rng_int(dd->room_w[ri]);
+                            int cy = dd->room_y[ri] + dng_rng_int(dd->room_h[ri]);
+                            if (cx < 1 || cx > w || cy < 1 || cy > h) continue;
+                            if (dd->map[cy][cx] != 0) continue;
+                            if (cx == dd->spawn_gx && cy == dd->spawn_gy) continue;
+                            if (dd->has_up && cx == dd->stairs_gx && cy == dd->stairs_gy) continue;
+                            if (dd->has_down && cx == dd->down_gx && cy == dd->down_gy) continue;
+                            if (dd->consoles[cy][cx] != 0) continue;
+                            if (dd->aliens[cy][cx] != 0) continue;
+                            if (dd->chests[cy][cx] != 0) continue;
+                            dd->chests[cy][cx] = 1;
+                            placed_ch++;
+                        }
+                    }
+
+                    /* Brute-force fallback: scan every room cell for any
+                       valid spot until the target is met. Guarantees the
+                       minimum count as long as the map has open space. */
+                    if (placed_ch < chest_target && rc > 0) {
+                        for (int ri = 0; ri < rc && placed_ch < chest_target; ri++) {
+                            int rx0 = dd->room_x[ri], ry0 = dd->room_y[ri];
+                            int rw = dd->room_w[ri], rh = dd->room_h[ri];
+                            for (int cy = ry0; cy < ry0 + rh && placed_ch < chest_target; cy++)
+                                for (int cx = rx0; cx < rx0 + rw && placed_ch < chest_target; cx++) {
+                                    if (cx < 1 || cx > w || cy < 1 || cy > h) continue;
+                                    if (dd->map[cy][cx] != 0) continue;
+                                    if (cx == dd->spawn_gx && cy == dd->spawn_gy) continue;
+                                    if (dd->has_up && cx == dd->stairs_gx && cy == dd->stairs_gy) continue;
+                                    if (dd->has_down && cx == dd->down_gx && cy == dd->down_gy) continue;
+                                    if (dd->consoles[cy][cx] != 0) continue;
+                                    if (dd->aliens[cy][cx] != 0) continue;
+                                    if (dd->chests[cy][cx] != 0) continue;
+                                    dd->chests[cy][cx] = 1;
+                                    placed_ch++;
+                                }
+                        }
+                    }
+                    printf("[chest] Floor %d: placed %d/%d chests (ship size %d decks)\n",
+                           deck, placed_ch, chest_target, current_ship.num_decks);
+                }
+            }
+
             /* Re-init player at the JSON floor's spawn point */
             dng_player_init(&dng_state.player,
                             dng_state.dungeon->spawn_gx,
