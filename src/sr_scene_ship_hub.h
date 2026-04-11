@@ -1075,8 +1075,11 @@ static void medbay_shop_generate(shop_state *shop) {
         shop->prices[idx] = 135;
         shop->is_bio[idx] = true;
     }
-    /* Health kits - persistent stock, restocks by 1 per jump (max 2). */
+    /* Health kits - persistent stock, restocks by 1 per jump (max 2).
+       Hidden during the very first mission so the tutorial can guarantee
+       full HP and focus the player on elemental cards. */
     int kit_count = g_medbay_kit_stock;
+    if (g_run_stats.sectors_visited == 0) kit_count = 0;
     if (kit_count < 0) kit_count = 0;
     if (kit_count > MEDBAY_KIT_STOCK_MAX) kit_count = MEDBAY_KIT_STOCK_MAX;
     for (int i = 0; i < kit_count && idx < SHOP_MAX_CARDS; i++, idx++) {
@@ -1341,6 +1344,10 @@ static void draw_shop(uint32_t *px, int W, int H) {
                             g_medbay_kit_stock--;
                     } else {
                         g_player.persistent_deck[g_player.persistent_deck_count++] = shop->cards[idx];
+                        /* First medbay card purchase ticks off the
+                           onboarding objective. */
+                        if (active_shop_type == 1)
+                            mission_medbay_card_bought = true;
                     }
                     for (int j = idx; j < shop->count - 1; j++) {
                         shop->cards[j] = shop->cards[j + 1];
@@ -2560,12 +2567,15 @@ static void hub_draw_hud(uint32_t *px, int W, int H) {
     /* Mission objectives */
     {
         int oy = 50;
-        if (!(mission_briefed && mission_medbay_done && mission_armory_done) && g_dlgd.loaded) {
-            /* Initial prep flow: captain, medbay, armory */
+        bool prep_done = mission_briefed && mission_medbay_done &&
+                         mission_medbay_card_bought && mission_armory_done;
+        if (!prep_done && g_dlgd.loaded) {
+            /* Initial prep flow: captain, medbay heal, medbay buy, armory */
             sr_draw_text_shadow(px, W, H, 4, oy, "OBJECTIVES:", 0xFFCC8822, shadow);
             oy += 10;
-            bool obj_done[3] = { mission_briefed, mission_medbay_done, mission_armory_done };
-            for (int i = 0; i < g_dlgd.objective_count && i < 3; i++) {
+            bool obj_done[4] = { mission_briefed, mission_medbay_done,
+                                  mission_medbay_card_bought, mission_armory_done };
+            for (int i = 0; i < g_dlgd.objective_count && i < 4; i++) {
                 char obj_buf[DLGD_LINE_LEN + 8];
                 bool done = obj_done[i];
                 snprintf(obj_buf, sizeof(obj_buf), "[%c] %s", done ? 'X' : ' ', g_dlgd.objectives[i]);
@@ -2635,8 +2645,9 @@ static void hub_draw_hud(uint32_t *px, int W, int H) {
         int action = DIALOG_ACTION_NONE;
         if (rt == HUB_ROOM_TELEPORTER) {
             btn_label = "TELEPORTER";
-            /* Only allow teleport if mission available AND prep done (or post-first-mission) */
-            if (g_hub.mission_available && (mission_medbay_done && mission_armory_done))
+            /* Only allow teleport if mission available AND full prep done. */
+            if (g_hub.mission_available && mission_medbay_done &&
+                mission_medbay_card_bought && mission_armory_done)
                 action = DIALOG_ACTION_TELEPORT;
         } else if (rt == HUB_ROOM_BRIDGE) {
             btn_label = "BRIDGE";

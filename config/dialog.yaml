@@ -134,8 +134,9 @@ crew_default:
 objectives:
   obj0: REPORT TO CAPTAIN
   obj1: REPORT TO MEDBAY
-  obj2: VISIT THE ARMORY
-  count: 3
+  obj2: BUY A CARD FROM MEDBAY
+  obj3: VISIT THE ARMORY
+  count: 4
 
 # ── Game over epilogue (player loses) ─────────────────────────
 

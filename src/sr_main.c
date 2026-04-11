@@ -495,6 +495,7 @@ static bool game_load(void) {
     /* Loading a save means player is past the intro flow */
     mission_briefed = true;
     mission_medbay_done = true;
+    mission_medbay_card_bought = true;
     mission_armory_done = true;
 
     return true;
@@ -1838,7 +1839,11 @@ static void draw_class_select(sr_framebuffer *fb_ptr) {
             if (skip_intro) {
                 mission_briefed = true;
                 mission_medbay_done = true;
+                mission_medbay_card_bought = true;
                 mission_armory_done = true;
+                /* Quick start: hand the player the onboarding biomass up
+                   front since the medbay tutorial is being skipped. */
+                player_biomass = 150;
                 hub_generate(&g_hub);
                 memset(&g_dialog, 0, sizeof(g_dialog));
                 snprintf(g_dialog.speaker, sizeof(g_dialog.speaker), "CPT HARDEN");
@@ -1851,6 +1856,7 @@ static void draw_class_select(sr_framebuffer *fb_ptr) {
             } else {
                 mission_briefed = false;
                 mission_medbay_done = false;
+                mission_medbay_card_bought = false;
                 mission_armory_done = false;
                 medbay_used = false;
                 intro_char_idx = 0;
@@ -2442,8 +2448,13 @@ static void dispatch_dialog_action(int action) {
             if (!mission_medbay_done && mission_briefed && !mission_armory_done) {
                 g_player.hp = g_player.hp_max;
                 mission_medbay_done = true;
-                snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "VITALS LOGGED. YOU'RE CLEAR.");
-                g_hub.hud_msg_timer = 90;
+                /* Onboarding: Vasquez gives the player 150 biomass to spend
+                   in the medbay shop, teaching them about the secondary
+                   currency. */
+                player_biomass += 150;
+                snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg),
+                         "VASQUEZ: TAKE 150 BIOMASS. SPEND IT IN MY SHOP.");
+                g_hub.hud_msg_timer = 120;
             } else {
                 if (!mission_medbay_done && mission_briefed) mission_medbay_done = true;
                 dng_rng_seed((uint32_t)(player_sector * 5555 + 456 + player_biomass * 13));
@@ -3427,11 +3438,14 @@ static void handle_screen_tap(float sx, float sy) {
                         break;
                     case DIALOG_ACTION_HEAL:
                         if (!mission_medbay_done && mission_briefed && !mission_armory_done) {
-                            /* First visit during prep: free heal + check off objective */
+                            /* First visit during prep: free heal + 150 biomass +
+                               new objective for the medbay shop. */
                             g_player.hp = g_player.hp_max;
                             mission_medbay_done = true;
-                            snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "VITALS LOGGED. YOU'RE CLEAR.");
-                            g_hub.hud_msg_timer = 90;
+                            player_biomass += 150;
+                            snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg),
+                                     "VASQUEZ: TAKE 150 BIOMASS. SPEND IT IN MY SHOP.");
+                            g_hub.hud_msg_timer = 120;
                         } else {
                             /* Open medbay shop */
                             if (!mission_medbay_done && mission_briefed) mission_medbay_done = true;
@@ -3753,6 +3767,11 @@ static void event(const sapp_event *ev) {
                 player_persist_init(selected_class);
                 weakness_init((uint32_t)(time(NULL) ^ (selected_class * 31337)));
                 player_scrap = 30;
+                player_biomass = 0;
+                memset(player_consumables, 0, sizeof(player_consumables));
+                g_medbay_kit_stock = MEDBAY_KIT_STOCK_MAX;
+                g_elem_gift_given = false;
+                elem_gift_active = false;
                 player_sector = 0;
                 captain_briefing_page = 0;
                 player_samples = 0;
@@ -3765,7 +3784,11 @@ static void event(const sapp_event *ev) {
                 if (skip_intro) {
                     mission_briefed = true;
                     mission_medbay_done = true;
+                    mission_medbay_card_bought = true;
                     mission_armory_done = true;
+                    /* Quick start: hand the player the onboarding biomass
+                       up front since the medbay tutorial is being skipped. */
+                    player_biomass = 150;
                     hub_generate(&g_hub);
                     memset(&g_dialog, 0, sizeof(g_dialog));
                     snprintf(g_dialog.speaker, sizeof(g_dialog.speaker), "CPT HARDEN");
@@ -3780,6 +3803,7 @@ static void event(const sapp_event *ev) {
                 } else {
                     mission_briefed = false;
                     mission_medbay_done = false;
+                    mission_medbay_card_bought = false;
                     mission_armory_done = false;
                     medbay_used = false;
                     intro_char_idx = 0;
@@ -3994,8 +4018,10 @@ static void event(const sapp_event *ev) {
                             if (!mission_medbay_done && mission_briefed && !mission_armory_done) {
                                 g_player.hp = g_player.hp_max;
                                 mission_medbay_done = true;
-                                snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "VITALS LOGGED. YOU'RE CLEAR.");
-                                g_hub.hud_msg_timer = 90;
+                                player_biomass += 150;
+                                snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg),
+                                         "VASQUEZ: TAKE 150 BIOMASS. SPEND IT IN MY SHOP.");
+                                g_hub.hud_msg_timer = 120;
                             } else {
                                 if (!mission_medbay_done && mission_briefed) mission_medbay_done = true;
                                 dng_rng_seed((uint32_t)(player_sector * 5555 + 456 + player_biomass * 13));
