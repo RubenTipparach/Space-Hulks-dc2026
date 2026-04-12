@@ -2996,24 +2996,10 @@ static void frame(void) {
                                     hx, hy, floorbuf, dim, shadow);
                 hy += 10;
 
-                /* Count total terminals across all generated floors */
-                int total_terminals = 0;
-                for (int fl = 0; fl < current_ship.num_decks && fl < DNG_MAX_FLOORS; fl++) {
-                    if (!dng_state.floor_generated[fl]) continue;
-                    sr_dungeon *dd = &dng_state.floors[fl];
-                    for (int gy2 = 1; gy2 <= dd->h; gy2++)
-                        for (int gx2 = 1; gx2 <= dd->w; gx2++)
-                            if (dd->consoles[gy2][gx2] != 0) total_terminals++;
-                }
-                total_terminals += current_ship.terminals_destroyed; /* add already destroyed */
-
-                /* "TERMINALS X/GOAL (N TOTAL)" - goal is the number needed to
-                   clear the ship, total is how many exist on the ship. */
-                char termbuf[48];
-                snprintf(termbuf, sizeof(termbuf), "TERMINALS %d/%d (%d TOTAL)",
+                char termbuf[32];
+                snprintf(termbuf, sizeof(termbuf), "TERMINALS %d/%d",
                          current_ship.terminals_destroyed,
-                         current_ship.terminals_required,
-                         total_terminals);
+                         current_ship.terminals_required);
                 sr_draw_text_shadow(fb.color, fb.width, fb.height,
                                     hx, hy, termbuf, dim, shadow);
                 hy += 10;

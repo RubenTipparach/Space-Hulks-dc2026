@@ -285,6 +285,9 @@ static bool lvl_load_ship(ship_state *ship, const sr_json *j, int root) {
 
     ship->boarding_active = true;
     ship->initialized = true;
+    /* Fixed terminal goal (same as ship_generate): destroy 3 to clear. */
+    ship->terminals_required = 3;
+    ship->terminals_destroyed = 0;
     return true;
 }
 
