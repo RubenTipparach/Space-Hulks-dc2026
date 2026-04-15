@@ -2594,6 +2594,76 @@ static void combat_draw_pile_viewer(uint32_t *px, int W, int H,
     }
 }
 
+/* ── Floor point-light and dithered ellipse shadow beneath enemies ── */
+
+static void combat_draw_enemy_shadow(uint32_t *px, int W, int H,
+                                      int cx, int foot_y, float scale) {
+    /* 4x4 Bayer ordered dither matrix (values 0..15) */
+    static const int bayer4[4][4] = {
+        { 0,  8,  2, 10},
+        {12,  4, 14,  6},
+        { 3, 11,  1,  9},
+        {15,  7, 13,  5}
+    };
+
+    /* Ellipse dimensions scale with enemy visual size */
+    int rx = (int)(scale * 7.0f + 3.0f);   /* horizontal radius */
+    int ry = (int)(scale * 2.5f + 1.5f);   /* vertical radius (foreshortened) */
+    int shadow_cy = foot_y + ry / 2 + 1;   /* center just below feet */
+
+    /* --- Floor point light (warm overhead glow) --- */
+    {
+        int lrx = rx + 10;
+        int lry = ry + 6;
+        float scale_norm = scale / 4.0f;  /* normalize: 1.0 at melee, ~0.375 at max dist */
+        for (int y = shadow_cy - lry; y <= shadow_cy + lry; y++) {
+            if (y < 0 || y >= H) continue;
+            for (int x = cx - lrx; x <= cx + lrx; x++) {
+                if (x < 0 || x >= W) continue;
+                float dx = (float)(x - cx) / (float)lrx;
+                float dy = (float)(y - shadow_cy) / (float)lry;
+                float d2 = dx * dx + dy * dy;
+                if (d2 >= 1.0f) continue;
+                /* Quadratic falloff from center */
+                float t = (1.0f - d2) * (1.0f - d2);
+                float brightness = t * 0.25f * scale_norm;
+                uint32_t c = px[y * W + x];
+                int r = (c & 0xFF)         + (int)(brightness * 55.0f);
+                int g = ((c >> 8) & 0xFF)  + (int)(brightness * 45.0f);
+                int b = ((c >> 16) & 0xFF) + (int)(brightness * 35.0f);
+                if (r > 255) r = 255;
+                if (g > 255) g = 255;
+                if (b > 255) b = 255;
+                px[y * W + x] = 0xFF000000 | ((uint32_t)b << 16)
+                              | ((uint32_t)g << 8) | (uint32_t)r;
+            }
+        }
+    }
+
+    /* --- Dithered ellipse shadow --- */
+    for (int y = shadow_cy - ry; y <= shadow_cy + ry; y++) {
+        if (y < 0 || y >= H) continue;
+        for (int x = cx - rx; x <= cx + rx; x++) {
+            if (x < 0 || x >= W) continue;
+            float dx = (float)(x - cx) / (float)rx;
+            float dy = (float)(y - shadow_cy) / (float)ry;
+            float d2 = dx * dx + dy * dy;
+            if (d2 >= 1.0f) continue;
+            /* Shadow density: strong at center, fading at edges */
+            float density = (1.0f - d2);
+            int level = (int)(density * 15.0f);
+            if (bayer4[y & 3][x & 3] >= level) continue;  /* dither reject */
+            /* Darken pixel (~55% of original) */
+            uint32_t c = px[y * W + x];
+            int r = ((c & 0xFF) * 9) >> 4;
+            int g = (((c >> 8) & 0xFF) * 9) >> 4;
+            int b = (((c >> 16) & 0xFF) * 9) >> 4;
+            px[y * W + x] = 0xFF000000 | ((uint32_t)b << 16)
+                          | ((uint32_t)g << 8) | (uint32_t)r;
+        }
+    }
+}
+
 /* ── Main combat render ──────────────────────────────────────────── */
 
 static void draw_combat_scene(sr_framebuffer *fb_ptr) {
@@ -2650,6 +2720,9 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
                     combat.enemy_atk_timer > ENEMY_ATK_HIT_FRAME) {
                     anim_x = ((combat.enemy_atk_timer % 4) < 2) ? 3 : -3;
                 }
+
+                /* Floor shadow + point light beneath enemy feet */
+                combat_draw_enemy_shadow(px, W, H, cx, sprite_y + spr_sz, fscale);
 
                 /* Boss: use animated PNG frames if available */
                 bool drew_boss_anim = false;

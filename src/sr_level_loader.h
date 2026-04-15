@@ -285,8 +285,14 @@ static bool lvl_load_ship(ship_state *ship, const sr_json *j, int root) {
 
     ship->boarding_active = true;
     ship->initialized = true;
-    /* Fixed terminal goal (same as ship_generate): destroy 3 to clear. */
-    ship->terminals_required = 3;
+    /* Terminal goal = half of sabotage-able terminals, rounded up (same as ship_generate) */
+    {
+        int sabotage_count = 0;
+        for (int i = 0; i < ship->room_count; i++)
+            if (ship->rooms[i].type != ROOM_TELEPORTER) sabotage_count++;
+        ship->terminals_required = (sabotage_count + 1) / 2;
+        if (ship->terminals_required < 1) ship->terminals_required = 1;
+    }
     ship->terminals_destroyed = 0;
     return true;
 }

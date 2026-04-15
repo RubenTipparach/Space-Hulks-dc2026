@@ -199,7 +199,7 @@ static void game_pregen_enemy_ship(void) {
 
 /* ── Save / Load ─────────────────────────────────────────────────── */
 
-#define SAVE_VERSION 8  /* bumped: added boss mission state */
+#define SAVE_VERSION 9  /* bumped: struct layout changed (miniboss, medbay, elem_gift fields) */
 
 /*  Save header - fixed-size portion written first.
  *  After the header, each generated dungeon floor (sr_dungeon) is
@@ -391,26 +391,88 @@ static bool game_load(void) {
 #endif
 
     FILE *f = fopen(SAVE_FILE, "rb");
-    if (!f) return false;
+    if (!f) {
+        printf("[load] Cannot open save file '%s'\n", SAVE_FILE);
+        return false;
+    }
+
+    /* Get file size for diagnostics */
+    fseek(f, 0, SEEK_END);
+    long file_size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    printf("[load] Save file: %ld bytes, header expects %d bytes\n",
+           file_size, (int)sizeof(save_header));
 
     save_header hdr;
-    if (fread(&hdr, sizeof(hdr), 1, f) != 1 ||
-        hdr.magic != SAVE_MAGIC || hdr.version != SAVE_VERSION) {
+    memset(&hdr, 0, sizeof(hdr));
+    size_t hdr_read = fread(&hdr, sizeof(hdr), 1, f);
+
+    if (hdr_read != 1) {
+        /* File too small for current header. Try reading whatever is
+           available so we can at least check magic/version and report
+           a useful error. */
+        fseek(f, 0, SEEK_SET);
+        memset(&hdr, 0, sizeof(hdr));
+        size_t avail = (size_t)file_size;
+        if (avail > sizeof(hdr)) avail = sizeof(hdr);
+        size_t bytes = fread(&hdr, 1, avail, f);
+        if (bytes < 8 || hdr.magic != SAVE_MAGIC) {
+            printf("[load] Header read failed (got %d bytes, corrupt file)\n", (int)bytes);
+            fclose(f); return false;
+        }
+        printf("[load] Save from older build (ver=%u, %ld bytes vs %d expected)\n",
+               hdr.version, file_size, (int)sizeof(save_header));
+        printf("[load] Struct layout changed, cannot migrate. Please start a new game.\n");
         fclose(f); return false;
+    }
+
+    if (hdr.magic != SAVE_MAGIC) {
+        printf("[load] Bad magic: 0x%08X (expected 0x%08X)\n", hdr.magic, SAVE_MAGIC);
+        fclose(f); return false;
+    }
+    /* Accept current version and previous compatible version */
+    if (hdr.version != SAVE_VERSION && hdr.version != SAVE_VERSION - 1) {
+        printf("[load] Version too old: save=%u, supported=%u-%u\n",
+               hdr.version, SAVE_VERSION - 1, SAVE_VERSION);
+        fclose(f); return false;
+    }
+
+    /* Validate file size matches expected layout to catch silent struct
+       changes that shifted field offsets (e.g. embedded struct grew). */
+    {
+        int expected_floors = 0;
+        for (int i = 0; i < DNG_MAX_FLOORS; i++)
+            if (hdr.floor_generated[i]) expected_floors++;
+        long expected_size = (long)sizeof(save_header)
+                           + (long)expected_floors * (long)sizeof(sr_dungeon);
+        if (file_size != expected_size) {
+            printf("[load] Size mismatch: file=%ld, expected=%ld "
+                   "(hdr=%d + %d floors * %d)\n",
+                   file_size, expected_size, (int)sizeof(save_header),
+                   expected_floors, (int)sizeof(sr_dungeon));
+            printf("[load] Save layout incompatible with this build.\n");
+            fclose(f); return false;
+        }
     }
 
     /* Restore dungeon floors */
     memset(&dng_state, 0, sizeof(dng_state));
     memcpy(dng_state.floor_generated, hdr.floor_generated,
            sizeof(dng_state.floor_generated));
+    int floors_loaded = 0;
     for (int i = 0; i < DNG_MAX_FLOORS; i++) {
         if (dng_state.floor_generated[i]) {
             if (fread(&dng_state.floors[i], sizeof(sr_dungeon), 1, f) != 1) {
+                printf("[load] Floor %d read failed (expected %d bytes at offset %ld)\n",
+                       i, (int)sizeof(sr_dungeon), ftell(f));
                 fclose(f); return false;
             }
+            floors_loaded++;
         }
     }
     fclose(f);
+    printf("[load] OK: ver=%u, %d floors, state=%d, ship='%s'\n",
+           hdr.version, floors_loaded, hdr.app_state_saved, hdr.ship.name);
 
     /* Restore progression */
     selected_class = hdr.selected_class;
@@ -506,12 +568,25 @@ static bool game_has_save(void) {
     save_restore_wasm();
 #endif
     FILE *f = fopen(SAVE_FILE, "rb");
-    if (!f) return false;
+    if (!f) { printf("[save-check] No save file found\n"); return false; }
+
+    fseek(f, 0, SEEK_END);
+    long file_size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
     save_header hdr;
     memset(&hdr, 0, sizeof(hdr));
-    bool ok = (fread(&hdr, sizeof(hdr), 1, f) == 1 &&
-               hdr.magic == SAVE_MAGIC && hdr.version == SAVE_VERSION);
+    size_t n = fread(&hdr, sizeof(hdr), 1, f);
     fclose(f);
+
+    printf("[save-check] File %ld bytes (need %d), read=%d, magic=0x%08X, ver=%u (accept %u-%u)\n",
+           file_size, (int)sizeof(save_header), (int)n, hdr.magic,
+           hdr.version, SAVE_VERSION - 1, SAVE_VERSION);
+
+    /* Accept current and previous compatible version */
+    bool ok = (n == 1 && hdr.magic == SAVE_MAGIC &&
+               (hdr.version == SAVE_VERSION || hdr.version == SAVE_VERSION - 1));
+    if (!ok) printf("[save-check] Save invalid or incompatible version\n");
     return ok;
 }
 
