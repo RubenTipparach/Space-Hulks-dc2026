@@ -199,7 +199,7 @@ static void game_pregen_enemy_ship(void) {
 
 /* ── Save / Load ─────────────────────────────────────────────────── */
 
-#define SAVE_VERSION 9  /* bumped: struct layout changed (miniboss, medbay, elem_gift fields) */
+#define SAVE_VERSION 10 /* v10: self-describing header/dungeon sizes for forward compat */
 
 /*  Save header - fixed-size portion written first.
  *  After the header, each generated dungeon floor (sr_dungeon) is
@@ -259,6 +259,13 @@ typedef struct {
 
     /* One-shot flags */
     bool elem_gift_given;
+
+    /* Self-describing struct sizes (v10+).
+       Stored at save time so the loader knows exactly how many bytes
+       to read for the header and each dungeon floor, even if the
+       structs grow in a future build. */
+    uint32_t saved_header_size;
+    uint32_t saved_dungeon_size;
 } save_header;
 
 /* Variables used by save/load - declared here so they're visible to game_save/game_load */
@@ -366,6 +373,8 @@ static void game_save(void) {
     hdr.miniboss_type = current_miniboss_type;
     hdr.medbay_kit_stock = g_medbay_kit_stock;
     hdr.elem_gift_given = g_elem_gift_given;
+    hdr.saved_header_size  = (uint32_t)sizeof(save_header);
+    hdr.saved_dungeon_size = (uint32_t)sizeof(sr_dungeon);
 
     FILE *f = fopen(SAVE_FILE, "wb");
     if (!f) return;
@@ -396,64 +405,107 @@ static bool game_load(void) {
         return false;
     }
 
-    /* Get file size for diagnostics */
+    /* Get file size */
     fseek(f, 0, SEEK_END);
     long file_size = ftell(f);
     fseek(f, 0, SEEK_SET);
-    printf("[load] Save file: %ld bytes, header expects %d bytes\n",
-           file_size, (int)sizeof(save_header));
 
+    if (file_size < 8) {
+        printf("[load] File too small (%ld bytes)\n", file_size);
+        fclose(f); return false;
+    }
+
+    /* Initial header read: read min(file_size, sizeof(hdr)) bytes.
+       For older saves the header was smaller, so some floor data may
+       leak into trailing fields, but magic/version/floor_generated
+       are at stable offsets and read correctly. */
     save_header hdr;
     memset(&hdr, 0, sizeof(hdr));
-    size_t hdr_read = fread(&hdr, sizeof(hdr), 1, f);
+    size_t initial_read = (size_t)file_size < sizeof(hdr)
+                        ? (size_t)file_size : sizeof(hdr);
+    size_t bytes_read = fread(&hdr, 1, initial_read, f);
 
-    if (hdr_read != 1) {
-        /* File too small for current header. Try reading whatever is
-           available so we can at least check magic/version and report
-           a useful error. */
-        fseek(f, 0, SEEK_SET);
-        memset(&hdr, 0, sizeof(hdr));
-        size_t avail = (size_t)file_size;
-        if (avail > sizeof(hdr)) avail = sizeof(hdr);
-        size_t bytes = fread(&hdr, 1, avail, f);
-        if (bytes < 8 || hdr.magic != SAVE_MAGIC) {
-            printf("[load] Header read failed (got %d bytes, corrupt file)\n", (int)bytes);
+    if (bytes_read < 8) {
+        printf("[load] Header read failed (got %d bytes)\n", (int)bytes_read);
+        fclose(f); return false;
+    }
+    if (hdr.magic != SAVE_MAGIC) {
+        printf("[load] Bad magic: 0x%08X (expected 0x%08X)\n",
+               hdr.magic, SAVE_MAGIC);
+        fclose(f); return false;
+    }
+    if (hdr.version < 8 || hdr.version > SAVE_VERSION) {
+        printf("[load] Unsupported version: save=%u, accepted=8-%u\n",
+               hdr.version, SAVE_VERSION);
+        fclose(f); return false;
+    }
+
+    printf("[load] Save file: %ld bytes, version=%u, current header=%d\n",
+           file_size, hdr.version, (int)sizeof(save_header));
+
+    /* Determine the header and dungeon sizes that were used when the
+       file was written.  v10+ saves store these explicitly.  For older
+       saves we derive the header size from the file layout (new fields
+       were only appended, so floor_generated is at a stable offset). */
+    long saved_hdr_size, saved_dng_size;
+
+    if (hdr.version >= 10 &&
+        hdr.saved_header_size > 0 && hdr.saved_dungeon_size > 0) {
+        /* Self-describing format */
+        saved_hdr_size = (long)hdr.saved_header_size;
+        saved_dng_size = (long)hdr.saved_dungeon_size;
+        printf("[load] Self-describing: header=%ld, dungeon=%ld\n",
+               saved_hdr_size, saved_dng_size);
+    } else {
+        /* Legacy format (v8/v9): assume dungeon struct unchanged,
+           compute old header size from file layout. */
+        saved_dng_size = (long)sizeof(sr_dungeon);
+        int floor_count = 0;
+        for (int i = 0; i < DNG_MAX_FLOORS; i++)
+            if (hdr.floor_generated[i]) floor_count++;
+        saved_hdr_size = file_size - (long)floor_count * saved_dng_size;
+
+        if (saved_hdr_size < 8 ||
+            saved_hdr_size > (long)sizeof(save_header) + 1024) {
+            printf("[load] Cannot determine legacy header size "
+                   "(implied=%ld, floors=%d)\n", saved_hdr_size, floor_count);
             fclose(f); return false;
         }
-        printf("[load] Save from older build (ver=%u, %ld bytes vs %d expected)\n",
-               hdr.version, file_size, (int)sizeof(save_header));
-        printf("[load] Struct layout changed, cannot migrate. Please start a new game.\n");
-        fclose(f); return false;
+        printf("[load] Legacy v%u: header=%ld bytes "
+               "(current=%d, diff=%ld)\n",
+               hdr.version, saved_hdr_size, (int)sizeof(save_header),
+               (long)sizeof(save_header) - saved_hdr_size);
     }
 
-    if (hdr.magic != SAVE_MAGIC) {
-        printf("[load] Bad magic: 0x%08X (expected 0x%08X)\n", hdr.magic, SAVE_MAGIC);
-        fclose(f); return false;
-    }
-    /* Accept current version and previous compatible version */
-    if (hdr.version != SAVE_VERSION && hdr.version != SAVE_VERSION - 1) {
-        printf("[load] Version too old: save=%u, supported=%u-%u\n",
-               hdr.version, SAVE_VERSION - 1, SAVE_VERSION);
-        fclose(f); return false;
+    /* If the saved header size differs from the current struct, re-read
+       with the correct byte count so fields past the old boundary are
+       cleanly zeroed rather than filled with floor data. */
+    if (saved_hdr_size != (long)sizeof(save_header)) {
+        fseek(f, 0, SEEK_SET);
+        memset(&hdr, 0, sizeof(hdr));
+        size_t to_read = (size_t)saved_hdr_size;
+        if (to_read > sizeof(hdr)) to_read = sizeof(hdr);
+        fread(&hdr, 1, to_read, f);
     }
 
-    /* Validate file size matches expected layout to catch silent struct
-       changes that shifted field offsets (e.g. embedded struct grew). */
+    /* Validate total file size against the determined layout */
     {
         int expected_floors = 0;
         for (int i = 0; i < DNG_MAX_FLOORS; i++)
             if (hdr.floor_generated[i]) expected_floors++;
-        long expected_size = (long)sizeof(save_header)
-                           + (long)expected_floors * (long)sizeof(sr_dungeon);
-        if (file_size != expected_size) {
+        long expected_total = saved_hdr_size
+                            + (long)expected_floors * saved_dng_size;
+        if (file_size != expected_total) {
             printf("[load] Size mismatch: file=%ld, expected=%ld "
-                   "(hdr=%d + %d floors * %d)\n",
-                   file_size, expected_size, (int)sizeof(save_header),
-                   expected_floors, (int)sizeof(sr_dungeon));
-            printf("[load] Save layout incompatible with this build.\n");
+                   "(hdr=%ld + %d floors * %ld)\n",
+                   file_size, expected_total, saved_hdr_size,
+                   expected_floors, saved_dng_size);
             fclose(f); return false;
         }
     }
+
+    /* Seek past the saved header to where floor data starts */
+    fseek(f, saved_hdr_size, SEEK_SET);
 
     /* Restore dungeon floors */
     memset(&dng_state, 0, sizeof(dng_state));
@@ -462,10 +514,24 @@ static bool game_load(void) {
     int floors_loaded = 0;
     for (int i = 0; i < DNG_MAX_FLOORS; i++) {
         if (dng_state.floor_generated[i]) {
-            if (fread(&dng_state.floors[i], sizeof(sr_dungeon), 1, f) != 1) {
-                printf("[load] Floor %d read failed (expected %d bytes at offset %ld)\n",
-                       i, (int)sizeof(sr_dungeon), ftell(f));
-                fclose(f); return false;
+            if (saved_dng_size == (long)sizeof(sr_dungeon)) {
+                /* Same struct size, direct read */
+                if (fread(&dng_state.floors[i], sizeof(sr_dungeon), 1, f) != 1) {
+                    printf("[load] Floor %d read failed\n", i);
+                    fclose(f); return false;
+                }
+            } else {
+                /* Struct size changed: read what fits, skip the rest */
+                memset(&dng_state.floors[i], 0, sizeof(sr_dungeon));
+                size_t to_read = (size_t)saved_dng_size;
+                if (to_read > sizeof(sr_dungeon)) to_read = sizeof(sr_dungeon);
+                if (fread(&dng_state.floors[i], 1, to_read, f) != to_read) {
+                    printf("[load] Floor %d partial read failed\n", i);
+                    fclose(f); return false;
+                }
+                if (saved_dng_size > (long)sizeof(sr_dungeon))
+                    fseek(f, saved_dng_size - (long)sizeof(sr_dungeon),
+                          SEEK_CUR);
             }
             floors_loaded++;
         }
@@ -574,18 +640,20 @@ static bool game_has_save(void) {
     long file_size = ftell(f);
     fseek(f, 0, SEEK_SET);
 
-    save_header hdr;
-    memset(&hdr, 0, sizeof(hdr));
-    size_t n = fread(&hdr, sizeof(hdr), 1, f);
+    /* Read only magic + version (8 bytes) to avoid failing on
+       older saves whose header is smaller than sizeof(save_header). */
+    uint32_t peek[2] = {0, 0};
+    size_t n = fread(peek, sizeof(uint32_t), 2, f);
     fclose(f);
 
-    printf("[save-check] File %ld bytes (need %d), read=%d, magic=0x%08X, ver=%u (accept %u-%u)\n",
-           file_size, (int)sizeof(save_header), (int)n, hdr.magic,
-           hdr.version, SAVE_VERSION - 1, SAVE_VERSION);
+    uint32_t magic   = peek[0];
+    uint32_t version = peek[1];
 
-    /* Accept current and previous compatible version */
-    bool ok = (n == 1 && hdr.magic == SAVE_MAGIC &&
-               (hdr.version == SAVE_VERSION || hdr.version == SAVE_VERSION - 1));
+    printf("[save-check] File %ld bytes, magic=0x%08X, ver=%u (accept 8-%u)\n",
+           file_size, magic, version, SAVE_VERSION);
+
+    bool ok = (n == 2 && magic == SAVE_MAGIC &&
+               version >= 8 && version <= SAVE_VERSION);
     if (!ok) printf("[save-check] Save invalid or incompatible version\n");
     return ok;
 }
