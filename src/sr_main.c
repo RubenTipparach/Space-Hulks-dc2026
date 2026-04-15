@@ -1761,6 +1761,7 @@ static void check_random_encounter(void) {
                 /* ship_tick_turn(&current_ship); - ship simulation disabled */
             }
 
+            combat_floor_texture = ITEX_HUB_FLOOR;
             combat_init(&combat, selected_class, dng_state.current_floor, alien);
             app_state = STATE_COMBAT;
             return;
@@ -1866,6 +1867,7 @@ static void check_random_encounter(void) {
                     ship_room *rm = &current_ship.rooms[sr_idx];
 
                     /* Sentinel defense combat based on room type */
+                    combat_floor_texture = ITEX_HUB_FLOOR;
                     combat_init(&combat, selected_class, dng_state.current_floor, 0);
 
                     /* Terminal sentinels - every terminal has at least 2
@@ -2919,7 +2921,6 @@ static void frame(void) {
         dng_wall_texture = ITEX_ALIEN_CORRIDOR;
         dng_room_wall_texture = ITEX_ALIEN_WALL;
         dng_floor_texture = ITEX_HUB_FLOOR;
-        combat_floor_texture = ITEX_HUB_FLOOR;  /* persist for combat ground plane */
         dng_ceiling_texture = ITEX_HUB_CEILING;
         dng_window_texture = ITEX_ALIEN_WIN;
         dng_skip_pillars = true;
