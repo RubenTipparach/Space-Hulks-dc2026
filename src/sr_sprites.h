@@ -107,7 +107,7 @@ static void spr_draw_nf(uint32_t *px, int fb_w, int fb_h,
             int sx = (int)(ox / scale);
             if (sx >= src_w) sx = src_w - 1;
             uint32_t c = sprite[sy * src_w + sx];
-            if (c == SPR_TRANS) continue;
+            if ((c >> 24) < 128) continue;  /* alpha-based transparency */
             int px2 = dx + ox, py2 = dy + oy;
             if (px2 >= 0 && px2 < fb_w && py2 >= 0 && py2 < fb_h)
                 px[py2 * fb_w + px2] = c;
@@ -128,7 +128,7 @@ static void spr_draw_flash_nf(uint32_t *px, int fb_w, int fb_h,
             int sx = (int)(ox / scale);
             if (sx >= src_w) sx = src_w - 1;
             uint32_t c = sprite[sy * src_w + sx];
-            if (c == SPR_TRANS) continue;
+            if ((c >> 24) < 128) continue;  /* alpha-based transparency */
             int px2 = dx + ox, py2 = dy + oy;
             if (px2 >= 0 && px2 < fb_w && py2 >= 0 && py2 < fb_h)
                 px[py2 * fb_w + px2] = 0xFFFFFFFF;
