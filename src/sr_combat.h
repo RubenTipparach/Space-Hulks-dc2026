@@ -2594,6 +2594,65 @@ static void combat_draw_pile_viewer(uint32_t *px, int W, int H,
     }
 }
 
+/* ── Perspective ground plane beneath enemies ──────────────────────── */
+
+static void combat_draw_ground_plane(uint32_t *px, int W, int H) {
+    /* 4x4 Bayer dither for subtle noise on the floor */
+    static const int bayer4[4][4] = {
+        { 0,  8,  2, 10},
+        {12,  4, 14,  6},
+        { 3, 11,  1,  9},
+        {15,  7, 13,  5}
+    };
+
+    /* Ground plane spans from horizon line down to divider */
+    int horizon_y = 55;   /* where floor meets background */
+    int floor_end = 130;  /* divider line */
+
+    for (int y = horizon_y; y < floor_end && y < H; y++) {
+        float t = (float)(y - horizon_y) / (float)(floor_end - horizon_y);
+        /* Perspective: rows near horizon are more compressed */
+        float depth = t * t;  /* quadratic for perspective feel */
+
+        /* Base floor color: dark metal, brighter closer to camera */
+        int base_r = 13 + (int)(depth * 22.0f);  /* 13 -> 35 */
+        int base_g = 13 + (int)(depth * 20.0f);  /* 13 -> 33 */
+        int base_b = 17 + (int)(depth * 25.0f);  /* 17 -> 42 */
+
+        for (int x = 0; x < W; x++) {
+            int r = base_r, g = base_g, b = base_b;
+
+            /* Subtle grid lines for depth (perspective spacing) */
+            float grid_spacing = 8.0f + depth * 20.0f;
+            float cx = (float)(x - W / 2);
+            /* Perspective-correct X grid: converge toward center at horizon */
+            float persp_x = cx / (0.3f + depth * 0.7f);
+            int gx = (int)(persp_x + 5000.5f) % (int)(grid_spacing + 0.5f);
+            /* Horizontal grid lines */
+            int row_period = (int)(3.0f + depth * 12.0f);
+            int gy = (y - horizon_y) % row_period;
+
+            /* Thin grid lines: slightly brighter */
+            if (gx == 0 || gy == 0) {
+                r += 8; g += 8; b += 10;
+            }
+
+            /* Dither: adds subtle noise to prevent banding */
+            int dith = bayer4[y & 3][x & 3];
+            r += (dith > 10) ? 2 : -1;
+            g += (dith > 10) ? 2 : -1;
+            b += (dith > 10) ? 2 : -1;
+
+            if (r < 0) r = 0; if (r > 255) r = 255;
+            if (g < 0) g = 0; if (g > 255) g = 255;
+            if (b < 0) b = 0; if (b > 255) b = 255;
+
+            px[y * W + x] = 0xFF000000 | ((uint32_t)b << 16)
+                          | ((uint32_t)g << 8) | (uint32_t)r;
+        }
+    }
+}
+
 /* ── Floor point-light and dithered ellipse shadow beneath enemies ── */
 
 static void combat_draw_enemy_shadow(uint32_t *px, int W, int H,
@@ -2678,6 +2737,9 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
     /* Background - dark industrial */
     for (int i = 0; i < W * H; i++)
         px[i] = 0xFF0D0D11;
+
+    /* Ground plane - perspective floor beneath enemies */
+    combat_draw_ground_plane(px, W, H);
 
     /* Top bar - subtle divider line */
     for (int x = 0; x < W; x++)
