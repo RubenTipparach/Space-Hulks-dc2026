@@ -52,12 +52,12 @@ enemy_ship_medium:
 # Ground plane uses the dungeon floor texture with palette-based shading.
 # Point light illuminates the floor from a configurable position.
 combat:
-  ground_ambient: 0.25
+  ground_ambient: 0.05
   ground_tile_scale: 4.0
   light_x: 0.0
   light_y: 0.4
   light_intensity: 1.0
-  light_radius: 0.7
+  light_radius: 0.42
   shadow_opacity: 0.55
 
 # Large ship (80x80)
