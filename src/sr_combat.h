@@ -630,7 +630,14 @@ static float combat_lerpf(float a, float b, float t) {
     return a + (b - a) * t;
 }
 
+/* Forward-declared combat floor state (config loaded later, near ground plane code) */
+static int   combat_floor_texture       = -1;
+static float combat_floor_scroll        = 0.0f;
+static float combat_floor_scroll_target = 0.0f;
+
 static void combat_init(combat_state *cs, int player_class, int floor, int cell_alien_type) {
+    combat_floor_scroll = 0.0f;
+    combat_floor_scroll_target = 0.0f;
     memset(cs, 0, sizeof(*cs));
     cs->player_class = player_class;
     cs->player_hp_max = g_player.hp_max;
@@ -1555,6 +1562,7 @@ static void combat_begin_enemy_turn(combat_state *cs) {
         /* Advance if not yet in attack range */
         if (e->distance > e->attack_range) {
             e->distance--;
+            combat_floor_scroll_target -= 0.2f; /* enemy approaches: tiles toward player */
             sr_audio_play_combat_step();
             combat_log(cs, "%s advances -> dist %d",
                        enemy_templates[e->type].name, e->distance);
@@ -1836,6 +1844,7 @@ static void combat_action_move_forward(combat_state *cs) {
     }
     cs->player_move_pts--;
     sr_audio_play_combat_step();
+    combat_floor_scroll_target -= 1.0f;  /* tiles scroll toward player */
     for (int i = 0; i < cs->enemy_count; i++)
         if (cs->enemies[i].alive && cs->enemies[i].distance > 0)
             cs->enemies[i].distance--;
@@ -1854,6 +1863,7 @@ static void combat_action_move_back(combat_state *cs) {
     }
     cs->player_move_pts--;
     sr_audio_play_combat_step();
+    combat_floor_scroll_target += 1.0f;  /* tiles scroll away from player */
     for (int i = 0; i < cs->enemy_count; i++)
         if (cs->enemies[i].alive && cs->enemies[i].distance < COMBAT_MAX_DISTANCE)
             cs->enemies[i].distance++;
@@ -2597,21 +2607,25 @@ static void combat_draw_pile_viewer(uint32_t *px, int W, int H,
 /* ── Combat ground plane config (loaded from game_config.yaml) ────── */
 
 static float combat_ground_ambient    = 0.25f;  /* base floor brightness */
-static float combat_ground_tile_scale = 4.0f;   /* texture repeat factor */
 static float combat_light_x           = 0.0f;   /* point light X (-1..1) */
 static float combat_light_y           = 0.4f;   /* point light depth (0=horizon,1=camera) */
 static float combat_light_intensity   = 1.0f;   /* point light brightness */
 static float combat_light_radius      = 0.7f;   /* point light falloff radius */
 static float combat_shadow_opacity    = 0.55f;  /* shadow darkness (0=none, 1=full black) */
 
-/* ── Perspective ground plane beneath enemies ──────────────────────── */
+/* ── Perspective ground plane with discrete tile grid ────────────── */
+
+#define COMBAT_TILE_GRID 5  /* 5x5 visible tile grid */
 
 static void combat_draw_ground_plane(uint32_t *px, int W, int H) {
-    /* Use the current dungeon floor texture, fallback to ITEX_TILE */
-    const sr_indexed_texture *floor_tex = (dng_floor_texture >= 0)
-        ? &itextures[dng_floor_texture] : &itextures[ITEX_TILE];
+    /* Use the floor texture snapshot from combat start */
+    const sr_indexed_texture *floor_tex = (combat_floor_texture >= 0)
+        ? &itextures[combat_floor_texture] : &itextures[ITEX_TILE];
     if (!floor_tex->indices) floor_tex = &itextures[ITEX_TILE];
     if (!floor_tex->indices) return;
+
+    /* Lerp scroll toward target for smooth movement */
+    combat_floor_scroll += (combat_floor_scroll_target - combat_floor_scroll) * 0.12f;
 
     int horizon_y = 55;
     int floor_end = 130;
@@ -2620,20 +2634,34 @@ static void combat_draw_ground_plane(uint32_t *px, int W, int H) {
     float lr2 = combat_light_radius * combat_light_radius;
     if (lr2 < 0.01f) lr2 = 0.01f;
 
+    /* Project screen pixels to a world-space tile grid.
+       Each tile is 1.0 x 1.0 in world units.  The grid is
+       COMBAT_TILE_GRID tiles wide, centered on the player, and
+       extends forward from the camera. */
+    float grid_half = (float)COMBAT_TILE_GRID * 0.5f;
+
     for (int y = horizon_y; y < floor_end && y < H; y++) {
         float t = (float)(y - horizon_y) / (float)(floor_end - horizon_y);
         float depth = t * t;
 
+        /* World Z: depth 0 = far (horizon), 1 = near (camera) */
+        float wz = depth * (float)COMBAT_TILE_GRID + combat_floor_scroll;
+
         for (int x = 0; x < W; x++) {
             float cx = (float)(x - W / 2);
-            float persp_x = cx / (0.3f + depth * 0.7f);
+            /* Perspective-correct X: tiles converge toward horizon */
+            float wx = cx / (float)(W / 2) * grid_half / (0.3f + depth * 0.7f);
 
-            /* UV coordinates for floor texture sampling */
-            float u = persp_x * 0.02f * combat_ground_tile_scale;
-            float v = depth * combat_ground_tile_scale;
+            /* Tile coordinates: each tile maps its own 0..1 UV range */
+            float tile_u = wx - floorf(wx);
+            float tile_v = wz - floorf(wz);
 
-            uint8_t pal_idx = sr_indexed_sample(floor_tex, u, v);
+            uint8_t pal_idx = sr_indexed_sample(floor_tex, tile_u, tile_v);
             if (pal_idx == PAL_TRANSPARENT) pal_idx = 0;
+
+            /* Subtle grid line at tile edges */
+            bool grid_edge = (tile_u < 0.03f || tile_u > 0.97f ||
+                              tile_v < 0.03f || tile_v > 0.97f);
 
             /* Point light falloff from configured position */
             float ldx = (cx - light_px) / (float)(W / 2);
@@ -2644,8 +2672,9 @@ static void combat_draw_ground_plane(uint32_t *px, int W, int H) {
             float point = combat_light_intensity * falloff;
 
             float intensity = combat_ground_ambient + point;
+            /* Darken grid edges slightly for tile definition */
+            if (grid_edge) intensity *= 0.7f;
 
-            /* Palette shade lookup with dithering for smooth gradients */
             int shade = sr_shade_row_dithered(intensity, x, y);
             px[y * W + x] = sr_palette_lookup(shade, pal_idx);
         }

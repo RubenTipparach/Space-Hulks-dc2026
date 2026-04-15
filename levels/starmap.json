@@ -171,11 +171,10 @@
       "next": [18]
     },
     {
-      "name": "SECTOR LYRA-6",
-      "levelFile": "enemy_ship_small_4.json",
+      "name": "JUNKERS",
       "difficulty": 3,
       "isBoss": false,
-      "nodeType": "normal",
+      "nodeType": "junkers",
       "x": 400,
       "y": 190,
       "next": [18]

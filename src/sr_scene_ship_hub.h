@@ -90,7 +90,8 @@ enum {
     NODE_NORMAL,    /* regular derelict ship */
     NODE_MINIBOSS,  /* derelict with a miniboss fight */
     NODE_EVENT,     /* dilemma / random event (no dungeon) */
-    NODE_BOSS       /* final boss node */
+    NODE_BOSS,      /* final boss node */
+    NODE_JUNKERS    /* junk traders: trade junk cards for scrap */
 };
 
 typedef struct {
@@ -252,6 +253,40 @@ typedef struct {
 } event_state;
 
 static event_state g_event;
+
+/* ── Junkers trade state ───────────────────────────────────────── */
+
+#define JUNKERS_MAX_TRADES 3   /* max junk cards removed per visit */
+#define JUNKERS_SCRAP_PER_JUNK 15  /* scrap reward per junk traded */
+
+typedef struct {
+    bool active;
+    int  junk_traded;      /* how many junk cards traded this visit */
+} junkers_state;
+
+static junkers_state g_junkers;
+
+/* Count CARD_JUNK in persistent deck */
+static int junkers_count_junk(void) {
+    int count = 0;
+    for (int i = 0; i < g_player.persistent_deck_count; i++)
+        if (g_player.persistent_deck[i] == CARD_JUNK) count++;
+    return count;
+}
+
+/* Remove one CARD_JUNK from persistent deck, return true if removed */
+static bool junkers_remove_one_junk(void) {
+    for (int i = 0; i < g_player.persistent_deck_count; i++) {
+        if (g_player.persistent_deck[i] == CARD_JUNK) {
+            /* Shift remaining cards down */
+            for (int j = i; j < g_player.persistent_deck_count - 1; j++)
+                g_player.persistent_deck[j] = g_player.persistent_deck[j + 1];
+            g_player.persistent_deck_count--;
+            return true;
+        }
+    }
+    return false;
+}
 
 /* ── Shop state ─────────────────────────────────────────────────── */
 
@@ -990,8 +1025,10 @@ static void draw_kit_display(uint32_t *px, int W, int H) {
     }
 
     /* CLOSE button */
-    ui_button(px, W, H, W - 60, H - 18, 50, 14,
-              "CLOSE", 0xFF1A1A33, 0xFF222255, 0xFF44CC44);
+    if (ui_button(px, W, H, W - 60, H - 18, 50, 14,
+                  "CLOSE", 0xFF1A1A33, 0xFF222255, 0xFF44CC44)) {
+        g_kit.active = false;
+    }
 
     /* Detail overlay if a card is selected */
     if (g_kit.detail_idx >= 0 && g_kit.detail_idx < g_kit.card_count) {
@@ -1622,6 +1659,11 @@ static void starmap_generate(starmap_state *sm, int start_sector) {
                 int bi = player_starmap;
                 if (bi < 0) bi = 0; if (bi > 2) bi = 2;
                 snprintf(nd->name, 24, "%s", boss_names[bi]);
+            } else if (col == col_count - 2 && n == nodes_in_col - 1) {
+                /* Last node before boss column is always a Junkers trader */
+                nd->node_type = NODE_JUNKERS;
+                nd->scrap_reward = 0;
+                snprintf(nd->name, 24, "JUNKERS");
             } else {
                 nd->scrap_reward = 20 + diff * 5 + dng_rng_int(10);
                 int name_idx = (start_sector + col * 3 + n) % NUM_SECTOR_NAMES;
@@ -1708,6 +1750,7 @@ static void starmap_save_json(const starmap_state *sm, const char *path) {
             if (nd->node_type == NODE_MINIBOSS) type_str = "miniboss";
             else if (nd->node_type == NODE_EVENT) type_str = "event";
             else if (nd->node_type == NODE_BOSS) type_str = "boss";
+            else if (nd->node_type == NODE_JUNKERS) type_str = "junkers";
             fprintf(f, "      \"nodeType\": \"%s\",\n", type_str);
         }
         if (nd->boss_room >= 0)
@@ -1773,6 +1816,7 @@ static bool starmap_load_json(starmap_state *sm, const char *path) {
             if (strcmp(type_str, "miniboss") == 0)      nd->node_type = NODE_MINIBOSS;
             else if (strcmp(type_str, "event") == 0)     nd->node_type = NODE_EVENT;
             else if (strcmp(type_str, "boss") == 0)      nd->node_type = NODE_BOSS;
+            else if (strcmp(type_str, "junkers") == 0)   nd->node_type = NODE_JUNKERS;
             else                                         nd->node_type = NODE_NORMAL;
         }
         /* Sync is_boss from node_type */
@@ -1906,6 +1950,7 @@ static void draw_starmap(uint32_t *px, int W, int H) {
                 case NODE_BOSS:     col = 0xFF4444FF; break;
                 case NODE_MINIBOSS: col = 0xFF44CCFF; break; /* yellow-orange */
                 case NODE_EVENT:    col = 0xFFDDDD00; break; /* cyan */
+                case NODE_JUNKERS:  col = 0xFF32A0DC; break; /* amber/orange */
                 default:            col = 0xFFCCCCFF; break; /* white-blue */
             }
         }
@@ -1927,6 +1972,7 @@ static void draw_starmap(uint32_t *px, int W, int H) {
             case NODE_BOSS:     icon_stex = STEX_MAP_BOSS; break;
             case NODE_MINIBOSS: icon_stex = STEX_MAP_MINIBOSS; break;
             case NODE_EVENT:    icon_stex = STEX_MAP_EVENT; break;
+            case NODE_JUNKERS:  icon_stex = STEX_MAP_JUNKERS; break;
             default:            icon_stex = STEX_MAP_NORMAL; break;
         }
 
@@ -1971,6 +2017,7 @@ static void draw_starmap(uint32_t *px, int W, int H) {
                     case NODE_BOSS:     snprintf(rbuf, sizeof(rbuf), "BOSS"); break;
                     case NODE_MINIBOSS: snprintf(rbuf, sizeof(rbuf), "ELITE D%d", nd->difficulty); break;
                     case NODE_EVENT:    snprintf(rbuf, sizeof(rbuf), "EVENT"); break;
+                    case NODE_JUNKERS:  snprintf(rbuf, sizeof(rbuf), "JUNKERS"); break;
                     default:            snprintf(rbuf, sizeof(rbuf), "D%d", nd->difficulty); break;
                 }
                 uint32_t tag_col;
@@ -1978,6 +2025,7 @@ static void draw_starmap(uint32_t *px, int W, int H) {
                     case NODE_BOSS:     tag_col = 0xFFCC8844; break;
                     case NODE_MINIBOSS: tag_col = 0xFF44AACC; break;
                     case NODE_EVENT:    tag_col = 0xFFCCCC44; break;
+                    case NODE_JUNKERS:  tag_col = 0xFF32A0DC; break;
                     default:            tag_col = 0xFF888888; break;
                 }
                 sr_draw_text_shadow(px, W, H, nd->x - 20, label_y + 10,
@@ -2014,6 +2062,7 @@ static void draw_starmap(uint32_t *px, int W, int H) {
                     case NODE_BOSS:     snprintf(dbuf, sizeof(dbuf), "BOSS FIGHT"); break;
                     case NODE_MINIBOSS: snprintf(dbuf, sizeof(dbuf), "ELITE D%d", tgt->difficulty); break;
                     case NODE_EVENT:    snprintf(dbuf, sizeof(dbuf), "EVENT"); break;
+                    case NODE_JUNKERS:  snprintf(dbuf, sizeof(dbuf), "TRADE JUNK"); break;
                     default:            snprintf(dbuf, sizeof(dbuf), "D%d", tgt->difficulty); break;
                 }
                 sr_draw_text_shadow(px, W, H, dbx + 10, dby + 26, dbuf, 0xFF888888, shadow);
@@ -2037,6 +2086,10 @@ static void draw_starmap(uint32_t *px, int W, int H) {
                     g_event.showing_result = false;
                     g_event.result_timer = 0;
                     /* Stay on starmap - event overlay will draw on top */
+                } else if (tgt->node_type == NODE_JUNKERS) {
+                    /* Junkers node: open junk trade overlay */
+                    g_junkers.active = true;
+                    g_junkers.junk_traded = 0;
                 } else {
                     /* Derelict node (normal, miniboss, boss): load dungeon */
                     g_starmap.derelicts_visited++;
@@ -2190,8 +2243,68 @@ static void draw_starmap(uint32_t *px, int W, int H) {
         }
     }
 
-    /* Back button (disabled during event) */
-    if (!g_event.active) {
+    /* ── Junkers trade overlay ──────────────────────────────────── */
+    if (g_junkers.active) {
+        int jw = 220, jh = 120;
+        int jx = W/2 - jw/2, jy = H/2 - jh/2;
+        /* Background */
+        for (int ry = jy; ry < jy + jh && ry < H; ry++)
+            for (int rx = jx; rx < jx + jw && rx < W; rx++)
+                if (rx >= 0 && ry >= 0) px[ry * W + rx] = 0xFF0E1218;
+        /* Border */
+        uint32_t jborder = 0xFF32A0DC;
+        for (int rx = jx; rx < jx + jw && rx < W; rx++) {
+            if (jy >= 0 && jy < H) px[jy * W + rx] = jborder;
+            if (jy+jh-1 >= 0 && jy+jh-1 < H) px[(jy+jh-1) * W + rx] = jborder;
+        }
+        for (int ry = jy; ry < jy + jh && ry < H; ry++) {
+            if (jx >= 0 && jx < W) px[ry * W + jx] = jborder;
+            if (jx+jw-1 >= 0 && jx+jw-1 < W) px[ry * W + jx+jw-1] = jborder;
+        }
+
+        sr_draw_text_shadow(px, W, H, jx + 10, jy + 6, "JUNKERS", 0xFF32A0DC, shadow);
+        sr_draw_text_shadow(px, W, H, jx + 10, jy + 18,
+                            "Trade junk cards for scrap.", 0xFFAAAAAA, shadow);
+
+        int junk_count = junkers_count_junk();
+        int trades_left = JUNKERS_MAX_TRADES - g_junkers.junk_traded;
+
+        char jbuf[48];
+        snprintf(jbuf, sizeof(jbuf), "JUNK IN DECK: %d", junk_count);
+        sr_draw_text_shadow(px, W, H, jx + 10, jy + 34, jbuf, 0xFFCCCCCC, shadow);
+
+        snprintf(jbuf, sizeof(jbuf), "TRADES LEFT: %d", trades_left);
+        sr_draw_text_shadow(px, W, H, jx + 10, jy + 44, jbuf, 0xFFCCCCCC, shadow);
+
+        snprintf(jbuf, sizeof(jbuf), "SCRAP: %d", player_scrap);
+        sr_draw_text_shadow(px, W, H, jx + 10, jy + 54, jbuf, 0xFF00DDDD, shadow);
+
+        if (junk_count > 0 && trades_left > 0) {
+            snprintf(jbuf, sizeof(jbuf), "TRADE 1 JUNK (+%d SCRAP)", JUNKERS_SCRAP_PER_JUNK);
+            if (ui_button(px, W, H, jx + 10, jy + 70, jw - 20, 14, jbuf,
+                          0xFF112211, 0xFF223322, 0xFF44CC44)) {
+                if (junkers_remove_one_junk()) {
+                    player_scrap += JUNKERS_SCRAP_PER_JUNK;
+                    g_junkers.junk_traded++;
+                    game_save();
+                }
+            }
+        } else if (junk_count == 0) {
+            sr_draw_text_shadow(px, W, H, jx + 10, jy + 74,
+                                "No junk to trade.", 0xFF888888, shadow);
+        } else {
+            sr_draw_text_shadow(px, W, H, jx + 10, jy + 74,
+                                "All trades used.", 0xFF888888, shadow);
+        }
+
+        if (ui_button(px, W, H, jx + jw/2 - 30, jy + jh - 18, 60, 14, "LEAVE",
+                      0xFF221111, 0xFF332222, 0xFF882222)) {
+            g_junkers.active = false;
+        }
+    }
+
+    /* Back button (disabled during event or junkers) */
+    if (!g_event.active && !g_junkers.active) {
         if (ui_button(px, W, H, W/2 - 30, H - 14, 60, 12, "BACK",
                       0xFF111122, 0xFF222244, 0xFF333366)) {
             g_starmap.active = false;
@@ -2225,6 +2338,9 @@ static void starmap_handle_key(int key_code) {
                         g_event.event_id = 0;
                     g_event.showing_result = false;
                     g_event.result_timer = 0;
+                } else if (tgt->node_type == NODE_JUNKERS) {
+                    g_junkers.active = true;
+                    g_junkers.junk_traded = 0;
                 } else {
                     g_starmap.derelicts_visited++;
                     current_mission_is_boss = tgt->is_boss;

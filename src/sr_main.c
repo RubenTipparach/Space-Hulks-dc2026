@@ -1761,6 +1761,7 @@ static void check_random_encounter(void) {
                 /* ship_tick_turn(&current_ship); - ship simulation disabled */
             }
 
+            combat_floor_texture = ITEX_HUB_FLOOR;
             combat_init(&combat, selected_class, dng_state.current_floor, alien);
             app_state = STATE_COMBAT;
             return;
@@ -1866,6 +1867,7 @@ static void check_random_encounter(void) {
                     ship_room *rm = &current_ship.rooms[sr_idx];
 
                     /* Sentinel defense combat based on room type */
+                    combat_floor_texture = ITEX_HUB_FLOOR;
                     combat_init(&combat, selected_class, dng_state.current_floor, 0);
 
                     /* Terminal sentinels - every terminal has at least 2
@@ -2484,6 +2486,7 @@ static void init(void) {
     stextures[STEX_MAP_MINIBOSS]       = sr_texture_load("assets/sprites/map_miniboss.png");
     stextures[STEX_MAP_EVENT]          = sr_texture_load("assets/sprites/map_event.png");
     stextures[STEX_MAP_BOSS]           = sr_texture_load("assets/sprites/map_boss.png");
+    stextures[STEX_MAP_JUNKERS]        = sr_texture_load("assets/sprites/map_junkers.png");
 
     /* Map enemy types to sprite texture indices (-1 = use raw index) */
     memset(enemy_to_stex, -1, sizeof(enemy_to_stex));
@@ -2583,7 +2586,6 @@ static void init(void) {
 
             /* Combat ground plane lighting */
             combat_ground_ambient    = sr_config_float(&gcfg, "combat.ground_ambient", 0.25f);
-            combat_ground_tile_scale = sr_config_float(&gcfg, "combat.ground_tile_scale", 4.0f);
             combat_light_x           = sr_config_float(&gcfg, "combat.light_x", 0.0f);
             combat_light_y           = sr_config_float(&gcfg, "combat.light_y", 0.4f);
             combat_light_intensity   = sr_config_float(&gcfg, "combat.light_intensity", 1.0f);
