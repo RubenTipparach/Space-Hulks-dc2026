@@ -107,7 +107,7 @@ static inline int sr_shade_row_dithered(float intensity, int px, int py) {
     return (frac > threshold) ? row_lo + 1 : row_lo;
 }
 
-/* Transparent palette index — pixels with this index are skipped during rasterization */
+/* Transparent palette index - pixels with this index are skipped during rasterization */
 #define PAL_TRANSPARENT 65
 
 /* Look up final color: shade_row + palette_index → ABGR color */

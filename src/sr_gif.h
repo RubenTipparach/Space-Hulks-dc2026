@@ -16,7 +16,7 @@ void sr_gif_capture_frame(const uint32_t *pixels);
 bool sr_gif_is_recording(void);
 
 /* Stop recording and save GIF to disk on a background thread.
-   Non-blocking — encoding + file write happens off main thread. */
+   Non-blocking - encoding + file write happens off main thread. */
 void sr_gif_stop_and_save(void);
 
 #endif /* SR_GIF_H */

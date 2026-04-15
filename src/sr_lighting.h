@@ -1,4 +1,4 @@
-/*  sr_lighting.h — Directional sun, point lights, shadow map, palette lighting.
+/*  sr_lighting.h - Directional sun, point lights, shadow map, palette lighting.
  *  Single-TU header-only. Depends on sr_app.h, sr_math.h, sr_raster.h. */
 #ifndef SR_LIGHTING_H
 #define SR_LIGHTING_H

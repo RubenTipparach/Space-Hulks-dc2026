@@ -89,25 +89,31 @@ miniboss_4:
   range: 2
 
 # ── Bosses ───────────────────────────────────────────
+# Bosses are heavy HP walls that punish raw physical damage. Players are
+# expected to lean on elemental cards and discover the weakness (see
+# weakness system in sr_combat.h) for a 2x multiplier. Non elemental
+# damage is capped per hit inside combat_deal_damage_enemy so even
+# upgraded attack cards only chip. Shield regen and a heavy rage buff
+# keep the fight dragging out until the right element comes down.
 boss_1:
   name: RAVAGER
-  hp: 115
-  dmg_min: 7
-  dmg_max: 12
+  hp: 180
+  dmg_min: 9
+  dmg_max: 14
   range: 2
 
 boss_2:
   name: VOID WYRM
-  hp: 130
-  dmg_min: 8
-  dmg_max: 14
+  hp: 210
+  dmg_min: 10
+  dmg_max: 16
   range: 3
 
 boss_3:
   name: HIVEMIND
-  hp: 150
-  dmg_min: 9
-  dmg_max: 16
+  hp: 240
+  dmg_min: 11
+  dmg_max: 18
   range: 2
 
 # ── Name generation ─────────────────────────────────

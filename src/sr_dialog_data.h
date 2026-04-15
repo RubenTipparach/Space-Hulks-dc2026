@@ -1,4 +1,4 @@
-/*  sr_dialog_data.h — Loads dialog text from config/dialog.yaml
+/*  sr_dialog_data.h - Loads dialog text from config/dialog.yaml
  *  Header-only, single TU. Uses sr_config.h for YAML parsing.
  */
 #ifndef SR_DIALOG_DATA_H
@@ -48,10 +48,10 @@ typedef struct {
     /* Default crew dialogs (after initial flow done) */
     dlgd_block crew_default[5]; /* same indexing as crew_init */
 
-    /* Kowalski progressive dialog — gets more stressed */
+    /* Kowalski progressive dialog - gets more stressed */
     dlgd_block kowalski_stress[4]; /* 0=early, 1=mid, 2=late, 3=pre-boss freakout */
 
-    /* By-Tor progressive dialog — hopeful alien friend */
+    /* By-Tor progressive dialog - hopeful alien friend */
     dlgd_block bytor_init;
     dlgd_block bytor_default[3]; /* 0=early, 1=mid, 2=late */
     dlgd_block bytor_pre_boss;
@@ -294,7 +294,7 @@ static void dlgd_load_cards(void) {
 static void dlgd_load_decks(void) {
     sr_config cfg = sr_config_load("config/decks.yaml");
     if (cfg.count == 0) {
-        fprintf(stderr, "[dlgd] ERROR: config/decks.yaml missing — all classes will have empty decks!\n");
+        fprintf(stderr, "[dlgd] ERROR: config/decks.yaml missing - all classes will have empty decks!\n");
         return;
     }
 

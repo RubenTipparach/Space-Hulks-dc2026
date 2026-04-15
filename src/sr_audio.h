@@ -1,4 +1,4 @@
-/*  sr_audio.h — Audio system (header-only, single TU)
+/*  sr_audio.h - Audio system (header-only, single TU)
  *
  *  Uses sokol_audio for output, minimp3 for MP3 decoding.
  *  Provides: footstep SFX, hub ambient drone + random noise.

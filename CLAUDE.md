@@ -1,5 +1,19 @@
 # Claude Code Notes
 
+## Style Rules
+
+- **Never use em-dash (`—`, U+2014) for anything.** Not in source code, comments,
+  string literals, documentation, commit messages, or replies. Use a regular
+  hyphen (`-`) or restructure the sentence. Also avoid en-dash (`–`) unless it
+  is explicitly required by a numeric range.
+- **Dashes in dialog and in-game UI text are especially bad.** Avoid em-dashes,
+  en-dashes, and plain hyphens (`-`) in anything the player reads on screen:
+  NPC dialog lines (`config/dialog.yaml`), objective strings, HUD messages,
+  button labels, shop text, event descriptions, mission briefings, etc.
+  Restructure the sentence, use a comma, period, or colon, or split into
+  two lines instead. Hyphenated compound words (e.g. `LOW-POWER`) are the
+  only acceptable exception.
+
 ## Build & Validation
 
 - This is a **Windows development environment**. You can run `build-run.bat` to compile and test the game locally (with user permission).
@@ -8,7 +22,7 @@
 
 ## Project Structure
 
-- Single translation unit (TU) — all headers are `#include`d into `src/sr_main.c`
+- Single translation unit (TU) - all headers are `#include`d into `src/sr_main.c`
 - Header-only modules: `sr_combat.h`, `sr_dungeon.h`, `sr_ship.h`, `sr_scene_dungeon.h`, etc.
 - Third-party deps (sokol, stb) are downloaded by `install.sh` into `third_party/`
 - All rendering is software-rasterized into a framebuffer (`sr_framebuffer`), then uploaded to GPU via sokol
@@ -28,11 +42,11 @@
 ## Teleport Back to Hub Ship
 
 The player returns to their ship when:
-- **All enemies killed** — enemy ship neutralized, mission complete
-- **Enemy ship destroyed** — hull HP reduced to 0 via subsystem damage (console sabotage)
+- **All enemies killed** - enemy ship neutralized, mission complete
+- **Enemy ship destroyed** - hull HP reduced to 0 via subsystem damage (console sabotage)
 - **Player finds teleporter room** on the enemy ship and activates it (can board the same ship again later, partial scrap reward)
-- **Player dies** in combat — emergency extraction, HP set to 25%
-- **Player's ship destroyed** — emergency jump, HP set to 25%
+- **Player dies** in combat - emergency extraction, HP set to 25%
+- **Player's ship destroyed** - emergency jump, HP set to 25%
 
 The player does NOT teleport back after winning a normal combat encounter. They stay on the enemy ship to keep exploring. Mission completion only triggers via console sabotage (interacting with room consoles), not random enemy kills.
 

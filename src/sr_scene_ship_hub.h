@@ -1,4 +1,4 @@
-/*  sr_scene_ship_hub.h — Player's own ship hub scene.
+/*  sr_scene_ship_hub.h - Player's own ship hub scene.
  *  Walk around your ship, talk to crew, use teleporter, shop, bridge/starmap.
  *  Single-TU header-only. Depends on sr_dungeon.h, sr_combat.h, sr_app.h. */
 #ifndef SR_SCENE_SHIP_HUB_H
@@ -274,7 +274,30 @@ typedef struct {
 static shop_state g_shop;       /* armory (scrap cards) */
 static shop_state g_medbay_shop; /* medbay (elemental/biomass cards) */
 
-/* Which shop is active for STATE_SHOP — 0=armory, 1=medbay */
+/* Persistent medbay health-kit stock (restocks by 1 per jump, max 2). */
+#define MEDBAY_KIT_STOCK_MAX 2
+static int g_medbay_kit_stock = MEDBAY_KIT_STOCK_MAX;
+
+/* Teleporter elemental gift state - one-time gift before the first
+   boss mission. elem_gift_active is the overlay visibility flag,
+   g_elem_gift_given persists across jumps/saves so the gift only
+   triggers once per run. */
+static bool elem_gift_active = false;
+static bool g_elem_gift_given = false;
+static int  elem_gift_choices[3];
+
+/* Roll 3 unique elemental card choices and show the gift overlay. */
+static void teleporter_offer_elem_gift(void) {
+    int elems[] = { CARD_ICE, CARD_ACID, CARD_FIRE, CARD_LIGHTNING };
+    for (int i = 3; i > 0; i--) {
+        int j = dng_rng_int(i + 1);
+        int tmp = elems[i]; elems[i] = elems[j]; elems[j] = tmp;
+    }
+    for (int i = 0; i < 3; i++) elem_gift_choices[i] = elems[i];
+    elem_gift_active = true;
+}
+
+/* Which shop is active for STATE_SHOP - 0=armory, 1=medbay */
 static int active_shop_type = 0;
 
 /* ── Dialog state ───────────────────────────────────────────────── */
@@ -287,7 +310,7 @@ enum {
     DIALOG_ACTION_STARMAP,
     DIALOG_ACTION_SHOP,
     DIALOG_ACTION_TELEPORT,       /* opens confirm prompt */
-    DIALOG_ACTION_TELEPORT_GO,    /* confirmed — actually teleport */
+    DIALOG_ACTION_TELEPORT_GO,    /* confirmed - actually teleport */
     DIALOG_ACTION_HEAL,
     DIALOG_ACTION_BRIEFING_NEXT,  /* captain briefing: advance to next page */
     DIALOG_ACTION_SHOW_KIT,       /* Chen: show starting deck cards */
@@ -478,13 +501,13 @@ static void hub_generate(hub_state *hub) {
      * Rooms are set back 1 tile from corridor so there's a wall gap.
      * A single doorway tile connects through the gap. */
     struct { int x, y, w, h, type; } room_defs[] = {
-        /* Bridge at the front (right side) — 1 wall gap above corridor */
+        /* Bridge at the front (right side) - 1 wall gap above corridor */
         { 15, mid_y - 5, 4, 4, HUB_ROOM_BRIDGE },
         /* Teleporter at the back (left side) */
         { 3, mid_y - 5, 4, 4, HUB_ROOM_TELEPORTER },
         /* Shop/Armory upper-middle */
         { 9, mid_y - 5, 4, 4, HUB_ROOM_SHOP },
-        /* Quarters below-left — 1 wall gap below corridor */
+        /* Quarters below-left - 1 wall gap below corridor */
         { 5, mid_y + 2, 4, 4, HUB_ROOM_QUARTERS },
         /* Medbay below-right */
         { 12, mid_y + 2, 4, 4, HUB_ROOM_MEDBAY },
@@ -690,7 +713,7 @@ static void hub_start_dialog(int npc_idx, int action) {
     int did = npc->dialog_id;
     if (did < 0 || did > 5) did = 0;
 
-    /* Captain (dialog_id 0) — complex state machine */
+    /* Captain (dialog_id 0) - complex state machine */
     if (did == 0) {
         if (!mission_briefed) {
             /* First time: start multi-page briefing */
@@ -705,24 +728,24 @@ static void hub_start_dialog(int npc_idx, int action) {
                 }
             }
         } else if (current_map_boss_done && !g_hub.mission_available) {
-            /* Just beat a boss — show sample dialog, then open star map for next run */
+            /* Just beat a boss - show sample dialog, then open star map for next run */
             int si = player_samples - 1;
             if (si < 0) si = 0; if (si > 2) si = 2;
             if (g_dlgd.loaded)
                 dialog_from_block(&g_dlgd.captain_sample[si]);
             action = DIALOG_ACTION_STARMAP;
         } else if (g_hub.mission_available) {
-            /* Mission available — board the derelict */
+            /* Mission available - board the derelict */
             if (g_dlgd.loaded)
                 dialog_from_block(&g_dlgd.captain_under_attack);
         } else {
-            /* Neutralized — ready to jump */
+            /* Neutralized - ready to jump */
             if (g_dlgd.loaded)
                 dialog_from_block(&g_dlgd.captain_post_mission);
             action = DIALOG_ACTION_STARMAP;
         }
     }
-    /* SGT REYES (dialog_id 1) — teleporter */
+    /* SGT REYES (dialog_id 1) - teleporter */
     else if (did == 1) {
         if (!mission_briefed) {
             if (g_dlgd.loaded) dialog_from_block(&g_dlgd.crew_init[1]);
@@ -735,7 +758,7 @@ static void hub_start_dialog(int npc_idx, int action) {
             if (g_dlgd.loaded) dialog_from_block(&g_dlgd.crew_default[1]);
         }
     }
-    /* QM CHEN (dialog_id 2) — armory */
+    /* QM CHEN (dialog_id 2) - armory */
     else if (did == 2) {
         if (!mission_briefed) {
             if (g_dlgd.loaded) dialog_from_block(&g_dlgd.crew_init[2]);
@@ -750,7 +773,7 @@ static void hub_start_dialog(int npc_idx, int action) {
             action = DIALOG_ACTION_SHOP;
         }
     }
-    /* PVT KOWALSKI (dialog_id 3) — quarters, gets progressively stressed */
+    /* PVT KOWALSKI (dialog_id 3) - quarters, gets progressively stressed */
     else if (did == 3) {
         if (!mission_briefed) {
             if (g_dlgd.loaded) dialog_from_block(&g_dlgd.crew_init[3]);
@@ -767,7 +790,7 @@ static void hub_start_dialog(int npc_idx, int action) {
         }
         action = DIALOG_ACTION_NONE;
     }
-    /* DR VASQUEZ (dialog_id 4) — medbay */
+    /* DR VASQUEZ (dialog_id 4) - medbay */
     else if (did == 4) {
         if (!mission_briefed) {
             if (g_dlgd.loaded) dialog_from_block(&g_dlgd.crew_init[4]);
@@ -781,7 +804,7 @@ static void hub_start_dialog(int npc_idx, int action) {
             action = DIALOG_ACTION_MEDBAY_SHOP;
         }
     }
-    /* PVT FIREMANN (dialog_id 5) — friendly alien, Kowalski's friend */
+    /* PVT FIREMANN (dialog_id 5) - friendly alien, Kowalski's friend */
     else if (did == 5) {
         if (!mission_briefed) {
             if (g_dlgd.loaded) dialog_from_block(&g_dlgd.bytor_init);
@@ -845,7 +868,7 @@ static void dialog_teletype_tick(void) {
         g_dialog.tt_all_done = true;
 }
 
-/* Handle CONTINUE click — instantly reveal all, or dismiss if already done. */
+/* Handle CONTINUE click - instantly reveal all, or dismiss if already done. */
 static bool dialog_teletype_advance(void) {
     if (g_dialog.tt_all_done) return true;
     g_dialog.tt_all_done = true;
@@ -858,7 +881,7 @@ static void draw_dialog(uint32_t *px, int W, int H) {
 
     dialog_teletype_tick();
 
-    /* Dialog box — spans most of screen width */
+    /* Dialog box - spans most of screen width */
     int bx = 20, by = H - 66, bw = W - 40, bh = 52;
     for (int ry = by; ry < by + bh && ry < H; ry++)
         for (int rx = bx; rx < bx + bw && rx < W; rx++) {
@@ -878,7 +901,7 @@ static void draw_dialog(uint32_t *px, int W, int H) {
     /* Speaker name */
     sr_draw_text_shadow(px, W, H, bx + 4, by + 4, g_dialog.speaker, 0xFF00DDDD, shadow);
 
-    /* Dialog lines with teletype effect — flows across all lines */
+    /* Dialog lines with teletype effect - flows across all lines */
     {
         int chars_left = g_dialog.tt_all_done ? 99999 : g_dialog.tt_timer * 2;
         int cursor_x = bx + 4, cursor_y = by + 16;
@@ -899,7 +922,7 @@ static void draw_dialog(uint32_t *px, int W, int H) {
             sr_draw_text_shadow(px, W, H, cursor_x, cursor_y, "_", 0xFFCCCCCC, shadow);
     }
 
-    /* Buttons — attached tab below the box, right side */
+    /* Buttons - attached tab below the box, right side */
     int tab_y = by + bh;
     if (g_dialog.confirm_mode && g_dialog.tt_all_done) {
         /* YES / NO buttons only after all text revealed */
@@ -911,7 +934,7 @@ static void draw_dialog(uint32_t *px, int W, int H) {
                       "NO", 0xFF221111, 0xFF332222, 0xFF882222)) {
             g_dialog.btn_no = true;
         }
-        /* Connect tabs to box — draw border continuation */
+        /* Connect tabs to box - draw border continuation */
         for (int rx = bx + bw - 140; rx < bx + bw - 140 + 130 && rx < W; rx++)
             if (tab_y - 1 >= 0 && tab_y - 1 < H && rx >= 0)
                 px[(tab_y - 1) * W + rx] = 0xFF111122;
@@ -1034,7 +1057,7 @@ static void shop_generate(shop_state *shop) {
     shop->active = true;
 }
 
-/* Generate medbay shop: expensive elemental cards (biomass) + cheap consumables (scrap) */
+/* Generate medbay shop: mostly elemental cards (biomass) + health consumables (scrap) */
 static void medbay_shop_generate(shop_state *shop) {
     memset(shop, 0, sizeof(*shop));
 
@@ -1046,14 +1069,20 @@ static void medbay_shop_generate(shop_state *shop) {
     }
 
     int idx = 0;
-    /* 2 elemental cards — expensive, costs biomass */
-    for (int i = 0; i < 2 && idx < SHOP_MAX_CARDS; i++, idx++) {
+    /* 4 elemental cards (one of each, shuffled order) - costs biomass */
+    for (int i = 0; i < 4 && idx < SHOP_MAX_CARDS; i++, idx++) {
         shop->cards[idx] = elem[i];
         shop->prices[idx] = 135;
         shop->is_bio[idx] = true;
     }
-    /* 2 health kits — cheap consumables, costs scrap */
-    for (int i = 0; i < 2 && idx < SHOP_MAX_CARDS; i++, idx++) {
+    /* Health kits - persistent stock, restocks by 1 per jump (max 2).
+       Hidden during the very first mission so the tutorial can guarantee
+       full HP and focus the player on elemental cards. */
+    int kit_count = g_medbay_kit_stock;
+    if (g_run_stats.sectors_visited == 0) kit_count = 0;
+    if (kit_count < 0) kit_count = 0;
+    if (kit_count > MEDBAY_KIT_STOCK_MAX) kit_count = MEDBAY_KIT_STOCK_MAX;
+    for (int i = 0; i < kit_count && idx < SHOP_MAX_CARDS; i++, idx++) {
         shop->cards[idx] = SHOP_CONSUMABLE_FLAG | CONSUMABLE_HEALTH_KIT;
         shop->prices[idx] = consumable_prices[CONSUMABLE_HEALTH_KIT];
         shop->is_bio[idx] = false;
@@ -1128,7 +1157,7 @@ static void draw_shop(uint32_t *px, int W, int H) {
                   0xFF222255, 0xFF333366))
         shop->mode = 1;
 
-    /* Treat Wounds button — medbay only, once per mission */
+    /* Treat Wounds button - medbay only, once per mission */
     if (active_shop_type == 1) {
         int tw_x = W - 170, tw_y = 24;
         if (medbay_used) {
@@ -1150,7 +1179,7 @@ static void draw_shop(uint32_t *px, int W, int H) {
     }
 
     if (shop->mode == 0) {
-        /* Buy mode — visual card grid */
+        /* Buy mode - visual card grid */
         int shop_cols = 3;
         int cw = 60, ch = 80;
         int padX = 10, padY = 14;
@@ -1198,7 +1227,7 @@ static void draw_shop(uint32_t *px, int W, int H) {
                     ? (bio ? 0xFF44CC88 : 0xFF22CC22) : 0xFF882222;
                 sr_draw_text_shadow(px, W, H, cx + cw/2 - 8, cy + ch + 2, price_buf, pcol, shadow);
 
-                /* Click detection — open detail popup */
+                /* Click detection - open detail popup */
                 if (ui_mouse_clicked &&
                     ui_click_x >= cx && ui_click_x < cx + cw &&
                     ui_click_y >= cy && ui_click_y < cy + ch) {
@@ -1308,8 +1337,17 @@ static void draw_shop(uint32_t *px, int W, int H) {
                                 break;
                             }
                         }
+                        /* Buying a health kit from the medbay decrements
+                           the persistent kit stock (restocked on jump). */
+                        if (active_shop_type == 1 && ctype == CONSUMABLE_HEALTH_KIT &&
+                            g_medbay_kit_stock > 0)
+                            g_medbay_kit_stock--;
                     } else {
                         g_player.persistent_deck[g_player.persistent_deck_count++] = shop->cards[idx];
+                        /* First medbay card purchase ticks off the
+                           onboarding objective. */
+                        if (active_shop_type == 1)
+                            mission_medbay_card_bought = true;
                     }
                     for (int j = idx; j < shop->count - 1; j++) {
                         shop->cards[j] = shop->cards[j + 1];
@@ -1651,7 +1689,7 @@ static void starmap_generate(starmap_state *sm, int start_sector) {
 
 /* ── Starmap JSON save/load ─────────────────────────────────────── */
 
-/* Save starmap STRUCTURE only (no progress data — that goes in the save file) */
+/* Save starmap STRUCTURE only (no progress data - that goes in the save file) */
 static void starmap_save_json(const starmap_state *sm, const char *path) {
     FILE *f = fopen(path, "w");
     if (!f) { printf("[starmap] Failed to save %s\n", path); return; }
@@ -1883,7 +1921,7 @@ static void draw_starmap(uint32_t *px, int W, int H) {
 
         bool is_hovered = (i == hovered_node);
 
-        /* Node icon — draw 8x8 sprite if available, else fallback to circle */
+        /* Node icon - draw 8x8 sprite if available, else fallback to circle */
         int icon_stex = -1;
         switch (nd->node_type) {
             case NODE_BOSS:     icon_stex = STEX_MAP_BOSS; break;
@@ -1998,7 +2036,7 @@ static void draw_starmap(uint32_t *px, int W, int H) {
                         g_event.event_id = 0;
                     g_event.showing_result = false;
                     g_event.result_timer = 0;
-                    /* Stay on starmap — event overlay will draw on top */
+                    /* Stay on starmap - event overlay will draw on top */
                 } else {
                     /* Derelict node (normal, miniboss, boss): load dungeon */
                     g_starmap.derelicts_visited++;
@@ -2017,6 +2055,9 @@ static void draw_starmap(uint32_t *px, int W, int H) {
                     app_state = STATE_SHIP_HUB;
                     snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "JUMPED TO %s", tgt->name);
                     g_hub.hud_msg_timer = 90;
+                    /* Restock medbay medpacks by 1, capped at the max. */
+                    if (g_medbay_kit_stock < MEDBAY_KIT_STOCK_MAX)
+                        g_medbay_kit_stock++;
                 }
                 game_save();
             }
@@ -2026,8 +2067,13 @@ static void draw_starmap(uint32_t *px, int W, int H) {
             }
         }
     } else {
-        /* Jump button — opens confirm dialog */
-        if (reachable_count > 0) {
+        /* Jump button - opens confirm dialog. Hidden while a mission is
+           active; the player can still browse the starmap but cannot jump
+           until the current derelict is cleared. */
+        if (g_hub.mission_available) {
+            sr_draw_text_shadow(px, W, H, W/2 - 17 * 3, H - 26,
+                                "CLEAR THE DERELICT TO JUMP", 0xFFCC8822, shadow);
+        } else if (reachable_count > 0) {
             if (ui_button(px, W, H, W/2 - 30, H - 30, 60, 14, "JUMP",
                           0xFF111133, 0xFF222255, 0xFF333377)) {
                 int next = reachable[g_starmap.cursor];
@@ -2194,6 +2240,9 @@ static void starmap_handle_key(int key_code) {
                     app_state = STATE_SHIP_HUB;
                     snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "JUMPED TO %s", tgt->name);
                     g_hub.hud_msg_timer = 90;
+                    /* Restock medbay medpacks by 1, capped at the max. */
+                    if (g_medbay_kit_stock < MEDBAY_KIT_STOCK_MAX)
+                        g_medbay_kit_stock++;
                 }
                 game_save();
             }
@@ -2218,7 +2267,7 @@ static void starmap_handle_key(int key_code) {
 /* ── Deck viewer overlay ───────────────────────────────────────── */
 
 static bool deck_view_active = false;
-static int deck_view_selected = -1; /* index of selected card for detail view, -1 = none */
+static int deck_view_selected = 0; /* row cursor into player deck */
 
 /* card_description_text() is now in sr_combat.h */
 
@@ -2235,60 +2284,128 @@ static void draw_deck_viewer(uint32_t *px, int W, int H) {
         px[i] = 0xFF000000 | (b << 16) | (g << 8) | r;
     }
 
-    /* Title */
-    char title[32];
-    snprintf(title, sizeof(title), "DECK (%d CARDS)", g_player.persistent_deck_count);
-    sr_draw_text_shadow(px, W, H, 10, 4, title, 0xFF00DDDD, shadow);
+    /* Clamp cursor */
+    if (g_player.persistent_deck_count <= 0) deck_view_selected = 0;
+    else if (deck_view_selected < 0) deck_view_selected = 0;
+    else if (deck_view_selected >= g_player.persistent_deck_count)
+        deck_view_selected = g_player.persistent_deck_count - 1;
 
-    /* Card grid using full card rendering */
-    int cw = 50, ch = 66, pad = 6;
-    int cols = 7;
-    int startX = 10, startY = 14;
+    /* Header */
+    char hdr[48];
+    snprintf(hdr, sizeof(hdr), "YOUR DECK (%d CARDS)", g_player.persistent_deck_count);
+    sr_draw_text_shadow(px, W, H, 30, 6, hdr, 0xFFD0CDC7, shadow);
 
+    /* Bottom area reserved for HP / medpack / close - keeps list + detail
+       panel from colliding with the footer. */
+    int footer_y = H - 42;
+
+    /* Card list (left side) - matches trash menu layout */
+    int list_x = 30, list_y = 18;
+    int list_w = 100;
+    int row_h = 11;
+    int max_rows = (footer_y - list_y) / row_h;
+    if (max_rows < 1) max_rows = 1;
+    int scroll = 0;
+    if (deck_view_selected >= max_rows)
+        scroll = deck_view_selected - max_rows + 1;
     for (int i = 0; i < g_player.persistent_deck_count; i++) {
-        int col = i % cols;
-        int row = i / cols;
-        int cx = startX + col * (cw + pad);
-        int cy = startY + row * (ch + pad);
-        if (cy + ch > H - 20) break;
+        int row = i - scroll;
+        if (row < 0 || row >= max_rows) continue;
+        int cy = list_y + row * row_h;
 
-        bool sel = (i == deck_view_selected);
-        combat_draw_card_content(px, W, H, cx, cy, cw, ch,
-                                 g_player.persistent_deck[i], sel, shadow, -1);
+        bool hovered = false;
+        ui_row_hover(list_x, cy, list_w, row_h - 1, &hovered);
+        if (hovered) deck_view_selected = i;
+        bool sel = (deck_view_selected == i);
 
-        /* Click detection */
-        if (ui_mouse_clicked &&
-            ui_click_x >= cx && ui_click_x < cx + cw &&
-            ui_click_y >= cy && ui_click_y < cy + ch) {
-            deck_view_selected = (deck_view_selected == i) ? -1 : i;
+        int card_type = g_player.persistent_deck[i];
+        uint32_t ccol = sel ? 0xFFD0CDC7 : card_colors[card_type];
+        if (sel) {
+            /* Highlight bar */
+            for (int ry = cy; ry < cy + row_h - 1 && ry < H; ry++)
+                for (int rx = list_x; rx < list_x + list_w && rx < W; rx++)
+                    if (rx >= 0 && ry >= 0) px[ry * W + rx] = 0xFF46353E;
         }
+        sr_draw_text_shadow(px, W, H, list_x + 2, cy + 1,
+                            card_names[card_type], ccol, shadow);
+
+        /* Energy cost pip */
+        char ebuf[4];
+        snprintf(ebuf, sizeof(ebuf), "%d", card_energy_cost[card_type]);
+        sr_draw_text_shadow(px, W, H, list_x + list_w - 12, cy + 1,
+                            ebuf, 0xFF9BAF0E, shadow);
     }
 
-    /* Detail overlay for selected card */
+    /* Card detail panel (right side) */
     if (deck_view_selected >= 0 && deck_view_selected < g_player.persistent_deck_count) {
-        int card_type = g_player.persistent_deck[deck_view_selected];
+        int idx = deck_view_selected;
+        int card_type = g_player.persistent_deck[idx];
+        int px2 = 150, py = 18, pw = W - 180, ph = footer_y - py - 4;
+        uint32_t ccol = card_colors[card_type];
 
-        /* Centered large card */
-        int dw = 100, dh = 140;
-        int dx = (W - dw) / 2, dy = (H - dh) / 2 - 10;
-        /* Dark backdrop */
-        for (int ry = dy - 4; ry < dy + dh + 24 && ry < H; ry++)
-            for (int rx = dx - 4; rx < dx + dw + 4 && rx < W; rx++)
-                if (rx >= 0 && ry >= 0)
-                    px[ry * W + rx] = 0xFF000000;
-        combat_draw_card_content(px, W, H, dx, dy, dw, dh,
-                                 card_type, true, shadow, -1);
-        /* Description below card */
+        /* Panel background */
+        for (int ry = py; ry < py + ph && ry < H; ry++)
+            for (int rx = px2; rx < px2 + pw && rx < W; rx++)
+                if (rx >= 0 && ry >= 0) px[ry * W + rx] = 0xFF2F222E;
+
+        /* Border in card color */
+        combat_draw_rect_outline(px, W, H, px2, py, pw, ph, ccol);
+
+        /* Card art */
+        if (card_type < (int)(sizeof(spr_card_table)/sizeof(spr_card_table[0])) &&
+            spr_card_table[card_type])
+            spr_draw(px, W, H, spr_card_table[card_type], px2 + pw - 42, py + 4, 2);
+
+        /* Card name */
+        sr_draw_text_shadow(px, W, H, px2 + 6, py + 6,
+                            card_names[card_type], ccol, shadow);
+
+        /* Energy cost */
+        char ebuf2[16];
+        snprintf(ebuf2, sizeof(ebuf2), "COST: %d",
+                 card_energy_cost[card_type]);
+        sr_draw_text_shadow(px, W, H, px2 + 6, py + 16, ebuf2,
+                            0xFF9BAF0E, shadow);
+
+        /* Effect text */
+        const char *effect = card_effect_text(card_type);
+        int ey = sr_draw_text_wrap(px, W, H, px2 + 6, py + 28, effect,
+                                   pw - 50, 8, ccol, shadow);
+
+        /* Description */
         const char *desc = card_description_text(card_type);
-        sr_draw_text_wrap(px, W, H, dx, dy + dh + 4, desc,
-                          dw, 8, 0xFFAAAAAA, shadow);
+        sr_draw_text_wrap(px, W, H, px2 + 6, ey + 4, desc,
+                          pw - 12, 8, 0xFF8A707F, shadow);
+    }
+
+    /* Medpack slots - usable any time. Heal 10 HP, consumes the kit. */
+    {
+        int hp_x = 30, hp_y = footer_y;
+        char hpbuf[24];
+        snprintf(hpbuf, sizeof(hpbuf), "HP  %d/%d",
+                 g_player.hp, g_player.hp_max);
+        sr_draw_text_shadow(px, W, H, hp_x, hp_y, hpbuf, 0xFF22CC22, shadow);
+
+        int bx = hp_x + 60, by = hp_y - 2;
+        for (int s = 0; s < CONSUMABLE_SLOTS; s++) {
+            if (player_consumables[s] != CONSUMABLE_HEALTH_KIT) continue;
+            if (ui_button(px, W, H, bx, by, 74, 12, "USE MEDPACK",
+                          0xFF113322, 0xFF226644, 0xFF44CC88)) {
+                int heal = 10;
+                g_player.hp += heal;
+                if (g_player.hp > g_player.hp_max)
+                    g_player.hp = g_player.hp_max;
+                player_consumables[s] = CONSUMABLE_NONE;
+            }
+            bx += 78;
+        }
     }
 
     /* Close button */
     if (ui_button(px, W, H, W - 60, H - 18, 50, 14, "CLOSE",
                   0xFF111122, 0xFF222244, 0xFF333366)) {
         deck_view_active = false;
-        deck_view_selected = -1;
+        deck_view_selected = 0;
     }
 }
 
@@ -2435,27 +2552,30 @@ static void hub_draw_hud(uint32_t *px, int W, int H) {
     sr_draw_text_shadow(px, W, H, 4, 34, "BIO", 0xFFCCCCCC, shadow);
     sr_draw_text_shadow(px, W, H, 4 + 4 * 6, 34, bio_num, 0xFF44CC88, shadow);
 
-    /* Sector + Samples */
+    /* Sector + Samples - right-aligned, leaving room for hamburger menu at W-16..W-4 */
     char sec_buf[32];
     snprintf(sec_buf, sizeof(sec_buf), "SECTOR %d", player_sector + 1);
-    sr_draw_text_shadow(px, W, H, W - 60, 4, sec_buf, 0xFF888888, shadow);
+    sr_draw_text_shadow(px, W, H, W - 18 - sr_text_width(sec_buf), 4, sec_buf, 0xFF888888, shadow);
 
     if (mission_briefed) {
         char samp_buf[32];
         snprintf(samp_buf, sizeof(samp_buf), "SAMPLES %d/%d", player_samples, SAMPLES_REQUIRED);
         uint32_t samp_col = (player_samples >= SAMPLES_REQUIRED) ? 0xFF44CC44 : 0xFFCC8822;
-        sr_draw_text_shadow(px, W, H, W - 78, 14, samp_buf, samp_col, shadow);
+        sr_draw_text_shadow(px, W, H, W - 18 - sr_text_width(samp_buf), 14, samp_buf, samp_col, shadow);
     }
 
     /* Mission objectives */
     {
         int oy = 50;
-        if (!(mission_briefed && mission_medbay_done && mission_armory_done) && g_dlgd.loaded) {
-            /* Initial prep flow: captain, medbay, armory */
+        bool prep_done = mission_briefed && mission_medbay_done &&
+                         mission_medbay_card_bought && mission_armory_done;
+        if (!prep_done && g_dlgd.loaded) {
+            /* Initial prep flow: captain, medbay heal, medbay buy, armory */
             sr_draw_text_shadow(px, W, H, 4, oy, "OBJECTIVES:", 0xFFCC8822, shadow);
             oy += 10;
-            bool obj_done[3] = { mission_briefed, mission_medbay_done, mission_armory_done };
-            for (int i = 0; i < g_dlgd.objective_count && i < 3; i++) {
+            bool obj_done[4] = { mission_briefed, mission_medbay_done,
+                                  mission_medbay_card_bought, mission_armory_done };
+            for (int i = 0; i < g_dlgd.objective_count && i < 4; i++) {
                 char obj_buf[DLGD_LINE_LEN + 8];
                 bool done = obj_done[i];
                 snprintf(obj_buf, sizeof(obj_buf), "[%c] %s", done ? 'X' : ' ', g_dlgd.objectives[i]);
@@ -2478,7 +2598,8 @@ static void hub_draw_hud(uint32_t *px, int W, int H) {
         }
     }
 
-    /* Deck button (clickable) */
+    /* Deck button (clickable) - sits above the hub minimap. The hub scene
+       sets dng_minimap_y = 42 so the button (y=26..38) has room. */
     char deck_buf[32];
     snprintf(deck_buf, sizeof(deck_buf), "DECK %d", g_player.persistent_deck_count);
     int deck_btn_y = 26;
@@ -2488,9 +2609,9 @@ static void hub_draw_hud(uint32_t *px, int W, int H) {
         deck_view_selected = -1;
     }
 
-    /* Room/NPC interaction button — merged room name + action into one button */
+    /* Room/NPC interaction button - merged room name + action into one button */
     /* Skip when deck viewer is open (modal) or dialog is active */
-    if (deck_view_active || g_dialog.active) return;
+    if (deck_view_active || g_dialog.active || elem_gift_active) return;
 
     int room_idx = hub_room_at_pos(g_hub.player.gx, g_hub.player.gy);
     int look_gx = g_hub.player.gx + dng_dir_dx[g_hub.player.dir];
@@ -2498,7 +2619,7 @@ static void hub_draw_hud(uint32_t *px, int W, int H) {
     int npc = hub_npc_at(look_gx, look_gy);
 
     if (npc >= 0) {
-        /* NPC in front — show "TALK: NAME" button in room color */
+        /* NPC in front - show "TALK: NAME" button in room color */
         int npc_room = g_hub.crew[npc].room;
         uint32_t rc = (npc_room >= 0 && npc_room < HUB_ROOM_COUNT)
             ? hub_room_colors[g_hub.room_types[npc_room]] : 0xFF00DDDD;
@@ -2524,8 +2645,9 @@ static void hub_draw_hud(uint32_t *px, int W, int H) {
         int action = DIALOG_ACTION_NONE;
         if (rt == HUB_ROOM_TELEPORTER) {
             btn_label = "TELEPORTER";
-            /* Only allow teleport if mission available AND prep done (or post-first-mission) */
-            if (g_hub.mission_available && (mission_medbay_done && mission_armory_done))
+            /* Only allow teleport if mission available AND full prep done. */
+            if (g_hub.mission_available && mission_medbay_done &&
+                mission_medbay_card_bought && mission_armory_done)
                 action = DIALOG_ACTION_TELEPORT;
         } else if (rt == HUB_ROOM_BRIDGE) {
             btn_label = "BRIDGE";
@@ -2552,7 +2674,10 @@ static void hub_draw_hud(uint32_t *px, int W, int H) {
             if (action != DIALOG_ACTION_NONE) {
                 if (ui_button(px, W, H, W/2 - bw/2, H - 18, bw, bh, btn_label, base, hover, rc)) {
                     if (action == DIALOG_ACTION_TELEPORT) {
-                        hub_show_teleport_confirm();
+                        if (current_mission_is_boss && !g_elem_gift_given)
+                            teleporter_offer_elem_gift();
+                        else
+                            hub_show_teleport_confirm();
                     } else {
                         memset(&g_dialog, 0, sizeof(g_dialog));
                         snprintf(g_dialog.speaker, sizeof(g_dialog.speaker), "%s", hub_room_names[rt]);
@@ -2572,7 +2697,7 @@ static void hub_draw_hud(uint32_t *px, int W, int H) {
                     }
                 }
             } else {
-                /* Non-interactive rooms — just show room name as label */
+                /* Non-interactive rooms - just show room name as label */
                 sr_draw_text_shadow(px, W, H, W/2 - llen * 3, H - 14, btn_label, rc, shadow);
             }
         }
