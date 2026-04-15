@@ -391,11 +391,30 @@ static bool game_load(void) {
 #endif
 
     FILE *f = fopen(SAVE_FILE, "rb");
-    if (!f) return false;
+    if (!f) {
+        printf("[load] Cannot open save file '%s'\n", SAVE_FILE);
+        return false;
+    }
+
+    /* Get file size for diagnostics */
+    fseek(f, 0, SEEK_END);
+    long file_size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    printf("[load] Save file: %ld bytes, header expects %d bytes\n",
+           file_size, (int)sizeof(save_header));
 
     save_header hdr;
-    if (fread(&hdr, sizeof(hdr), 1, f) != 1 ||
-        hdr.magic != SAVE_MAGIC || hdr.version != SAVE_VERSION) {
+    size_t hdr_read = fread(&hdr, sizeof(hdr), 1, f);
+    if (hdr_read != 1) {
+        printf("[load] Header read failed (got %d items, file too small)\n", (int)hdr_read);
+        fclose(f); return false;
+    }
+    if (hdr.magic != SAVE_MAGIC) {
+        printf("[load] Bad magic: 0x%08X (expected 0x%08X)\n", hdr.magic, SAVE_MAGIC);
+        fclose(f); return false;
+    }
+    if (hdr.version != SAVE_VERSION) {
+        printf("[load] Version mismatch: save=%u, code=%u\n", hdr.version, SAVE_VERSION);
         fclose(f); return false;
     }
 
@@ -403,14 +422,20 @@ static bool game_load(void) {
     memset(&dng_state, 0, sizeof(dng_state));
     memcpy(dng_state.floor_generated, hdr.floor_generated,
            sizeof(dng_state.floor_generated));
+    int floors_loaded = 0;
     for (int i = 0; i < DNG_MAX_FLOORS; i++) {
         if (dng_state.floor_generated[i]) {
             if (fread(&dng_state.floors[i], sizeof(sr_dungeon), 1, f) != 1) {
+                printf("[load] Floor %d read failed (expected %d bytes at offset %ld)\n",
+                       i, (int)sizeof(sr_dungeon), ftell(f));
                 fclose(f); return false;
             }
+            floors_loaded++;
         }
     }
     fclose(f);
+    printf("[load] OK: %d floors, state=%d, ship='%s'\n",
+           floors_loaded, hdr.app_state_saved, hdr.ship.name);
 
     /* Restore progression */
     selected_class = hdr.selected_class;
@@ -506,12 +531,22 @@ static bool game_has_save(void) {
     save_restore_wasm();
 #endif
     FILE *f = fopen(SAVE_FILE, "rb");
-    if (!f) return false;
+    if (!f) { printf("[save-check] No save file found\n"); return false; }
+
+    fseek(f, 0, SEEK_END);
+    long file_size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
     save_header hdr;
     memset(&hdr, 0, sizeof(hdr));
-    bool ok = (fread(&hdr, sizeof(hdr), 1, f) == 1 &&
-               hdr.magic == SAVE_MAGIC && hdr.version == SAVE_VERSION);
+    size_t n = fread(&hdr, sizeof(hdr), 1, f);
     fclose(f);
+
+    printf("[save-check] File %ld bytes (need %d), read=%d, magic=0x%08X (expect 0x%08X), ver=%u (expect %u)\n",
+           file_size, (int)sizeof(save_header), (int)n, hdr.magic, SAVE_MAGIC, hdr.version, SAVE_VERSION);
+
+    bool ok = (n == 1 && hdr.magic == SAVE_MAGIC && hdr.version == SAVE_VERSION);
+    if (!ok) printf("[save-check] Save invalid or version mismatch\n");
     return ok;
 }
 
