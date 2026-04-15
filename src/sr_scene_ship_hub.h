@@ -1025,8 +1025,10 @@ static void draw_kit_display(uint32_t *px, int W, int H) {
     }
 
     /* CLOSE button */
-    ui_button(px, W, H, W - 60, H - 18, 50, 14,
-              "CLOSE", 0xFF1A1A33, 0xFF222255, 0xFF44CC44);
+    if (ui_button(px, W, H, W - 60, H - 18, 50, 14,
+                  "CLOSE", 0xFF1A1A33, 0xFF222255, 0xFF44CC44)) {
+        g_kit.active = false;
+    }
 
     /* Detail overlay if a card is selected */
     if (g_kit.detail_idx >= 0 && g_kit.detail_idx < g_kit.card_count) {

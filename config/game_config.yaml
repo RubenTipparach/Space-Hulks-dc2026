@@ -53,7 +53,6 @@ enemy_ship_medium:
 # Point light illuminates the floor from a configurable position.
 combat:
   ground_ambient: 0.05
-  ground_tile_scale: 4.0
   light_x: 0.0
   light_y: 0.4
   light_intensity: 0.55

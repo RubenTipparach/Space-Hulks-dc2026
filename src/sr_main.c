@@ -2586,7 +2586,6 @@ static void init(void) {
 
             /* Combat ground plane lighting */
             combat_ground_ambient    = sr_config_float(&gcfg, "combat.ground_ambient", 0.25f);
-            combat_ground_tile_scale = sr_config_float(&gcfg, "combat.ground_tile_scale", 4.0f);
             combat_light_x           = sr_config_float(&gcfg, "combat.light_x", 0.0f);
             combat_light_y           = sr_config_float(&gcfg, "combat.light_y", 0.4f);
             combat_light_intensity   = sr_config_float(&gcfg, "combat.light_intensity", 1.0f);
