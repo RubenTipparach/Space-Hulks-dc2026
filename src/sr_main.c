@@ -199,7 +199,7 @@ static void game_pregen_enemy_ship(void) {
 
 /* ── Save / Load ─────────────────────────────────────────────────── */
 
-#define SAVE_VERSION 8  /* bumped: added boss mission state */
+#define SAVE_VERSION 9  /* bumped: struct layout changed (miniboss, medbay, elem_gift fields) */
 
 /*  Save header - fixed-size portion written first.
  *  After the header, each generated dungeon floor (sr_dungeon) is
