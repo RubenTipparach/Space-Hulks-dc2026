@@ -28,6 +28,13 @@ if %errorlevel% neq 0 (
 )
 
 echo [OK] Build succeeded.
+
+echo [COPY] Copying assets to build folder...
+robocopy "%~dp0assets" "%~dp0build\assets" /MIR /NJH /NJS /NDL /NC /NS >nul 2>&1
+robocopy "%~dp0config" "%~dp0build\config" /MIR /NJH /NJS /NDL /NC /NS >nul 2>&1
+robocopy "%~dp0levels" "%~dp0build\levels" /MIR /NJH /NJS /NDL /NC /NS >nul 2>&1
+echo [OK] Assets copied.
+
 echo [RUN] Starting Drake's Void...
 echo.
 
