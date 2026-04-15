@@ -1664,6 +1664,26 @@ static void starmap_generate(starmap_state *sm, int start_sector) {
                 nd->node_type = NODE_JUNKERS;
                 nd->scrap_reward = 0;
                 snprintf(nd->name, 24, "JUNKERS");
+            } else if ((col % 2) == 0 && n == 0 && col < col_count - 2) {
+                /* Even normal columns: first node is an event (question mark).
+                   Pattern: enemy col, event col, enemy col, ...
+                   This ensures at most 1 non-combat node per 2 depths. */
+                nd->node_type = NODE_EVENT;
+                nd->event_id = dng_rng_int(EVENT_MAX_EVENTS);
+                nd->scrap_reward = 0;
+                static const char *event_short[] = {
+                    "DISTRESS SIGNAL", "ANOMALY SCAN", "RUINS DETECTED",
+                    "CARGO DRIFT", "TRANSMISSION", "ARTIFACT",
+                    "DERELICT MEDBAY", "VOID STORM"
+                };
+                snprintf(nd->name, 24, "%s",
+                         event_short[nd->event_id % 8]);
+            } else if ((col % 2) != 0 && n == nodes_in_col - 1 && nodes_in_col >= 3) {
+                /* Odd columns with 3 nodes: make the last one a miniboss */
+                nd->node_type = NODE_MINIBOSS;
+                nd->scrap_reward = 30 + diff * 8;
+                int name_idx = (start_sector + col * 3 + n) % NUM_SECTOR_NAMES;
+                snprintf(nd->name, 24, "%s DEN", sector_names[name_idx]);
             } else {
                 nd->scrap_reward = 20 + diff * 5 + dng_rng_int(10);
                 int name_idx = (start_sector + col * 3 + n) % NUM_SECTOR_NAMES;

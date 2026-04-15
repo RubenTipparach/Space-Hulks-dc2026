@@ -21,18 +21,18 @@
       "next": [4, 5]
     },
     {
-      "name": "DISTRESS BEACON",
+      "name": "SECTOR BETA-1",
+      "levelFile": "enemy_ship_small_3.json",
       "difficulty": 1,
       "isBoss": false,
-      "nodeType": "event",
-      "eventId": 0,
+      "nodeType": "normal",
       "x": 90,
       "y": 135,
       "next": [5, 6]
     },
     {
       "name": "SECTOR ZETA-1",
-      "levelFile": "enemy_ship_small_3.json",
+      "levelFile": "enemy_ship_small_4.json",
       "difficulty": 1,
       "isBoss": false,
       "nodeType": "normal",
@@ -42,7 +42,7 @@
     },
     {
       "name": "SECTOR SIGMA-2",
-      "levelFile": "enemy_ship_small_4.json",
+      "levelFile": "enemy_ship_small_5.json",
       "difficulty": 1,
       "isBoss": false,
       "nodeType": "normal",
@@ -52,7 +52,7 @@
     },
     {
       "name": "SHADOW DEN",
-      "levelFile": "enemy_ship_small_5.json",
+      "levelFile": "enemy_ship_small_6.json",
       "difficulty": 2,
       "isBoss": false,
       "nodeType": "miniboss",
@@ -72,7 +72,7 @@
     },
     {
       "name": "SECTOR KAPPA-3",
-      "levelFile": "enemy_ship_small_6.json",
+      "levelFile": "enemy_ship_small_7.json",
       "difficulty": 2,
       "isBoss": false,
       "nodeType": "normal",
@@ -81,18 +81,18 @@
       "next": [9, 10, 11, 12]
     },
     {
-      "name": "RUINS DETECTED",
+      "name": "SECTOR THETA-3",
+      "levelFile": "enemy_ship_small_2.json",
       "difficulty": 2,
       "isBoss": false,
-      "nodeType": "event",
-      "eventId": 2,
+      "nodeType": "normal",
       "x": 210,
       "y": 190,
       "next": [10, 11, 12]
     },
     {
       "name": "SECTOR NOVA-4",
-      "levelFile": "enemy_ship_small_7.json",
+      "levelFile": "enemy_ship_small_3.json",
       "difficulty": 2,
       "isBoss": false,
       "nodeType": "normal",
@@ -151,11 +151,11 @@
       "next": [16, 17]
     },
     {
-      "name": "VOID STORM",
+      "name": "SECTOR LYRA-5",
+      "levelFile": "enemy_ship_small_4.json",
       "difficulty": 3,
       "isBoss": false,
-      "nodeType": "event",
-      "eventId": 7,
+      "nodeType": "normal",
       "x": 340,
       "y": 225,
       "next": [17]
