@@ -1538,8 +1538,8 @@ static void combat_begin_enemy_turn(combat_state *cs) {
         cs->player_won = true;
         g_player.hp = cs->player_hp;
         combat_generate_rewards(cs);
-        cs->reward_biomass = 3 + player_sector * 2;
-        cs->reward_scrap = console_combat ? (5 + player_sector * 3) : 0;
+        cs->reward_biomass = 6 + player_sector * 4;
+        cs->reward_scrap = console_combat ? (10 + player_sector * 6) : 0;
         cs->phase = CPHASE_REWARD_SUMMARY;
         combat_set_message(cs, "VICTORY!");
         return;
@@ -1800,8 +1800,8 @@ static void combat_check_victory(combat_state *cs) {
         combat_log(cs, "VICTORY - HP: %d/%d", cs->player_hp, cs->player_hp_max);
         combat_generate_rewards(cs);
         /* Calculate per-combat rewards for summary screen */
-        cs->reward_biomass = 3 + player_sector * 2;
-        cs->reward_scrap = console_combat ? (5 + player_sector * 3) : 0;
+        cs->reward_biomass = 6 + player_sector * 4;
+        cs->reward_scrap = console_combat ? (10 + player_sector * 6) : 0;
         cs->phase = CPHASE_REWARD_SUMMARY;
         combat_set_message(cs, "VICTORY!");
     }
