@@ -152,7 +152,7 @@ typedef struct {
 
     /* Terminals */
     int terminals_destroyed;  /* consoles sabotaged so far */
-    int terminals_required;   /* how many needed to blow up ship (scales with size) */
+    int terminals_required;   /* half of sabotage-able terminals, rounded up */
 
     /* Timing */
     int turns_elapsed;   /* combat rounds across the whole boarding */
@@ -196,9 +196,7 @@ static void ship_generate(ship_state *ship, int difficulty, uint32_t seed) {
     ship->num_decks = 1 + (difficulty >= 3 ? 1 : 0) + (difficulty >= 6 ? 1 : 0);
     if (ship->num_decks > SHIP_MAX_DECKS) ship->num_decks = SHIP_MAX_DECKS;
 
-    /* Fixed goal: destroy 3 terminals to clear any ship. The ship can have
-       more than 3 terminals in total (shown as "X/3 (N total)" in HUD). */
-    ship->terminals_required = 3;
+    /* terminals_required computed after room generation (see below) */
     ship->terminals_destroyed = 0;
 
     /* Generate rooms per deck */
@@ -271,6 +269,16 @@ static void ship_generate(ship_state *ship, int difficulty, uint32_t seed) {
             ship->room_count++;
         }
         ship->deck_room_count[deck] = rooms_on_deck;
+    }
+
+    /* Terminals required = half of sabotage-able terminals, rounded up.
+       Teleporter rooms don't count (they're an escape mechanism). */
+    {
+        int sabotage_count = 0;
+        for (int i = 0; i < ship->room_count; i++)
+            if (ship->rooms[i].type != ROOM_TELEPORTER) sabotage_count++;
+        ship->terminals_required = (sabotage_count + 1) / 2;  /* ceil(n/2) */
+        if (ship->terminals_required < 1) ship->terminals_required = 1;
     }
 
     /* Hull HP = sum of all subsystem HP */
