@@ -2581,6 +2581,15 @@ static void init(void) {
             hub_from_large.hover_amp   = sr_config_float(&gcfg, "hub_from_large.hover_amplitude", 0.15f);
             hub_from_large.hover_speed = sr_config_float(&gcfg, "hub_from_large.hover_speed", 0.6f);
 
+            /* Combat ground plane lighting */
+            combat_ground_ambient    = sr_config_float(&gcfg, "combat.ground_ambient", 0.25f);
+            combat_ground_tile_scale = sr_config_float(&gcfg, "combat.ground_tile_scale", 4.0f);
+            combat_light_x           = sr_config_float(&gcfg, "combat.light_x", 0.0f);
+            combat_light_y           = sr_config_float(&gcfg, "combat.light_y", 0.4f);
+            combat_light_intensity   = sr_config_float(&gcfg, "combat.light_intensity", 1.0f);
+            combat_light_radius      = sr_config_float(&gcfg, "combat.light_radius", 0.7f);
+            combat_shadow_opacity    = sr_config_float(&gcfg, "combat.shadow_opacity", 0.55f);
+
             /* Movement mode */
             dng_instant_step = (int)sr_config_float(&gcfg, "movement.instant_step", 0) != 0;
             if (dng_instant_step) printf("[game] INSTANT STEP MODE ENABLED\n");

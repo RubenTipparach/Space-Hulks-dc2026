@@ -2594,61 +2594,60 @@ static void combat_draw_pile_viewer(uint32_t *px, int W, int H,
     }
 }
 
+/* ── Combat ground plane config (loaded from game_config.yaml) ────── */
+
+static float combat_ground_ambient    = 0.25f;  /* base floor brightness */
+static float combat_ground_tile_scale = 4.0f;   /* texture repeat factor */
+static float combat_light_x           = 0.0f;   /* point light X (-1..1) */
+static float combat_light_y           = 0.4f;   /* point light depth (0=horizon,1=camera) */
+static float combat_light_intensity   = 1.0f;   /* point light brightness */
+static float combat_light_radius      = 0.7f;   /* point light falloff radius */
+static float combat_shadow_opacity    = 0.55f;  /* shadow darkness (0=none, 1=full black) */
+
 /* ── Perspective ground plane beneath enemies ──────────────────────── */
 
 static void combat_draw_ground_plane(uint32_t *px, int W, int H) {
-    /* 4x4 Bayer dither for subtle noise on the floor */
-    static const int bayer4[4][4] = {
-        { 0,  8,  2, 10},
-        {12,  4, 14,  6},
-        { 3, 11,  1,  9},
-        {15,  7, 13,  5}
-    };
+    /* Use the current dungeon floor texture, fallback to ITEX_TILE */
+    const sr_indexed_texture *floor_tex = (dng_floor_texture >= 0)
+        ? &itextures[dng_floor_texture] : &itextures[ITEX_TILE];
+    if (!floor_tex->indices) floor_tex = &itextures[ITEX_TILE];
+    if (!floor_tex->indices) return;
 
-    /* Ground plane spans from horizon line down to divider */
-    int horizon_y = 55;   /* where floor meets background */
-    int floor_end = 130;  /* divider line */
+    int horizon_y = 55;
+    int floor_end = 130;
+
+    float light_px = combat_light_x * (float)(W / 2);
+    float lr2 = combat_light_radius * combat_light_radius;
+    if (lr2 < 0.01f) lr2 = 0.01f;
 
     for (int y = horizon_y; y < floor_end && y < H; y++) {
         float t = (float)(y - horizon_y) / (float)(floor_end - horizon_y);
-        /* Perspective: rows near horizon are more compressed */
-        float depth = t * t;  /* quadratic for perspective feel */
-
-        /* Base floor color: dark metal, brighter closer to camera */
-        int base_r = 13 + (int)(depth * 22.0f);  /* 13 -> 35 */
-        int base_g = 13 + (int)(depth * 20.0f);  /* 13 -> 33 */
-        int base_b = 17 + (int)(depth * 25.0f);  /* 17 -> 42 */
+        float depth = t * t;
 
         for (int x = 0; x < W; x++) {
-            int r = base_r, g = base_g, b = base_b;
-
-            /* Subtle grid lines for depth (perspective spacing) */
-            float grid_spacing = 8.0f + depth * 20.0f;
             float cx = (float)(x - W / 2);
-            /* Perspective-correct X grid: converge toward center at horizon */
             float persp_x = cx / (0.3f + depth * 0.7f);
-            int gx = (int)(persp_x + 5000.5f) % (int)(grid_spacing + 0.5f);
-            /* Horizontal grid lines */
-            int row_period = (int)(3.0f + depth * 12.0f);
-            int gy = (y - horizon_y) % row_period;
 
-            /* Thin grid lines: slightly brighter */
-            if (gx == 0 || gy == 0) {
-                r += 8; g += 8; b += 10;
-            }
+            /* UV coordinates for floor texture sampling */
+            float u = persp_x * 0.02f * combat_ground_tile_scale;
+            float v = depth * combat_ground_tile_scale;
 
-            /* Dither: adds subtle noise to prevent banding */
-            int dith = bayer4[y & 3][x & 3];
-            r += (dith > 10) ? 2 : -1;
-            g += (dith > 10) ? 2 : -1;
-            b += (dith > 10) ? 2 : -1;
+            uint8_t pal_idx = sr_indexed_sample(floor_tex, u, v);
+            if (pal_idx == PAL_TRANSPARENT) pal_idx = 0;
 
-            if (r < 0) r = 0; if (r > 255) r = 255;
-            if (g < 0) g = 0; if (g > 255) g = 255;
-            if (b < 0) b = 0; if (b > 255) b = 255;
+            /* Point light falloff from configured position */
+            float ldx = (cx - light_px) / (float)(W / 2);
+            float ldy = depth - combat_light_y;
+            float ld2 = (ldx * ldx + ldy * ldy) / lr2;
+            float falloff = 1.0f - ld2;
+            if (falloff < 0.0f) falloff = 0.0f;
+            float point = combat_light_intensity * falloff;
 
-            px[y * W + x] = 0xFF000000 | ((uint32_t)b << 16)
-                          | ((uint32_t)g << 8) | (uint32_t)r;
+            float intensity = combat_ground_ambient + point;
+
+            /* Palette shade lookup with dithering for smooth gradients */
+            int shade = sr_shade_row_dithered(intensity, x, y);
+            px[y * W + x] = sr_palette_lookup(shade, pal_idx);
         }
     }
 }
@@ -2656,7 +2655,9 @@ static void combat_draw_ground_plane(uint32_t *px, int W, int H) {
 /* ── Floor point-light and dithered ellipse shadow beneath enemies ── */
 
 static void combat_draw_enemy_shadow(uint32_t *px, int W, int H,
-                                      int cx, int foot_y, float scale) {
+                                      int cx, int foot_y, float scale,
+                                      int wobble_x) {
+    cx += wobble_x;  /* shadow follows enemy sway */
     /* 4x4 Bayer ordered dither matrix (values 0..15) */
     static const int bayer4[4][4] = {
         { 0,  8,  2, 10},
@@ -2712,11 +2713,13 @@ static void combat_draw_enemy_shadow(uint32_t *px, int W, int H,
             float density = (1.0f - d2);
             int level = (int)(density * 15.0f);
             if (bayer4[y & 3][x & 3] >= level) continue;  /* dither reject */
-            /* Darken pixel (~55% of original) */
+            /* Darken pixel by configured shadow opacity */
             uint32_t c = px[y * W + x];
-            int r = ((c & 0xFF) * 9) >> 4;
-            int g = (((c >> 8) & 0xFF) * 9) >> 4;
-            int b = (((c >> 16) & 0xFF) * 9) >> 4;
+            int shadow_mul = (int)((1.0f - combat_shadow_opacity) * 16.0f);
+            if (shadow_mul < 1) shadow_mul = 1;
+            int r = ((c & 0xFF) * shadow_mul) >> 4;
+            int g = (((c >> 8) & 0xFF) * shadow_mul) >> 4;
+            int b = (((c >> 16) & 0xFF) * shadow_mul) >> 4;
             px[y * W + x] = 0xFF000000 | ((uint32_t)b << 16)
                           | ((uint32_t)g << 8) | (uint32_t)r;
         }
@@ -2784,7 +2787,7 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
                 }
 
                 /* Floor shadow + point light beneath enemy feet */
-                combat_draw_enemy_shadow(px, W, H, cx, sprite_y + spr_sz, fscale);
+                combat_draw_enemy_shadow(px, W, H, cx, sprite_y + spr_sz, fscale, anim_x);
 
                 /* Boss: use animated PNG frames if available */
                 bool drew_boss_anim = false;
