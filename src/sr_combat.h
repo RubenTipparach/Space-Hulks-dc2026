@@ -1562,6 +1562,7 @@ static void combat_begin_enemy_turn(combat_state *cs) {
         /* Advance if not yet in attack range */
         if (e->distance > e->attack_range) {
             e->distance--;
+            combat_floor_scroll_target -= 0.2f; /* enemy approaches: tiles toward player */
             sr_audio_play_combat_step();
             combat_log(cs, "%s advances -> dist %d",
                        enemy_templates[e->type].name, e->distance);
@@ -1843,7 +1844,7 @@ static void combat_action_move_forward(combat_state *cs) {
     }
     cs->player_move_pts--;
     sr_audio_play_combat_step();
-    combat_floor_scroll_target += 1.0f;  /* scroll forward one tile */
+    combat_floor_scroll_target -= 1.0f;  /* tiles scroll toward player */
     for (int i = 0; i < cs->enemy_count; i++)
         if (cs->enemies[i].alive && cs->enemies[i].distance > 0)
             cs->enemies[i].distance--;
@@ -1862,7 +1863,7 @@ static void combat_action_move_back(combat_state *cs) {
     }
     cs->player_move_pts--;
     sr_audio_play_combat_step();
-    combat_floor_scroll_target -= 1.0f;  /* scroll backward one tile */
+    combat_floor_scroll_target += 1.0f;  /* tiles scroll away from player */
     for (int i = 0; i < cs->enemy_count; i++)
         if (cs->enemies[i].alive && cs->enemies[i].distance < COMBAT_MAX_DISTANCE)
             cs->enemies[i].distance++;
