@@ -631,6 +631,7 @@ static float combat_lerpf(float a, float b, float t) {
 }
 
 static void combat_init(combat_state *cs, int player_class, int floor, int cell_alien_type) {
+    combat_floor_scroll = 0.0f;
     memset(cs, 0, sizeof(*cs));
     cs->player_class = player_class;
     cs->player_hp_max = g_player.hp_max;
@@ -1836,6 +1837,7 @@ static void combat_action_move_forward(combat_state *cs) {
     }
     cs->player_move_pts--;
     sr_audio_play_combat_step();
+    combat_floor_scroll += 0.3f;  /* scroll forward */
     for (int i = 0; i < cs->enemy_count; i++)
         if (cs->enemies[i].alive && cs->enemies[i].distance > 0)
             cs->enemies[i].distance--;
@@ -1854,6 +1856,7 @@ static void combat_action_move_back(combat_state *cs) {
     }
     cs->player_move_pts--;
     sr_audio_play_combat_step();
+    combat_floor_scroll -= 0.3f;  /* scroll backward */
     for (int i = 0; i < cs->enemy_count; i++)
         if (cs->enemies[i].alive && cs->enemies[i].distance < COMBAT_MAX_DISTANCE)
             cs->enemies[i].distance++;
@@ -2597,6 +2600,7 @@ static void combat_draw_pile_viewer(uint32_t *px, int W, int H,
 /* ── Combat ground plane config (loaded from game_config.yaml) ────── */
 
 static int   combat_floor_texture      = -1;     /* snapshot of floor tex at combat start */
+static float combat_floor_scroll      = 0.0f;   /* V offset for floor movement illusion */
 static float combat_ground_ambient    = 0.25f;  /* base floor brightness */
 static float combat_ground_tile_scale = 4.0f;   /* texture repeat factor */
 static float combat_light_x           = 0.0f;   /* point light X (-1..1) */
@@ -2631,7 +2635,7 @@ static void combat_draw_ground_plane(uint32_t *px, int W, int H) {
 
             /* UV coordinates for floor texture sampling */
             float u = persp_x * 0.02f * combat_ground_tile_scale;
-            float v = depth * combat_ground_tile_scale;
+            float v = (depth + combat_floor_scroll) * combat_ground_tile_scale;
 
             uint8_t pal_idx = sr_indexed_sample(floor_tex, u, v);
             if (pal_idx == PAL_TRANSPARENT) pal_idx = 0;

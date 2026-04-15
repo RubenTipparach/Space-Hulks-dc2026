@@ -2486,6 +2486,7 @@ static void init(void) {
     stextures[STEX_MAP_MINIBOSS]       = sr_texture_load("assets/sprites/map_miniboss.png");
     stextures[STEX_MAP_EVENT]          = sr_texture_load("assets/sprites/map_event.png");
     stextures[STEX_MAP_BOSS]           = sr_texture_load("assets/sprites/map_boss.png");
+    stextures[STEX_MAP_JUNKERS]        = sr_texture_load("assets/sprites/map_junkers.png");
 
     /* Map enemy types to sprite texture indices (-1 = use raw index) */
     memset(enemy_to_stex, -1, sizeof(enemy_to_stex));
