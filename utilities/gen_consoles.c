@@ -1,4 +1,4 @@
-/* gen_consoles.c — Generate 16x16 console sprite PNGs for each room type.
+/* gen_consoles.c - Generate 16x16 console sprite PNGs for each room type.
    Build: cc -o gen_consoles gen_consoles.c -I ../third_party -lm
    Run:   ./gen_consoles
 */

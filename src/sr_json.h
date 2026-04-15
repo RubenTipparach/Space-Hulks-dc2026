@@ -275,7 +275,7 @@ static void sr_json_str(const sr_json *j, int token, char *out, int max_len) {
                 case '\\': out[di++] = '\\'; break;
                 case '"': out[di++] = '"'; break;
                 case '/': out[di++] = '/'; break;
-                case 'u': /* \uXXXX — decode to ASCII if possible */
+                case 'u': /* \uXXXX - decode to ASCII if possible */
                     if (si + 4 < src_len) {
                         unsigned cp = 0;
                         for (int k = 1; k <= 4; k++) {

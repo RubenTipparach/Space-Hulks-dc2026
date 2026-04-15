@@ -213,7 +213,7 @@ public static class PaletteCore
         for (int y = 0; y < h; y++)
         for (int x = 0; x < w; x++)
         {
-            /* Alpha test — transparent pixels get index 65 */
+            /* Alpha test - transparent pixels get index 65 */
             if (bufTransparent[y, x])
             {
                 indices[y * w + x] = TRANSPARENT_INDEX;

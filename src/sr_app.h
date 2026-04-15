@@ -1,4 +1,4 @@
-/*  sr_app.h — Shared application state, constants, and enums.
+/*  sr_app.h - Shared application state, constants, and enums.
  *  Included by all scene/input modules. Single-TU header-only. */
 #ifndef SR_APP_H
 #define SR_APP_H
@@ -90,6 +90,7 @@ static bool save_exists = false;
 
 static bool mission_briefed = false;     /* talked to captain for briefing */
 static bool mission_medbay_done = false; /* cleared by Dr Vasquez */
+static bool mission_medbay_card_bought = false; /* bought first card from medbay shop */
 static bool mission_armory_done = false; /* visited Chen's armory */
 static bool medbay_used = false;         /* already healed once between missions */
 static int  captain_briefing_page = 0;   /* current page in multi-page briefing */

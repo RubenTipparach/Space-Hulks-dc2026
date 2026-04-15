@@ -1,4 +1,4 @@
-/*  sr_combat.h — Card-based combat system for Space Hulks.
+/*  sr_combat.h - Card-based combat system for Space Hulks.
  *  Single-TU header-only. Depends on sr_app.h, sr_font.h, sr_sprites.h. */
 #ifndef SR_COMBAT_H
 #define SR_COMBAT_H
@@ -59,7 +59,7 @@ static const char *card_names[] = {
     "JUNK",
 };
 
-/* Card colors — NOT-64 palette only (ABGR: 0xFFBBGGRR from #RRGGBB) */
+/* Card colors - NOT-64 palette only (ABGR: 0xFFBBGGRR from #RRGGBB) */
 static const uint32_t card_colors[] = {
     0xFFB4654D,  /* SHIELD    - #4d65b4 pal blue */
     0xFF3138B3,  /* SHOOT     - #b33831 pal red */
@@ -85,7 +85,7 @@ static const uint32_t card_colors[] = {
     0xFFF384A8,  /* STUN GUN  - #a884f3 pal lavender */
     0xFF4A7DF5,  /* MCROWAVE  - #f57d4a pal salmon */
     0xFF6CDF34,  /* QCKSTEP   - #34df6c (close to #cddf6c) pal yellow-green */
-    /* Upgraded cards — reuse base card colors */
+    /* Upgraded cards - reuse base card colors */
     0xFF4C5A16,  /* SNIPER+   - same as SNIPER */
     0xFF3D68CD,  /* SHOTGUN+  - same as SHOTGUN */
     0xFF1797F7,  /* WELDER+   - same as WELDER */
@@ -135,7 +135,7 @@ static const int card_targets[] = {
     TARGET_ENEMY,         /* STUN GUN */
     TARGET_ENEMY,         /* MICROWAVE */
     TARGET_SELF,          /* QUICKSTEP */
-    /* Upgraded cards — same targets as base */
+    /* Upgraded cards - same targets as base */
     TARGET_ENEMY,         /* SNIPER+ */
     TARGET_ENEMY,         /* SHOTGUN+ */
     TARGET_ENEMY,         /* WELDER+ (melee) */
@@ -260,15 +260,15 @@ static enemy_template enemy_templates[] = {
     [ENEMY_BRUTE]        = { "BRUTE",       18,  4,  6, 1 },
     [ENEMY_SPITTER]      = { "SPITTER",     10,  2,  4, 3 },
     [ENEMY_HIVEGUARD]    = { "HIVEGUARD",   24,  3,  5, 2 },
-    /* Evolved tier 2 — advanced parasite forms */
+    /* Evolved tier 2 - advanced parasite forms */
     [ENEMY_STALKER]      = { "STALKER",     14,  3,  5, 2 }, /* fast, attacks twice */
     [ENEMY_MAULER]       = { "MAULER",      28,  5,  8, 1 }, /* heavy hitter, buffs often */
     [ENEMY_ACID_THROWER] = { "ACID THROWER",16,  3,  6, 4 }, /* long range, acid DoT */
     [ENEMY_WARDEN]       = { "WARDEN",      32,  4,  6, 2 }, /* shields allies, high HP */
-    [ENEMY_BOSS_1]       = { "RAVAGER",    115,  7, 12, 2 },
-    [ENEMY_BOSS_2]       = { "VOID WYRM",  130,  8, 14, 3 },
-    [ENEMY_BOSS_3]       = { "HIVEMIND",   150,  9, 16, 2 },
-    /* Minibosses — tier 2 elites with boosted HP/damage */
+    [ENEMY_BOSS_1]       = { "RAVAGER",    180,  9, 14, 2 },
+    [ENEMY_BOSS_2]       = { "VOID WYRM",  210, 10, 16, 3 },
+    [ENEMY_BOSS_3]       = { "HIVEMIND",   240, 11, 18, 2 },
+    /* Minibosses - tier 2 elites with boosted HP/damage */
     [ENEMY_MINIBOSS_1]   = { "SHADOW ALPHA",  50,  5,  8, 2 }, /* based on Stalker */
     [ENEMY_MINIBOSS_2]   = { "RAVAGER BROOD", 55,  6,  9, 1 }, /* based on Mauler */
     [ENEMY_MINIBOSS_3]   = { "VENOM QUEEN",   42,  5,  7, 3 }, /* based on Acid Thrower */
@@ -407,6 +407,7 @@ typedef struct {
     /* Sequential enemy attack state */
     int enemy_atk_idx;    /* which enemy is currently attacking (-1 = none) */
     int enemy_atk_timer;  /* countdown for current enemy's wiggle+attack */
+    int enemy_atk_pause;  /* > 0 = inter-attacker pause frames (no enemy active) */
 
     /* Player visual feedback */
     int player_flash_timer;       /* > 0 = player flickers red (took damage) */
@@ -539,7 +540,7 @@ static void combat_draw_hand(combat_state *cs) {
 
 static void combat_generate_rewards(combat_state *cs) {
     int elems[] = { CARD_ICE, CARD_ACID, CARD_FIRE, CARD_LIGHTNING };
-    /* Non-elemental droppable pool (overcharge excluded — super rare) */
+    /* Non-elemental droppable pool (overcharge excluded - super rare) */
     int non_elem[] = { CARD_REPAIR, CARD_STUN, CARD_FORTIFY,
                        CARD_DOUBLE_SHOT, CARD_DASH };
     int non_elem_count = 5;
@@ -562,7 +563,7 @@ static void combat_generate_rewards(combat_state *cs) {
             upgraded[upgraded_count++] = CARD_STUN_GUN_UP;
             upgraded[upgraded_count++] = CARD_MICROWAVE_UP;
             break;
-        default: /* Marine has no class cards — gets random upgraded pool */
+        default: /* Marine has no class cards - gets random upgraded pool */
             upgraded[upgraded_count++] = CARD_SNIPER_UP;
             upgraded[upgraded_count++] = CARD_SHOTGUN_UP;
             upgraded[upgraded_count++] = CARD_WELDER_UP;
@@ -812,9 +813,29 @@ static int combat_first_alive_enemy(combat_state *cs) {
     return -1;
 }
 
+/* Set to true immediately before combat_deal_damage_enemy is called from
+   an elemental card path. combat_deal_damage_enemy reads and clears it.
+   When false, bosses take half damage to encourage elemental play. */
+static bool combat_damage_is_elemental = false;
+
 static void combat_deal_damage_enemy(combat_state *cs, int idx, int dmg) {
-    if (idx < 0 || idx >= cs->enemy_count || !cs->enemies[idx].alive) return;
+    if (idx < 0 || idx >= cs->enemy_count || !cs->enemies[idx].alive) {
+        combat_damage_is_elemental = false;
+        return;
+    }
     combat_enemy *e = &cs->enemies[idx];
+
+    /* Bosses resist non-elemental damage by 50% (round up, min 1). This is
+       the main incentive to find and spam the right elemental card. */
+    bool is_boss = (e->type >= ENEMY_BOSS_1 && e->type <= ENEMY_BOSS_3);
+    if (is_boss && !combat_damage_is_elemental && dmg > 1) {
+        int reduced = (dmg + 1) / 2;
+        combat_log(cs, "  %s resists (%d -> %d)",
+                   enemy_templates[e->type].name, dmg, reduced);
+        dmg = reduced;
+    }
+    combat_damage_is_elemental = false;
+
     /* Shield absorbs before HP */
     if (e->shield > 0) {
         int absorbed = dmg < e->shield ? dmg : e->shield;
@@ -1010,6 +1031,7 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
                 bool is_weak = weakness_check(cs->enemies[t].type, ELEM_ICE);
                 if (is_weak) dmg *= 2;
                 bool just_found = weakness_discover(cs->enemies[t].type, ELEM_ICE);
+                combat_damage_is_elemental = true;
                 combat_deal_damage_enemy(cs, t, dmg);
                 if (just_found) {
                     snprintf(buf, sizeof(buf), "ICE %s! WEAK! x2!", enemy_templates[cs->enemies[t].type].name);
@@ -1035,6 +1057,7 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
                 bool is_weak = weakness_check(cs->enemies[t].type, ELEM_ACID);
                 if (is_weak) dmg *= 2;
                 bool just_found = weakness_discover(cs->enemies[t].type, ELEM_ACID);
+                combat_damage_is_elemental = true;
                 combat_deal_damage_enemy(cs, t, dmg);
                 if (just_found) {
                     snprintf(buf, sizeof(buf), "ACID %s! WEAK! x2!", enemy_templates[cs->enemies[t].type].name);
@@ -1060,6 +1083,7 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
                 bool is_weak = weakness_check(cs->enemies[t].type, ELEM_FIRE);
                 if (is_weak) dmg *= 2;
                 bool just_found = weakness_discover(cs->enemies[t].type, ELEM_FIRE);
+                combat_damage_is_elemental = true;
                 combat_deal_damage_enemy(cs, t, dmg);
                 if (just_found) {
                     snprintf(buf, sizeof(buf), "FIRE %s! WEAK! x2!", enemy_templates[cs->enemies[t].type].name);
@@ -1086,6 +1110,7 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
                 bool is_weak = weakness_check(cs->enemies[t].type, ELEM_LIGHTNING);
                 if (is_weak) dmg *= 2;
                 bool just_found = weakness_discover(cs->enemies[t].type, ELEM_LIGHTNING);
+                combat_damage_is_elemental = true;
                 combat_deal_damage_enemy(cs, t, dmg);
                 if (just_found) {
                     snprintf(buf, sizeof(buf), "ZAP %s! WEAK! x2!", enemy_templates[cs->enemies[t].type].name);
@@ -1481,9 +1506,10 @@ static void combat_tick_status_effects(combat_state *cs) {
 
 /* ── Enemy turn (sequential) ─────────────────────────────────────── */
 
-#define ENEMY_ATK_WIGGLE_FRAMES  20  /* wiggle before strike */
-#define ENEMY_ATK_HIT_FRAME      10  /* frame at which damage lands */
-#define ENEMY_ATK_TOTAL_FRAMES   30  /* total anim per enemy */
+#define ENEMY_ATK_WIGGLE_FRAMES  30  /* wiggle before strike */
+#define ENEMY_ATK_HIT_FRAME      15  /* frame at which damage lands */
+#define ENEMY_ATK_TOTAL_FRAMES   45  /* total anim per enemy */
+#define ENEMY_ATK_INTER_PAUSE    18  /* pause between one attacker and the next */
 
 /* Check if an enemy can attack at its current distance */
 static bool combat_enemy_in_range(combat_state *cs, int idx) {
@@ -1583,9 +1609,10 @@ static void combat_begin_enemy_turn(combat_state *cs) {
         }
     }
 
+    cs->enemy_atk_pause = 0;
     cs->enemy_atk_idx = combat_next_attacker(cs, 0);
     if (cs->enemy_atk_idx < 0) {
-        /* No enemies can attack — decrement stun and skip to next draw */
+        /* No enemies can attack - decrement stun and skip to next draw */
         for (int i = 0; i < cs->enemy_count; i++) {
             if (cs->enemies[i].lightning_stun > 0)
                 cs->enemies[i].lightning_stun--;
@@ -1607,7 +1634,7 @@ static void combat_update(combat_state *cs) {
     if (cs->message_timer > 0) cs->message_timer--;
     if (cs->player_flash_timer > 0) cs->player_flash_timer--;
     if (cs->player_shield_flash_timer > 0) cs->player_shield_flash_timer--;
-    /* info_popup_timer no longer auto-dismisses — closed by tap/key only */
+    /* info_popup_timer no longer auto-dismisses - closed by tap/key only */
     for (int i = 0; i < cs->enemy_count; i++)
         if (cs->enemies[i].flash_timer > 0) cs->enemies[i].flash_timer--;
 
@@ -1674,8 +1701,22 @@ static void combat_update(combat_state *cs) {
     }
 
     if (cs->phase == CPHASE_ENEMY_TURN) {
+        /* Inter-attacker pause: no enemy is active, just wait and let
+           shield/HP flashes from the previous attacker settle before the
+           next one starts. */
+        if (cs->enemy_atk_pause > 0) {
+            cs->enemy_atk_pause--;
+            if (cs->enemy_atk_pause == 0) {
+                int next = combat_next_attacker(cs, cs->enemy_atk_idx + 1);
+                cs->enemy_atk_idx = next;
+                if (next >= 0)
+                    cs->enemy_atk_timer = ENEMY_ATK_TOTAL_FRAMES;
+            }
+            return;
+        }
+
         if (cs->enemy_atk_idx < 0) {
-            /* All enemies done — decrement stun counters now */
+            /* All enemies done - decrement stun counters now */
             for (int i = 0; i < cs->enemy_count; i++) {
                 if (cs->enemies[i].lightning_stun > 0)
                     cs->enemies[i].lightning_stun--;
@@ -1686,7 +1727,7 @@ static void combat_update(combat_state *cs) {
                 cs->phase = CPHASE_RESULT;
                 cs->player_won = false;
                 cs->combat_over = true;
-                combat_log(cs, "DEFEATED — HP: %d/%d", cs->player_hp, cs->player_hp_max);
+                combat_log(cs, "DEFEATED - HP: %d/%d", cs->player_hp, cs->player_hp_max);
                 combat_set_message(cs, "DEFEATED...");
             } else {
                 cs->turn++;
@@ -1729,7 +1770,7 @@ static void combat_update(combat_state *cs) {
                 }
                 /* Acid Thrower/Venom Queen: applies acid stacks to player */
                 else if (e->type == ENEMY_ACID_THROWER || e->type == ENEMY_MINIBOSS_3) {
-                    /* Log acid effect — actual acid damage on player is through the hit */
+                    /* Log acid effect - actual acid damage on player is through the hit */
                     combat_log(cs, "  ACID THROWER corrodes armor!");
                     snprintf(buf, sizeof(buf), "%s ACID -%dHP",
                              enemy_templates[e->type].name, dmg);
@@ -1741,14 +1782,11 @@ static void combat_update(combat_state *cs) {
             }
         }
 
-        /* When this enemy's anim is done, move to next attacker */
+        /* When this enemy's anim is done, enter the inter-attacker pause so
+           the shield/HP flashes from this strike are clearly visible before
+           the next enemy begins its wind-up. */
         if (cs->enemy_atk_timer <= 0) {
-            int next = combat_next_attacker(cs, cs->enemy_atk_idx + 1);
-            cs->enemy_atk_idx = next;
-            if (next >= 0) {
-                cs->enemy_atk_timer = ENEMY_ATK_TOTAL_FRAMES;
-            }
-            /* if next < 0, the top-of-function check handles end-of-phase next frame */
+            cs->enemy_atk_pause = ENEMY_ATK_INTER_PAUSE;
         }
     }
 }
@@ -1759,7 +1797,7 @@ static void combat_check_victory(combat_state *cs) {
     if (combat_all_enemies_dead(cs)) {
         cs->player_won = true;
         g_player.hp = cs->player_hp;
-        combat_log(cs, "VICTORY — HP: %d/%d", cs->player_hp, cs->player_hp_max);
+        combat_log(cs, "VICTORY - HP: %d/%d", cs->player_hp, cs->player_hp_max);
         combat_generate_rewards(cs);
         /* Calculate per-combat rewards for summary screen */
         cs->reward_biomass = 3 + player_sector * 2;
@@ -1954,7 +1992,7 @@ static void combat_touch_began(combat_state *cs, float fx, float fy) {
 
     if (cs->phase == CPHASE_RESULT) return;
 
-    /* Reward summary — tap CONTINUE to proceed to card pick */
+    /* Reward summary - tap CONTINUE to proceed to card pick */
     if (cs->phase == CPHASE_REWARD_SUMMARY) {
         int cb_w = 80, cb_h = 20;
         int cb_x = (FB_WIDTH - cb_w) / 2, cb_y = 150;
@@ -1965,7 +2003,7 @@ static void combat_touch_began(combat_state *cs, float fx, float fy) {
         return;
     }
 
-    /* Reward phase — tap a card to pick it */
+    /* Reward phase - tap a card to pick it */
     if (cs->phase == CPHASE_REWARD) {
         int rw = 72, rh = 80, rgap = 12;
         int rtotal = 3 * (rw + rgap) - rgap;
@@ -2201,7 +2239,7 @@ static void combat_handle_key(combat_state *cs, int key) {
 
     if (cs->phase == CPHASE_RESULT) return;
 
-    /* Reward summary — any key advances to card pick */
+    /* Reward summary - any key advances to card pick */
     if (cs->phase == CPHASE_REWARD_SUMMARY) {
         if (key == SAPP_KEYCODE_ENTER || key == SAPP_KEYCODE_SPACE || key == SAPP_KEYCODE_F) {
             cs->phase = CPHASE_REWARD;
@@ -2275,6 +2313,43 @@ static void combat_draw_rect_outline(uint32_t *px, int W, int H,
             if (xr >= 0 && xr < W) px[ry * W + xr] = col;
         }
     }
+}
+
+/* Draw a shiny, slightly flickering gold double-outline used to mark rare
+   card drops (e.g. rewards from miniboss encounters). Uses the global
+   frame_counter to drive the animation so it works in any scene. */
+static void combat_draw_rare_outline(uint32_t *px, int W, int H,
+                                     int x0, int y0, int w, int h) {
+    /* Two gold shades that slowly pulse between each other. */
+    int phase = (frame_counter / 4) & 0x7;
+    /* Triangle wave 0..4..0 */
+    int t = phase <= 4 ? phase : (8 - phase);
+    /* Base 0xFFCCAA33 → bright 0xFFFFE066 */
+    int r = 0x33 + (0x66 - 0x33) * t / 4;
+    int g = 0xAA + (0xE0 - 0xAA) * t / 4;
+    int b = 0xCC + (0xFF - 0xCC) * t / 4;
+    uint32_t gold      = 0xFF000000 | ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
+    uint32_t gold_dark = 0xFF000000 | ((uint32_t)(r/2) << 16) | ((uint32_t)(g/2) << 8) | (uint32_t)(b/2);
+
+    /* Outer bright ring just outside the card */
+    combat_draw_rect_outline(px, W, H, x0 - 1, y0 - 1, w + 2, h + 2, gold);
+    /* Inner card-edge ring */
+    combat_draw_rect_outline(px, W, H, x0, y0, w, h, gold);
+    /* Dim inset ring for a slight double-line "shine" feel */
+    combat_draw_rect_outline(px, W, H, x0 + 1, y0 + 1, w - 2, h - 2, gold_dark);
+
+    /* Occasional sparkle pixels at the corners (tied to frame counter) */
+    int spark = (frame_counter / 6) & 0x3;
+    uint32_t sparkle = 0xFFFFFFFF;
+    if (spark == 0 && x0 >= 0 && y0 >= 0 && x0 < W && y0 < H)
+        px[y0 * W + x0] = sparkle;
+    if (spark == 1 && x0 + w - 1 < W && y0 >= 0 && x0 + w - 1 >= 0 && y0 < H)
+        px[y0 * W + (x0 + w - 1)] = sparkle;
+    if (spark == 2 && x0 >= 0 && y0 + h - 1 < H && x0 < W && y0 + h - 1 >= 0)
+        px[(y0 + h - 1) * W + x0] = sparkle;
+    if (spark == 3 && x0 + w - 1 < W && y0 + h - 1 < H &&
+        x0 + w - 1 >= 0 && y0 + h - 1 >= 0)
+        px[(y0 + h - 1) * W + (x0 + w - 1)] = sparkle;
 }
 
 static void combat_draw_bar(uint32_t *px, int W, int H,
@@ -2681,7 +2756,7 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
                     }
                 }
 
-                /* Target highlight removed — drag-to-target provides the highlight */
+                /* Target highlight removed - drag-to-target provides the highlight */
 
                 /* Intent indicator (above sprite) */
                 if (combat.phase == CPHASE_PLAYER_TURN || combat.phase == CPHASE_DRAW) {
@@ -2718,7 +2793,7 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
                 sr_draw_text_shadow(px, W, H, cx - 12, sprite_y_dead + 12, "DEAD", 0xFF444444, shadow);
             }
 
-            /* Info below sprite — tight, just 2px gap */
+            /* Info below sprite - tight, just 2px gap */
             int info_y = sprite_y + spr_sz + 2;
 
             /* Enemy name + weakness indicator */
@@ -3308,30 +3383,36 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
         }
         ty += 12;
 
-        /* Weakness info (from elemental discovery system) */
-        if (g_weakness.initialized && g_weakness.weakness_known[etype]) {
-            int wk = g_weakness.weakness[etype];
-            spr_draw_tex(px, W, H, &stextures[elem_icon_stex[wk]],
-                         tx, ty, 1);
-            char wbuf[32];
-            snprintf(wbuf, sizeof(wbuf), "WEAK: %s (2x)", elem_names[wk]);
-            sr_draw_text_shadow(px, W, H, tx + 18, ty + 2, wbuf, elem_colors[wk], shadow);
-        } else {
-            sr_draw_text_shadow(px, W, H, tx, ty, "WEAK: ???", 0xFF888888, shadow);
-            /* Show discovered elements */
-            int ex = tx + 64;
-            for (int el = 0; el < ELEM_COUNT; el++) {
-                const char *eshort[] = { "I", "A", "F", "L" };
-                if (g_weakness.discovered[etype][el]) {
-                    uint32_t c = 0xFF555555;
-                    sr_draw_text_shadow(px, W, H, ex, ty, eshort[el], c, shadow);
-                } else {
-                    sr_draw_text_shadow(px, W, H, ex, ty, "?", 0xFF444444, shadow);
-                }
-                ex += 12;
+        /* Weakness info - Persona style list of all four elements. Each
+           element shows its tested status:
+             not tested:     dim "?"
+             tested normal:  dim "NORMAL"
+             tested weak:    bright "VERY EFFECTIVE!"
+           The player learns by poking at enemies with elemental cards. */
+        sr_draw_text_shadow(px, W, H, tx, ty, "ELEMENTS:", dim, shadow);
+        ty += 10;
+        for (int el = 0; el < ELEM_COUNT; el++) {
+            int ex = tx + 8;
+            spr_draw_tex(px, W, H, &stextures[elem_icon_stex[el]],
+                         ex, ty - 2, 1);
+            sr_draw_text_shadow(px, W, H, ex + 18, ty,
+                                elem_names[el], elem_colors[el], shadow);
+            const char *tag;
+            uint32_t tag_col;
+            if (!g_weakness.initialized || !g_weakness.discovered[etype][el]) {
+                tag = "?";
+                tag_col = 0xFF555555;
+            } else if (g_weakness.weakness[etype] == el) {
+                tag = "VERY EFFECTIVE!";
+                tag_col = 0xFF44CC44;
+            } else {
+                tag = "NORMAL";
+                tag_col = 0xFF777777;
             }
+            sr_draw_text_shadow(px, W, H, ex + 96, ty, tag, tag_col, shadow);
+            ty += 10;
         }
-        ty += 14;
+        ty += 4;
 
         /* Status effects (debuffs) */
         sr_draw_text_shadow(px, W, H, tx, ty, "STATUS:", dim, shadow);

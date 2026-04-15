@@ -1,4 +1,4 @@
-/*  sr_menu.h — Stats overlay (dungeon-only).
+/*  sr_menu.h - Stats overlay (dungeon-only).
  *  Single-TU header-only. Depends on sr_app.h, sr_font.h. */
 #ifndef SR_MENU_H
 #define SR_MENU_H

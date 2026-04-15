@@ -199,7 +199,7 @@ public class HullGeometryTests
         var walls = HullGeometry.ComputeExteriorWalls(hull, winSet, 1, 1, Cell, 0.5f, 0);
 
         var diagonals = walls.Where(w => Math.Abs(w.X0 - w.X1) > 0.01f && Math.Abs(w.Z0 - w.Z1) > 0.01f).ToList();
-        Assert.Equal(3, diagonals.Count); // NE, SW, SE remain — NW suppressed
+        Assert.Equal(3, diagonals.Count); // NE, SW, SE remain - NW suppressed
     }
 
     [Fact]
@@ -224,7 +224,7 @@ public class HullGeometryTests
     public void WindowConnector_FillsGapBetweenFlushAndInset()
     {
         // Window at (2,1) facing South. Inside cells at (2,2) and (3,2).
-        // Cell (3,2) is adjacent — its west wall doesn't exist (neighbor (2,2) is inside).
+        // Cell (3,2) is adjacent - its west wall doesn't exist (neighbor (2,2) is inside).
         // But the window face at (2,2) is flush at z=2.0, while (3,2)'s north face is inset.
         // A connector wall should fill the gap at x=4.0 (boundary between cells 2 and 3)
         // from z=2.0 (flush) to z=2.5 (inset).

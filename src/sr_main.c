@@ -1,4 +1,4 @@
-/*  Space Hulks — Dungeon Crawler Engine
+/*  Space Hulks - Dungeon Crawler Engine
  *  Entry point: Sokol app with dungeon scene.
  */
 
@@ -33,7 +33,7 @@
     #endif
 #endif
 
-/* ── Module includes (order matters — header-only, single TU) ────── */
+/* ── Module includes (order matters - header-only, single TU) ────── */
 
 #include "sr_app.h"
 #include "sr_lighting.h"
@@ -86,7 +86,7 @@ static bool ui_button(uint32_t *px, int W, int H, int bx, int by, int bw, int bh
     return clicked;
 }
 
-/* Helper: hoverable row — returns true if row was clicked */
+/* Helper: hoverable row - returns true if row was clicked */
 static bool ui_row_hover(int bx, int by, int bw, int bh, bool *out_hovered) {
     bool hovered = (ui_mouse_x >= bx && ui_mouse_x < bx + bw &&
                     ui_mouse_y >= by && ui_mouse_y < by + bh);
@@ -169,7 +169,7 @@ static void game_pregen_enemy_ship(void) {
                     if (ed->win_faces[gy][gx]) win_count++;
             printf("[pregen] Enemy ship loaded from %s (%dx%d, %d window cells)\n",
                    level_path, dng_state.grid_w, dng_state.grid_h, win_count);
-            /* lvl goes out of scope — JSON data is stack/static, no free needed */
+            /* lvl goes out of scope - JSON data is stack/static, no free needed */
             return;
         }
     }
@@ -201,7 +201,7 @@ static void game_pregen_enemy_ship(void) {
 
 #define SAVE_VERSION 8  /* bumped: added boss mission state */
 
-/*  Save header — fixed-size portion written first.
+/*  Save header - fixed-size portion written first.
  *  After the header, each generated dungeon floor (sr_dungeon) is
  *  written sequentially.  On WASM the whole blob is persisted to
  *  localStorage so it survives page reloads.                         */
@@ -253,9 +253,15 @@ typedef struct {
     bool is_boss_mission;
     bool is_miniboss_mission;
     int  miniboss_type;
+
+    /* Medbay persistent stock */
+    int  medbay_kit_stock;
+
+    /* One-shot flags */
+    bool elem_gift_given;
 } save_header;
 
-/* Variables used by save/load — declared here so they're visible to game_save/game_load */
+/* Variables used by save/load - declared here so they're visible to game_save/game_load */
 static int current_combat_room = -1;
 
 /* ── WASM persistence helpers ────────────────────────────────────── */
@@ -358,6 +364,8 @@ static void game_save(void) {
     hdr.is_boss_mission = current_mission_is_boss;
     hdr.is_miniboss_mission = current_mission_is_miniboss;
     hdr.miniboss_type = current_miniboss_type;
+    hdr.medbay_kit_stock = g_medbay_kit_stock;
+    hdr.elem_gift_given = g_elem_gift_given;
 
     FILE *f = fopen(SAVE_FILE, "wb");
     if (!f) return;
@@ -434,7 +442,7 @@ static bool game_load(void) {
     /* Restore weakness table */
     g_weakness = hdr.weakness;
 
-    /* Restore starmap progress — load structure from JSON, then apply saved state */
+    /* Restore starmap progress - load structure from JSON, then apply saved state */
     if (starmap_load_json(&g_starmap, "levels/starmap.json")) {
         g_starmap.current_node = hdr.starmap_current_node;
         g_starmap.derelicts_visited = hdr.starmap_derelicts_visited;
@@ -460,6 +468,10 @@ static bool game_load(void) {
     current_mission_is_boss = hdr.is_boss_mission;
     current_mission_is_miniboss = hdr.is_miniboss_mission;
     current_miniboss_type = hdr.miniboss_type;
+    g_medbay_kit_stock = hdr.medbay_kit_stock;
+    if (g_medbay_kit_stock < 0) g_medbay_kit_stock = 0;
+    if (g_medbay_kit_stock > MEDBAY_KIT_STOCK_MAX) g_medbay_kit_stock = MEDBAY_KIT_STOCK_MAX;
+    g_elem_gift_given = hdr.elem_gift_given;
     /* Also check starmap node in case save predates this field */
     if (!current_mission_is_boss && g_starmap.current_node >= 0 &&
         g_starmap.current_node < g_starmap.node_count &&
@@ -483,6 +495,7 @@ static bool game_load(void) {
     /* Loading a save means player is past the intro flow */
     mission_briefed = true;
     mission_medbay_done = true;
+    mission_medbay_card_bought = true;
     mission_armory_done = true;
 
     return true;
@@ -517,7 +530,7 @@ static void draw_title_screen(sr_framebuffer *fb_ptr) {
     sr_draw_text_centered(px, W, H, 60, "DRAKE'S VOID", white, shadow);
 
     if (title_confirm_new) {
-        /* Confirm dialog — hides buttons behind it */
+        /* Confirm dialog - hides buttons behind it */
         int dbw = 260, dbh = 55;
         int dbx = W/2 - dbw/2, dby = H/2 - dbh/2;
         for (int ry = dby; ry < dby + dbh && ry < H; ry++)
@@ -847,7 +860,7 @@ static void draw_beam_effect(sr_framebuffer *fb_ptr) {
         }
     }
 
-    /* Scanning line effect — horizontal bright band sweeping down */
+    /* Scanning line effect - horizontal bright band sweeping down */
     if (beam_intensity > 0.3f) {
         int scan_y = (int)(((beam_timer * 3) % H));
         for (int ry = scan_y; ry < scan_y + 3 && ry < H; ry++) {
@@ -1029,6 +1042,11 @@ static int  console_confirm_gx = -1, console_confirm_gy = -1; /* pending console
 static bool chest_overlay_active = false;
 static int  chest_choices[3];        /* 3 elemental card choices */
 static int  chest_gx, chest_gy;     /* position of opened chest */
+static bool chest_is_rare = false;   /* true for miniboss/boss ship chests */
+
+/* Teleporter elemental gift state (defined in sr_scene_ship_hub.h):
+   elem_gift_active, g_elem_gift_given, elem_gift_choices[3],
+   teleporter_offer_elem_gift(). */
 
 static void game_init_ship(void) {
     printf("[game_init_ship] Starting ship initialization\n");
@@ -1112,7 +1130,7 @@ static void game_init_ship(void) {
                 }
             }
 
-            /* Remove invalid stairs — stairs only exist between adjacent floors */
+            /* Remove invalid stairs - stairs only exist between adjacent floors */
             for (int fl = 0; fl < current_ship.num_decks && fl < DNG_MAX_FLOORS; fl++) {
                 if (!dng_state.floor_generated[fl]) continue;
                 sr_dungeon *fld = &dng_state.floors[fl];
@@ -1261,6 +1279,75 @@ static void game_init_ship(void) {
                 }
             }
 
+            /* Guarantee loot chests on JSON-loaded floors. JSON ships do
+               not go through dng_generate so d->chests is empty on load.
+               Target per floor depends on ship size:
+                 small  (num_decks == 1): 1 chest per floor
+                 medium (num_decks == 2): 2 chests per floor
+                 large  (num_decks >= 3): 2 chests per floor as well
+               Runs after boss / miniboss / hallway enemy placement so the
+               filters can avoid any cell that is already occupied. */
+            {
+                int chest_target = (current_ship.num_decks <= 1) ? 1 : 2;
+                for (int deck = 0; deck < current_ship.num_decks && deck < DNG_MAX_FLOORS; deck++) {
+                    if (!dng_state.floor_generated[deck]) continue;
+                    sr_dungeon *dd = &dng_state.floors[deck];
+                    int w = dd->w, h = dd->h;
+
+                    /* Count any chests that already exist on this floor. */
+                    int placed_ch = 0;
+                    for (int cy = 1; cy <= h; cy++)
+                        for (int cx = 1; cx <= w; cx++)
+                            if (dd->chests[cy][cx] != 0) placed_ch++;
+
+                    /* Random room placement, same filters dng_generate uses. */
+                    int rc = dd->room_count;
+                    if (rc > 0) {
+                        int max_attempts = rc * 20;
+                        for (int attempt = 0; attempt < max_attempts && placed_ch < chest_target; attempt++) {
+                            int ri = dng_rng_int(rc);
+                            int cx = dd->room_x[ri] + dng_rng_int(dd->room_w[ri]);
+                            int cy = dd->room_y[ri] + dng_rng_int(dd->room_h[ri]);
+                            if (cx < 1 || cx > w || cy < 1 || cy > h) continue;
+                            if (dd->map[cy][cx] != 0) continue;
+                            if (cx == dd->spawn_gx && cy == dd->spawn_gy) continue;
+                            if (dd->has_up && cx == dd->stairs_gx && cy == dd->stairs_gy) continue;
+                            if (dd->has_down && cx == dd->down_gx && cy == dd->down_gy) continue;
+                            if (dd->consoles[cy][cx] != 0) continue;
+                            if (dd->aliens[cy][cx] != 0) continue;
+                            if (dd->chests[cy][cx] != 0) continue;
+                            dd->chests[cy][cx] = 1;
+                            placed_ch++;
+                        }
+                    }
+
+                    /* Brute-force fallback: scan every room cell for any
+                       valid spot until the target is met. Guarantees the
+                       minimum count as long as the map has open space. */
+                    if (placed_ch < chest_target && rc > 0) {
+                        for (int ri = 0; ri < rc && placed_ch < chest_target; ri++) {
+                            int rx0 = dd->room_x[ri], ry0 = dd->room_y[ri];
+                            int rw = dd->room_w[ri], rh = dd->room_h[ri];
+                            for (int cy = ry0; cy < ry0 + rh && placed_ch < chest_target; cy++)
+                                for (int cx = rx0; cx < rx0 + rw && placed_ch < chest_target; cx++) {
+                                    if (cx < 1 || cx > w || cy < 1 || cy > h) continue;
+                                    if (dd->map[cy][cx] != 0) continue;
+                                    if (cx == dd->spawn_gx && cy == dd->spawn_gy) continue;
+                                    if (dd->has_up && cx == dd->stairs_gx && cy == dd->stairs_gy) continue;
+                                    if (dd->has_down && cx == dd->down_gx && cy == dd->down_gy) continue;
+                                    if (dd->consoles[cy][cx] != 0) continue;
+                                    if (dd->aliens[cy][cx] != 0) continue;
+                                    if (dd->chests[cy][cx] != 0) continue;
+                                    dd->chests[cy][cx] = 1;
+                                    placed_ch++;
+                                }
+                        }
+                    }
+                    printf("[chest] Floor %d: placed %d/%d chests (ship size %d decks)\n",
+                           deck, placed_ch, chest_target, current_ship.num_decks);
+                }
+            }
+
             /* Re-init player at the JSON floor's spawn point */
             dng_player_init(&dng_state.player,
                             dng_state.dungeon->spawn_gx,
@@ -1335,7 +1422,7 @@ static void game_init_ship(void) {
             }
         }
 
-        /* Then populate aliens (officers + enemies) — they avoid consoles */
+        /* Then populate aliens (officers + enemies) - they avoid consoles */
         ship_populate_deck(&current_ship, dd, deck, dd->room_count, rooms);
     }
 
@@ -1381,7 +1468,7 @@ static void mission_complete_return_to_hub(int base_reward, const char *msg, boo
     g_run_stats.sectors_visited++;
 
     /* Mark first mission complete (enables starmap, changes captain dialog) */
-    /* No auto-heal — player must visit medbay */
+    /* No auto-heal - player must visit medbay */
     medbay_used = false; /* allow one medbay heal between missions */
 
     /* Populate mission summary */
@@ -1406,7 +1493,7 @@ static void mission_complete_return_to_hub(int base_reward, const char *msg, boo
         current_mission_is_miniboss = false;
         current_map_boss_done = true;
 
-        /* Demo ends after first boss — show epilogue */
+        /* Demo ends after first boss - show epilogue */
         epilogue_is_win = true;
         intro_char_idx = 0;
         intro_timer = 0;
@@ -1456,7 +1543,7 @@ static void handle_combat_end(void) {
         }
 
         if (!combat.player_won) {
-            /* Player died — game over, delete save, show loss epilogue */
+            /* Player died - game over, delete save, show loss epilogue */
             current_ship.boarding_active = false;
             game_delete_save();
             epilogue_is_win = false;
@@ -1467,9 +1554,9 @@ static void handle_combat_end(void) {
             return;
         }
 
-        /* Player ship never takes damage — destroyed check removed */
+        /* Player ship never takes damage - destroyed check removed */
 
-        /* Check if we just killed a boss — instant mission complete */
+        /* Check if we just killed a boss - instant mission complete */
         if (combat.player_won && current_mission_is_boss) {
             bool boss_killed = false;
             for (int i = 0; i < combat.enemy_count; i++) {
@@ -1543,7 +1630,7 @@ static void check_random_encounter(void) {
         /* Auto-save on each step */
         game_save();
 
-        /* Tick enemy AI — enemies move every 2 player steps */
+        /* Tick enemy AI - enemies move every 2 player steps */
         static int player_step_count = 0;
         player_step_count++;
         if (player_step_count >= 2) {
@@ -1562,7 +1649,7 @@ static void check_random_encounter(void) {
                 if (local_room >= 0 && local_room < dng_state.dungeon->room_count)
                     current_combat_room = dng_state.dungeon->room_ship_idx[local_room];
 
-                /* ship_tick_turn(&current_ship); — ship simulation disabled */
+                /* ship_tick_turn(&current_ship); - ship simulation disabled */
             }
 
             combat_init(&combat, selected_class, dng_state.current_floor, alien);
@@ -1576,6 +1663,8 @@ static void check_random_encounter(void) {
             g_run_stats.chests_found++;
             chest_gx = p->gx;
             chest_gy = p->gy;
+            /* Miniboss / boss ships yield rare rewards. */
+            chest_is_rare = current_mission_is_miniboss || current_mission_is_boss;
             /* Generate 3 unique elemental card choices */
             int elems[] = { CARD_ICE, CARD_ACID, CARD_FIRE, CARD_LIGHTNING };
             for (int i = 3; i > 0; i--) {
@@ -1586,7 +1675,7 @@ static void check_random_encounter(void) {
             goto skip_console; /* block further interaction */
         }
 
-        /* Check for console interaction — sentinel defense combat */
+        /* Check for console interaction - sentinel defense combat */
         uint8_t con_type = dng_state.dungeon->consoles[p->gy][p->gx];
         if (con_type != 0 && current_ship.initialized && current_ship.boarding_active) {
             /* First time stepping on this console: bounce back and ask for confirm */
@@ -1610,7 +1699,7 @@ static void check_random_encounter(void) {
             }
             console_confirm_gx = -1;
             console_confirm_gy = -1;
-            /* Block console access if enemies remain in this room — bounce back */
+            /* Block console access if enemies remain in this room - bounce back */
             int con_room = dng_room_at(dng_state.dungeon, p->gx, p->gy);
             if (con_room >= 0) {
                 sr_dungeon *dd = dng_state.dungeon;
@@ -1643,7 +1732,7 @@ static void check_random_encounter(void) {
             /* Remove the console from the map */
             dng_state.dungeon->consoles[p->gy][p->gx] = 0;
 
-            /* Teleporter console — escape back to hub */
+            /* Teleporter console - escape back to hub */
             if (con_type == ROOM_TELEPORTER) {
                 current_ship.boarding_active = false;
                 int reward = 5 + player_sector * 3;
@@ -1670,18 +1759,18 @@ static void check_random_encounter(void) {
                     /* Sentinel defense combat based on room type */
                     combat_init(&combat, selected_class, dng_state.current_floor, 0);
 
-                    /* Terminal sentinels — hiveguards serve as robotic defenders */
-                    int num_drones = 1;
-                    int drone_type = ENEMY_HIVEGUARD;
+                    /* Terminal sentinels - every terminal has at least 2
+                       sentinels. Sentinels are BRUTE-strength (HP/dmg from
+                       the BRUTE template); high-priority rooms get a 3rd. */
+                    int num_drones = 2;
+                    int drone_type = ENEMY_BRUTE;
                     switch (rm->type) {
-                        case ROOM_BRIDGE:  num_drones = 2; break;
-                        case ROOM_REACTOR: num_drones = 2; break;
-                        case ROOM_WEAPONS: num_drones = 2; break;
-                        case ROOM_ENGINES: num_drones = 1; break;
-                        case ROOM_SHIELDS: num_drones = 1; break;
-                        case ROOM_CARGO:   num_drones = 1; break;
+                        case ROOM_BRIDGE:  num_drones = 3; break;
+                        case ROOM_REACTOR: num_drones = 3; break;
+                        case ROOM_WEAPONS: num_drones = 3; break;
                         default: break;
                     }
+                    if (num_drones < 2) num_drones = 2;
 
                     combat.enemy_count = num_drones;
                     for (int i = 0; i < num_drones; i++) {
@@ -1694,7 +1783,7 @@ static void check_random_encounter(void) {
                         combat.enemies[i].alive = true;
                     }
 
-                    /* ship_tick_turn(&current_ship); — ship simulation disabled */
+                    /* ship_tick_turn(&current_ship); - ship simulation disabled */
                     app_state = STATE_COMBAT;
                     game_save();
                 }
@@ -1802,6 +1891,9 @@ static void draw_class_select(sr_framebuffer *fb_ptr) {
             player_scrap = 30;
             player_biomass = 0;
             memset(player_consumables, 0, sizeof(player_consumables));
+            g_medbay_kit_stock = MEDBAY_KIT_STOCK_MAX;
+            g_elem_gift_given = false;
+            elem_gift_active = false;
             player_sector = 0;
             captain_briefing_page = 0;
             player_samples = 0;
@@ -1816,7 +1908,11 @@ static void draw_class_select(sr_framebuffer *fb_ptr) {
             if (skip_intro) {
                 mission_briefed = true;
                 mission_medbay_done = true;
+                mission_medbay_card_bought = true;
                 mission_armory_done = true;
+                /* Quick start: hand the player the onboarding biomass up
+                   front since the medbay tutorial is being skipped. */
+                player_biomass = 150;
                 hub_generate(&g_hub);
                 memset(&g_dialog, 0, sizeof(g_dialog));
                 snprintf(g_dialog.speaker, sizeof(g_dialog.speaker), "CPT HARDEN");
@@ -1829,6 +1925,7 @@ static void draw_class_select(sr_framebuffer *fb_ptr) {
             } else {
                 mission_briefed = false;
                 mission_medbay_done = false;
+                mission_medbay_card_bought = false;
                 mission_armory_done = false;
                 medbay_used = false;
                 intro_char_idx = 0;
@@ -1977,7 +2074,7 @@ static void draw_pause_menu(sr_framebuffer *fb_ptr) {
                 if (audio_voices[i].active)
                     audio_voices[i].volume *= scale;
         } else {
-            /* Was muted — restart at new volume */
+            /* Was muted - restart at new volume */
             for (int i = 0; i < SR_AUDIO_MAX_VOICES; i++)
                 if (audio_voices[i].active)
                     audio_voices[i].volume = settings_master_vol * 0.4f;
@@ -2243,7 +2340,7 @@ static void init(void) {
     stextures[STEX_BRUTE]     = sr_texture_load("assets/sprites/brute.png");
     stextures[STEX_SPITTER]   = sr_texture_load("assets/sprites/spitter.png");
     stextures[STEX_HIVEGUARD] = sr_texture_load("assets/sprites/hiveguard.png");
-    /* Evolved tier 2 — load specific sprites, fall back to tier 1 */
+    /* Evolved tier 2 - load specific sprites, fall back to tier 1 */
     stextures[STEX_STALKER]      = sr_texture_load("assets/sprites/jaycook/By-Tor.png");
     if (!stextures[STEX_STALKER].pixels) stextures[STEX_STALKER] = sr_texture_load("assets/sprites/lurker.png");
     stextures[STEX_MAULER]       = sr_texture_load("assets/sprites/jaycook/Xenodragon.png");
@@ -2400,17 +2497,14 @@ static void dispatch_dialog_action(int action) {
     if (app_state != STATE_SHIP_HUB) return;
     switch (action) {
         case DIALOG_ACTION_STARMAP:
-            if (g_hub.mission_available) {
-                snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "NEUTRALIZE THE ENEMY SHIP FIRST");
-                g_hub.hud_msg_timer = 90;
-            } else {
-                if (current_map_boss_done) { player_starmap++; current_map_boss_done = false; g_starmap.active = false; }
-                if (!g_starmap.active) {
-                    dng_rng_seed((uint32_t)(player_sector * 1337 + 42 + player_starmap * 9999));
-                    starmap_generate_or_load(&g_starmap, player_sector);
-                }
-                app_state = STATE_STARMAP;
+            /* Always allow viewing the starmap - jumping is blocked inside
+               the starmap scene when g_hub.mission_available is true. */
+            if (current_map_boss_done) { player_starmap++; current_map_boss_done = false; g_starmap.active = false; }
+            if (!g_starmap.active) {
+                dng_rng_seed((uint32_t)(player_sector * 1337 + 42 + player_starmap * 9999));
+                starmap_generate_or_load(&g_starmap, player_sector);
             }
+            app_state = STATE_STARMAP;
             break;
         case DIALOG_ACTION_SHOP:
             dng_rng_seed((uint32_t)(player_sector * 7777 + 123));
@@ -2423,8 +2517,13 @@ static void dispatch_dialog_action(int action) {
             if (!mission_medbay_done && mission_briefed && !mission_armory_done) {
                 g_player.hp = g_player.hp_max;
                 mission_medbay_done = true;
-                snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "VITALS LOGGED. YOU'RE CLEAR.");
-                g_hub.hud_msg_timer = 90;
+                /* Onboarding: Vasquez gives the player 150 biomass to spend
+                   in the medbay shop, teaching them about the secondary
+                   currency. */
+                player_biomass += 150;
+                snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg),
+                         "VASQUEZ: TAKE 150 BIOMASS. SPEND IT IN MY SHOP.");
+                g_hub.hud_msg_timer = 120;
             } else {
                 if (!mission_medbay_done && mission_briefed) mission_medbay_done = true;
                 dng_rng_seed((uint32_t)(player_sector * 5555 + 456 + player_biomass * 13));
@@ -2440,8 +2539,12 @@ static void dispatch_dialog_action(int action) {
             app_state = STATE_SHOP;
             break;
         case DIALOG_ACTION_TELEPORT:
-            if (g_hub.mission_available)
-                hub_show_teleport_confirm();
+            if (g_hub.mission_available) {
+                if (current_mission_is_boss && !g_elem_gift_given)
+                    teleporter_offer_elem_gift();
+                else
+                    hub_show_teleport_confirm();
+            }
             break;
         case DIALOG_ACTION_TELEPORT_GO:
             if (g_hub.mission_available) {
@@ -2540,6 +2643,9 @@ static void frame(void) {
         }
         draw_combat_scene(&fb);
     } else if (app_state == STATE_SHIP_HUB) {
+        /* Push hub minimap below the top-right DECK button so they don't
+           overlap. The button sits at y=26..38, leave a 2px gap. */
+        dng_minimap_y = 42;
         dng_player_update(&g_hub.player);
         draw_starfield(&fb, &g_hub.player);
         hub_draw_scene(&fb);
@@ -2557,6 +2663,30 @@ static void frame(void) {
         }
         if (deck_view_active)
             draw_deck_viewer(fb.color, fb.width, fb.height);
+        if (elem_gift_active) {
+            int W = fb.width, H = fb.height;
+            uint32_t *px = fb.color;
+            uint32_t shadow = 0xFF000000;
+            /* Darken */
+            for (int i = 0; i < W * H; i++) {
+                uint32_t c = px[i];
+                px[i] = 0xFF000000 | ((((c>>16)&0xFF)/3)<<16) |
+                        ((((c>>8)&0xFF)/3)<<8) | (((c)&0xFF)/3);
+            }
+            sr_draw_text_centered(px, W, H,  8, "TELEPORTER TECH",   0xFFAACCFF, shadow);
+            sr_draw_text_centered(px, W, H, 20, "I SCAVENGED THIS OFF A WRECK.",   0xFFCCCCCC, shadow);
+            sr_draw_text_centered(px, W, H, 30, "PICK ONE. IT HITS HARDER AGAINST",0xFFCCCCCC, shadow);
+            sr_draw_text_centered(px, W, H, 40, "CERTAIN ENEMIES. TAP TO CHECK.",  0xFFCCCCCC, shadow);
+
+            int cw = 72, ch = 80, cgap = 12;
+            int ctotal = 3 * (cw + cgap) - cgap;
+            int cx0 = (W - ctotal) / 2, cy0 = 56;
+            for (int i = 0; i < 3; i++) {
+                int cx = cx0 + i * (cw + cgap);
+                combat_draw_card_content(px, W, H, cx, cy0, cw, ch,
+                                         elem_gift_choices[i], false, shadow, -1);
+            }
+        }
         if (g_dialog.active)
             draw_dialog(fb.color, fb.width, fb.height);
         if (g_kit.active)
@@ -2574,6 +2704,7 @@ static void frame(void) {
         (void)vp;
         sr_fog_disable();
         dng_alien_exterior = true; /* enemy ship uses alien exterior textures */
+        dng_minimap_y = 28; /* default position (no DECK button stacked above) */
 
         {
             static bool _dng_first_frame = true;
@@ -2751,7 +2882,7 @@ static void frame(void) {
                 sr_dungeon *md = dng_state.dungeon;
                 int mscale = 2;
                 int mmx = fb.width - md->w * mscale - 4;
-                int mmy = 28;
+                int mmy = dng_minimap_y;
                 for (int my = 1; my <= md->h; my++) {
                     for (int mx = 1; mx <= md->w; mx++) {
                         if (md->map[my][mx] == 1) continue;
@@ -2800,7 +2931,7 @@ static void frame(void) {
             /* Redraw player dot + FOV cone on top of recolored cells */
             draw_minimap_player(&fb);
 
-            /* Console label — show subsystem name when facing a console */
+            /* Console label - show subsystem name when facing a console */
             {
                 dng_player *rp = &dng_state.player;
                 int look_gx = rp->gx + dng_dir_dx[rp->dir];
@@ -2865,20 +2996,10 @@ static void frame(void) {
                                     hx, hy, floorbuf, dim, shadow);
                 hy += 10;
 
-                /* Count total terminals across all generated floors */
-                int total_terminals = 0;
-                for (int fl = 0; fl < current_ship.num_decks && fl < DNG_MAX_FLOORS; fl++) {
-                    if (!dng_state.floor_generated[fl]) continue;
-                    sr_dungeon *dd = &dng_state.floors[fl];
-                    for (int gy2 = 1; gy2 <= dd->h; gy2++)
-                        for (int gx2 = 1; gx2 <= dd->w; gx2++)
-                            if (dd->consoles[gy2][gx2] != 0) total_terminals++;
-                }
-                total_terminals += current_ship.terminals_destroyed; /* add already destroyed */
-
                 char termbuf[32];
                 snprintf(termbuf, sizeof(termbuf), "TERMINALS %d/%d",
-                         current_ship.terminals_destroyed, total_terminals);
+                         current_ship.terminals_destroyed,
+                         current_ship.terminals_required);
                 sr_draw_text_shadow(fb.color, fb.width, fb.height,
                                     hx, hy, termbuf, dim, shadow);
                 hy += 10;
@@ -2932,8 +3053,13 @@ static void frame(void) {
                 px[i] = 0xFF000000 | ((((c>>16)&0xFF)/3)<<16) |
                         ((((c>>8)&0xFF)/3)<<8) | (((c)&0xFF)/3);
             }
-            sr_draw_text_centered(px, W, H, 20, "CHEST FOUND!", 0xFF44CC44, shadow);
-            sr_draw_text_centered(px, W, H, 34, "PICK AN ELEMENTAL CARD", 0xFFCCCCCC, shadow);
+            if (chest_is_rare) {
+                sr_draw_text_centered(px, W, H, 20, "RARE CACHE!", 0xFFFFDD44, shadow);
+                sr_draw_text_centered(px, W, H, 34, "PICK AN ELEMENTAL CARD", 0xFFFFE088, shadow);
+            } else {
+                sr_draw_text_centered(px, W, H, 20, "CHEST FOUND!", 0xFF44CC44, shadow);
+                sr_draw_text_centered(px, W, H, 34, "PICK AN ELEMENTAL CARD", 0xFFCCCCCC, shadow);
+            }
             /* 3 card choices */
             int cw = 72, ch = 80, cgap = 12;
             int ctotal = 3 * (cw + cgap) - cgap;
@@ -2942,6 +3068,8 @@ static void frame(void) {
                 int cx = cx0 + i * (cw + cgap);
                 combat_draw_card_content(px, W, H, cx, cy0, cw, ch,
                                          chest_choices[i], false, shadow, -1);
+                if (chest_is_rare)
+                    combat_draw_rare_outline(px, W, H, cx, cy0, cw, ch);
             }
             /* SKIP button */
             int skip_x = (W - 50) / 2, skip_y = cy0 + ch + 14;
@@ -3022,7 +3150,7 @@ static void frame(void) {
             /* Trigger pending action (same as keyboard path) */
             if (action != DIALOG_ACTION_NONE) {
                 g_dialog.pending_action = DIALOG_ACTION_NONE;
-                /* Re-dispatch — set a flag for the main event handler */
+                /* Re-dispatch - set a flag for the main event handler */
                 g_dialog_action_pending = action;
             }
         }
@@ -3172,17 +3300,35 @@ static void handle_screen_tap(float sx, float sy) {
     }
 
     if (app_state == STATE_SHIP_HUB) {
+        if (elem_gift_active) {
+            /* Pick one of the three free elemental cards. */
+            int cw = 72, ch = 80, cgap = 12;
+            int ctotal = 3 * (cw + cgap) - cgap;
+            int cx0 = (FB_WIDTH - ctotal) / 2, cy0 = 56;
+            for (int i = 0; i < 3; i++) {
+                int cx = cx0 + i * (cw + cgap);
+                if (fx >= cx && fx < cx + cw && fy >= cy0 && fy < cy0 + ch) {
+                    if (g_player.persistent_deck_count < COMBAT_DECK_MAX)
+                        g_player.persistent_deck[g_player.persistent_deck_count++] = elem_gift_choices[i];
+                    elem_gift_active = false;
+                    g_elem_gift_given = true;
+                    hub_show_teleport_confirm();
+                    return;
+                }
+            }
+            return;
+        }
         if (deck_view_active) {
             /* Close button handled by ui_button in draw_deck_viewer via ui_mouse_clicked */
             return;
         }
         if (g_kit.active) {
-            /* Kit display overlay — handle card clicks and close */
+            /* Kit display overlay - handle card clicks and close */
             int kit_bx = 10, kit_by = 10;
             int cw = 50, ch = 66, pad = 6;
             int cols = 7;
             if (g_kit.detail_idx >= 0) {
-                /* Detail view — click anywhere to close detail */
+                /* Detail view - click anywhere to close detail */
                 g_kit.detail_idx = -1;
             } else {
                 /* Check CLOSE button */
@@ -3206,7 +3352,7 @@ static void handle_screen_tap(float sx, float sy) {
         }
         if (g_dialog.active) {
             if (g_dialog.confirm_mode) {
-                /* Confirm dialog — advance teletype first, then show YES/NO */
+                /* Confirm dialog - advance teletype first, then show YES/NO */
                 if (!g_dialog.tt_all_done) {
                     dialog_teletype_advance();
                     return;
@@ -3253,7 +3399,7 @@ static void handle_screen_tap(float sx, float sy) {
                 }
                 return;
             }
-            /* Normal dialog — first click finishes teletype, second click dismisses */
+            /* Normal dialog - first click finishes teletype, second click dismisses */
             if (!g_dialog.tt_all_done) {
                 g_dialog.tt_all_done = true;
                 g_dialog.tt_timer = 9999;
@@ -3285,22 +3431,19 @@ static void handle_screen_tap(float sx, float sy) {
                     case DIALOG_ACTION_STARMAP:
                         printf("[STARMAP] mission_available=%d boss_done=%d sector=%d\n",
                                g_hub.mission_available, current_map_boss_done, player_sector);
-                        if (g_hub.mission_available) {
-                            printf("[STARMAP] BLOCKED: mission active\n");
-                            snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "NEUTRALIZE THE ENEMY SHIP FIRST");
-                            g_hub.hud_msg_timer = 90;
-                        } else {
-                            if (current_map_boss_done) {
-                                player_starmap++;
-                                current_map_boss_done = false;
-                                g_starmap.active = false; /* force new map for next sector */
-                            }
-                            if (!g_starmap.active) {
-                                dng_rng_seed((uint32_t)(player_sector * 1337 + 42 + player_starmap * 9999));
-                                starmap_generate_or_load(&g_starmap, player_sector);
-                            }
-                            app_state = STATE_STARMAP;
+                        /* Always allow viewing the starmap. The JUMP button
+                           inside the starmap scene is hidden while a mission
+                           is active. */
+                        if (current_map_boss_done) {
+                            player_starmap++;
+                            current_map_boss_done = false;
+                            g_starmap.active = false; /* force new map for next sector */
                         }
+                        if (!g_starmap.active) {
+                            dng_rng_seed((uint32_t)(player_sector * 1337 + 42 + player_starmap * 9999));
+                            starmap_generate_or_load(&g_starmap, player_sector);
+                        }
+                        app_state = STATE_STARMAP;
                         break;
                     case DIALOG_ACTION_SHOP:
                         dng_rng_seed((uint32_t)(player_sector * 7777 + 123));
@@ -3327,8 +3470,12 @@ static void handle_screen_tap(float sx, float sy) {
                         break;
                     }
                     case DIALOG_ACTION_TELEPORT:
-                        if (g_hub.mission_available)
-                            hub_show_teleport_confirm();
+                        if (g_hub.mission_available) {
+                            if (current_mission_is_boss && !g_elem_gift_given)
+                                teleporter_offer_elem_gift();
+                            else
+                                hub_show_teleport_confirm();
+                        }
                         break;
                     case DIALOG_ACTION_TELEPORT_GO:
                         if (g_hub.mission_available) {
@@ -3346,11 +3493,14 @@ static void handle_screen_tap(float sx, float sy) {
                         break;
                     case DIALOG_ACTION_HEAL:
                         if (!mission_medbay_done && mission_briefed && !mission_armory_done) {
-                            /* First visit during prep: free heal + check off objective */
+                            /* First visit during prep: free heal + 150 biomass +
+                               new objective for the medbay shop. */
                             g_player.hp = g_player.hp_max;
                             mission_medbay_done = true;
-                            snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "VITALS LOGGED. YOU'RE CLEAR.");
-                            g_hub.hud_msg_timer = 90;
+                            player_biomass += 150;
+                            snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg),
+                                     "VASQUEZ: TAKE 150 BIOMASS. SPEND IT IN MY SHOP.");
+                            g_hub.hud_msg_timer = 120;
                         } else {
                             /* Open medbay shop */
                             if (!mission_medbay_done && mission_briefed) mission_medbay_done = true;
@@ -3372,20 +3522,21 @@ static void handle_screen_tap(float sx, float sy) {
         sr_dungeon *hd = &g_hub.dungeon;
         int mscale = 2;
         int mmx = FB_WIDTH - hd->w * mscale - 4;
-        int mmy = 28;  /* hub minimap matches dungeon minimap position */
+        int mmy = dng_minimap_y;  /* hub minimap matches dungeon minimap position */
         int mmw = hd->w * mscale;
         int mmh = hd->h * mscale;
         if (fx >= mmx && fx <= mmx + mmw && fy >= mmy && fy <= mmy + mmh) {
             dng_expanded_map = true;
             return;
         }
-        /* Tapping elsewhere does nothing — interaction is via buttons in HUD */
+        /* Tapping elsewhere does nothing - interaction is via buttons in HUD */
         return;
     }
 
     if (app_state == STATE_STARMAP) {
         if (g_starmap.confirm_active) return; /* clicks handled by ui_button in draw */
-        /* Click on selectable nodes — select or open confirm */
+        /* Click on selectable nodes - select; only open confirm if the
+           player is free to jump (no active mission). */
         starmap_node *cur = &g_starmap.nodes[g_starmap.current_node];
         for (int c = 0; c < cur->next_count; c++) {
             int target = cur->next[c];
@@ -3393,8 +3544,8 @@ static void handle_screen_tap(float sx, float sy) {
             starmap_node *nd = &g_starmap.nodes[target];
             float ddx = fx - nd->x, ddy = fy - nd->y;
             if (ddx * ddx + ddy * ddy <= 14 * 14) {
-                if (g_starmap.cursor == c) {
-                    /* Already selected — open confirm dialog */
+                if (g_starmap.cursor == c && !g_hub.mission_available) {
+                    /* Already selected and no blocking mission - open confirm */
                     g_starmap.confirm_active = true;
                     g_starmap.confirm_target = target;
                 } else {
@@ -3407,7 +3558,7 @@ static void handle_screen_tap(float sx, float sy) {
     }
 
     if (app_state == STATE_COMBAT) {
-        /* Result screen — tap anywhere */
+        /* Result screen - tap anywhere */
         if (combat.phase == CPHASE_RESULT) {
             handle_combat_end();
             return;
@@ -3671,6 +3822,11 @@ static void event(const sapp_event *ev) {
                 player_persist_init(selected_class);
                 weakness_init((uint32_t)(time(NULL) ^ (selected_class * 31337)));
                 player_scrap = 30;
+                player_biomass = 0;
+                memset(player_consumables, 0, sizeof(player_consumables));
+                g_medbay_kit_stock = MEDBAY_KIT_STOCK_MAX;
+                g_elem_gift_given = false;
+                elem_gift_active = false;
                 player_sector = 0;
                 captain_briefing_page = 0;
                 player_samples = 0;
@@ -3683,7 +3839,11 @@ static void event(const sapp_event *ev) {
                 if (skip_intro) {
                     mission_briefed = true;
                     mission_medbay_done = true;
+                    mission_medbay_card_bought = true;
                     mission_armory_done = true;
+                    /* Quick start: hand the player the onboarding biomass
+                       up front since the medbay tutorial is being skipped. */
+                    player_biomass = 150;
                     hub_generate(&g_hub);
                     memset(&g_dialog, 0, sizeof(g_dialog));
                     snprintf(g_dialog.speaker, sizeof(g_dialog.speaker), "CPT HARDEN");
@@ -3698,6 +3858,7 @@ static void event(const sapp_event *ev) {
                 } else {
                     mission_briefed = false;
                     mission_medbay_done = false;
+                    mission_medbay_card_bought = false;
                     mission_armory_done = false;
                     medbay_used = false;
                     intro_char_idx = 0;
@@ -3850,21 +4011,19 @@ static void event(const sapp_event *ev) {
                             break;
                         }
                         case DIALOG_ACTION_STARMAP:
-                            if (g_hub.mission_available) {
-                                snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "INVESTIGATE THE DERELICT FIRST");
-                                g_hub.hud_msg_timer = 90;
-                            } else {
-                                if (current_map_boss_done) {
-                                    player_starmap++;
-                                    current_map_boss_done = false;
-                                    g_starmap.active = false;
-                                }
-                                if (!g_starmap.active) {
-                                    dng_rng_seed((uint32_t)(player_sector * 1337 + 42 + player_starmap * 9999));
-                                    starmap_generate_or_load(&g_starmap, player_sector);
-                                }
-                                app_state = STATE_STARMAP;
+                            /* Always allow viewing the starmap. The JUMP
+                               button inside the starmap scene is hidden
+                               while a mission is active. */
+                            if (current_map_boss_done) {
+                                player_starmap++;
+                                current_map_boss_done = false;
+                                g_starmap.active = false;
                             }
+                            if (!g_starmap.active) {
+                                dng_rng_seed((uint32_t)(player_sector * 1337 + 42 + player_starmap * 9999));
+                                starmap_generate_or_load(&g_starmap, player_sector);
+                            }
+                            app_state = STATE_STARMAP;
                             break;
                         case DIALOG_ACTION_SHOP:
                             dng_rng_seed((uint32_t)(player_sector * 7777 + 123));
@@ -3890,8 +4049,12 @@ static void event(const sapp_event *ev) {
                             break;
                         }
                         case DIALOG_ACTION_TELEPORT:
-                            if (g_hub.mission_available)
-                                hub_show_teleport_confirm();
+                            if (g_hub.mission_available) {
+                                if (current_mission_is_boss && !g_elem_gift_given)
+                                    teleporter_offer_elem_gift();
+                                else
+                                    hub_show_teleport_confirm();
+                            }
                             break;
                         case DIALOG_ACTION_TELEPORT_GO:
                             if (g_hub.mission_available) {
@@ -3910,8 +4073,10 @@ static void event(const sapp_event *ev) {
                             if (!mission_medbay_done && mission_briefed && !mission_armory_done) {
                                 g_player.hp = g_player.hp_max;
                                 mission_medbay_done = true;
-                                snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg), "VITALS LOGGED. YOU'RE CLEAR.");
-                                g_hub.hud_msg_timer = 90;
+                                player_biomass += 150;
+                                snprintf(g_hub.hud_msg, sizeof(g_hub.hud_msg),
+                                         "VASQUEZ: TAKE 150 BIOMASS. SPEND IT IN MY SHOP.");
+                                g_hub.hud_msg_timer = 120;
                             } else {
                                 if (!mission_medbay_done && mission_briefed) mission_medbay_done = true;
                                 dng_rng_seed((uint32_t)(player_sector * 5555 + 456 + player_biomass * 13));
@@ -3952,14 +4117,14 @@ static void event(const sapp_event *ev) {
                 int look_gy = g_hub.player.gy + dng_dir_dz[g_hub.player.dir];
                 int npc = hub_npc_at(look_gx, look_gy);
                 if (npc >= 0) {
-                    /* Facing an NPC — figure out room action for this NPC's room */
+                    /* Facing an NPC - figure out room action for this NPC's room */
                     int npc_room = g_hub.crew[npc].room;
                     int action = DIALOG_ACTION_NONE;
                     if (npc_room >= 0 && npc_room < g_hub.dungeon.room_count)
                         action = hub_room_action_for_type(g_hub.room_types[npc_room]);
                     hub_start_dialog(npc, action);
                 } else {
-                    /* No NPC — check room action directly */
+                    /* No NPC - check room action directly */
                     int room_idx = hub_room_at_pos(g_hub.player.gx, g_hub.player.gy);
                     if (room_idx >= 0) {
                         int action = hub_room_action_for_type(g_hub.room_types[room_idx]);
@@ -4023,13 +4188,16 @@ static void event(const sapp_event *ev) {
             app_state = STATE_SHIP_HUB;
         } else if (ev->key_code == SAPP_KEYCODE_ENTER || ev->key_code == SAPP_KEYCODE_SPACE) {
             if (!g_starmap.confirm_active) {
-                /* Open confirm dialog */
-                starmap_node *cur = &g_starmap.nodes[g_starmap.current_node];
-                if (cur->next_count > 0 && g_starmap.cursor >= 0 && g_starmap.cursor < cur->next_count) {
-                    int next = cur->next[g_starmap.cursor];
-                    if (next >= 0 && next < g_starmap.node_count) {
-                        g_starmap.confirm_active = true;
-                        g_starmap.confirm_target = next;
+                /* Open confirm dialog - only if the player is free to jump
+                   (no active mission). */
+                if (!g_hub.mission_available) {
+                    starmap_node *cur = &g_starmap.nodes[g_starmap.current_node];
+                    if (cur->next_count > 0 && g_starmap.cursor >= 0 && g_starmap.cursor < cur->next_count) {
+                        int next = cur->next[g_starmap.cursor];
+                        if (next >= 0 && next < g_starmap.node_count) {
+                            g_starmap.confirm_active = true;
+                            g_starmap.confirm_target = next;
+                        }
                     }
                 }
             } else {

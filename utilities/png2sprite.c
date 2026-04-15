@@ -1,4 +1,4 @@
-/* png2sprite.c — Convert 16x16 PNGs to ABGR C arrays for sr_sprites.h
+/* png2sprite.c - Convert 16x16 PNGs to ABGR C arrays for sr_sprites.h
    Build: cc -o png2sprite png2sprite.c -I ../third_party -lm
    Run:   ./png2sprite
 */

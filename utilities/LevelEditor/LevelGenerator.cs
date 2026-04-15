@@ -71,7 +71,7 @@ public static class LevelGenerator
         int roomMinW = w <= 20 ? 3 : w <= 40 ? 4 : 5;
         int roomMaxW = w <= 20 ? 4 : w <= 40 ? 6 : 8;
 
-        // Build unique room type pool — mandatory first, then shuffled optional
+        // Build unique room type pool - mandatory first, then shuffled optional
         var typePool = new List<RoomType> { RoomType.Bridge, RoomType.Engines, RoomType.Weapons };
         var optional = new List<RoomType> {
             RoomType.Shields, RoomType.Reactor, RoomType.Medbay,

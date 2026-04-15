@@ -1,4 +1,4 @@
-# StarRaster — CPU Software Rasterizer
+# StarRaster - CPU Software Rasterizer
 
 A high-performance CPU-based rasterizing renderer written in C, using Sokol for cross-platform display, with first-class WebAssembly support.
 
@@ -10,7 +10,7 @@ A high-performance CPU-based rasterizing renderer written in C, using Sokol for 
 
 - **Total control**: No GPU driver bugs, no shader compilation stalls, no vendor-specific quirks. You own every pixel.
 - **Determinism**: Bit-exact rendering across every platform. Critical for tooling, testing, and reproducibility.
-- **Portability**: Runs anywhere a CPU exists — embedded, headless servers, CI pipelines, old hardware with no GPU.
+- **Portability**: Runs anywhere a CPU exists - embedded, headless servers, CI pipelines, old hardware with no GPU.
 - **WebAssembly**: WASM + SIMD is now mature. A well-optimized CPU rasterizer in C compiles to WASM and runs in any browser without WebGPU/WebGL dependencies for the core logic.
 - **Educational and artistic value**: Full understanding of the pipeline. Enables non-standard rendering techniques (voxels, SDF, custom AA) without fighting a GPU abstraction.
 - **Latency**: No GPU upload/sync overhead for small scenes. CPU rendering can be lower latency for simple workloads.
@@ -66,7 +66,7 @@ A high-performance CPU-based rasterizing renderer written in C, using Sokol for 
 
 Scanline rasterizers are the classic approach, but **edge function / half-space rasterization** is the modern choice for CPU renderers because:
 
-- Naturally parallelizable — each pixel is an independent test
+- Naturally parallelizable - each pixel is an independent test
 - Maps perfectly to SIMD (test 4/8/16 pixels at once)
 - No edge-tracking state, no special cases for horizontal edges
 - Used by Larrabee, llvmpipe, SwiftShader, and every serious CPU rasterizer since ~2009
@@ -84,7 +84,7 @@ bool inside = (edge01 | edge12 | edge20) >= 0; // all positive = inside (CW wind
 
 Floating-point is fine for vertex transforms, but rasterization benefits from **fixed-point**:
 
-- Integer edge functions are exact — no precision issues at triangle edges
+- Integer edge functions are exact - no precision issues at triangle edges
 - Faster on some architectures (especially WASM)
 - Sub-pixel precision with 8.4 or 12.4 fixed-point formats (matching D3D/GL spec: 8 fractional bits)
 - Avoids costly float-to-int conversions in the inner loop
@@ -111,7 +111,7 @@ Why 8x8:
 
 Benefits:
 - **Cache locality**: Each tile's framebuffer + depth fits in L1
-- **Parallelism**: Tiles are independent — trivially multi-threaded
+- **Parallelism**: Tiles are independent - trivially multi-threaded
 - **Early rejection**: Skip tiles entirely if a triangle doesn't overlap
 - **Hierarchical culling**: Test tile corners against edge functions; if all 4 corners are inside, the entire tile is trivially covered (no per-pixel test needed)
 
@@ -315,7 +315,7 @@ tile_bin_t tile_bins[TILES_X * TILES_Y];
 ### Native (Desktop)
 
 ```
-# Simple — just compile .c files
+# Simple - just compile .c files
 cc -O2 -mavx2 -o starraster main.c sr_raster.c sr_simd.c -lm
 ```
 
@@ -373,14 +373,14 @@ starraster/
 
 ## Optimization Priorities (Ordered by Impact)
 
-1. **SIMD edge functions + depth test** — This is the single biggest win. 4-8x throughput on the hottest loop.
-2. **Tile-based binning** — Cache locality dominates at scale. Without tiling, L2/L3 misses kill performance.
-3. **Fixed-point rasterization** — Exact coverage, no float precision surprises, slightly faster on integer ALUs.
-4. **Multi-threading** — Near-linear scaling for tile rasterization on desktop. 4-8x on modern CPUs.
-5. **Hierarchical tile rejection** — Skip entire tiles or accept them without per-pixel tests. Huge for large triangles.
-6. **Guard-band clipping** — Avoid expensive clip-to-frustum for most triangles; only clip near plane.
-7. **Attribute interpolation optimization** — Compute per-tile base + step instead of per-pixel multiply.
-8. **Texture sampling** — Bilinear with precomputed mip levels, power-of-2 textures for bit-shift addressing.
+1. **SIMD edge functions + depth test** - This is the single biggest win. 4-8x throughput on the hottest loop.
+2. **Tile-based binning** - Cache locality dominates at scale. Without tiling, L2/L3 misses kill performance.
+3. **Fixed-point rasterization** - Exact coverage, no float precision surprises, slightly faster on integer ALUs.
+4. **Multi-threading** - Near-linear scaling for tile rasterization on desktop. 4-8x on modern CPUs.
+5. **Hierarchical tile rejection** - Skip entire tiles or accept them without per-pixel tests. Huge for large triangles.
+6. **Guard-band clipping** - Avoid expensive clip-to-frustum for most triangles; only clip near plane.
+7. **Attribute interpolation optimization** - Compute per-tile base + step instead of per-pixel multiply.
+8. **Texture sampling** - Bilinear with precomputed mip levels, power-of-2 textures for bit-shift addressing.
 
 ---
 
@@ -392,7 +392,7 @@ starraster/
 | **SwiftShader** | Production CPU Vulkan, Subzero JIT, SIMD patterns | C++ |
 | **tinyrenderer** | Clean minimal implementation of full pipeline | C++ |
 | **Pixomatic** | Historical aggressive SIMD optimization (no source, but papers exist) | C/ASM |
-| **Larrabee papers** | Intel's SIMD rasterizer design docs — the theoretical foundation | Papers |
+| **Larrabee papers** | Intel's SIMD rasterizer design docs - the theoretical foundation | Papers |
 | **softgl** | Simple OpenGL-like CPU renderer | C |
 | **Rasterizer (fabiensanglard.net)** | Excellent writeups on software rendering techniques | Articles |
 
@@ -415,7 +415,7 @@ These are aggressive but achievable targets based on llvmpipe/SwiftShader benchm
 ## Phased Implementation Plan
 
 ### Phase 1: Foundation
-- [ ] Sokol boilerplate — window, framebuffer texture, fullscreen quad display
+- [ ] Sokol boilerplate - window, framebuffer texture, fullscreen quad display
 - [ ] Basic math library (vec, mat4, fixed-point)
 - [ ] Clear framebuffer to solid color → verify Sokol display works
 - [ ] Single-triangle rasterizer (scalar, no SIMD, no tiling)
@@ -466,6 +466,6 @@ This is a **great project** if you approach it as a performance engineering exer
 - **Sokol** solves the boring platform problem with near-zero overhead
 - **WASM SIMD** means your optimized inner loops actually translate to the web
 
-The "most efficient CPU rasterizer of all time" bar is set by llvmpipe and SwiftShader, which have years of engineering and JIT compilation. You won't beat them on generality. But for a **fixed-function pipeline** (no programmable shaders, no JIT), a hand-tuned C rasterizer with SIMD intrinsics and tile-based binning can be surprisingly competitive — and significantly simpler.
+The "most efficient CPU rasterizer of all time" bar is set by llvmpipe and SwiftShader, which have years of engineering and JIT compilation. You won't beat them on generality. But for a **fixed-function pipeline** (no programmable shaders, no JIT), a hand-tuned C rasterizer with SIMD intrinsics and tile-based binning can be surprisingly competitive - and significantly simpler.
 
 The sweet spot is **moderate scene complexity at 720p-1080p**. That's where CPU rasterization is genuinely practical, especially when you factor in the portability win of running identically in a browser.
