@@ -200,7 +200,7 @@ static void game_pregen_enemy_ship(void) {
 
 /* ── Save / Load ─────────────────────────────────────────────────── */
 
-#define SAVE_VERSION 8  /* keep at 8 for backward compatibility */
+#define SAVE_VERSION 10 /* v10: self-describing header/dungeon sizes for forward compat */
 
 /*  Save header - fixed-size portion written first.
  *  After the header, each generated dungeon floor (sr_dungeon) is
@@ -260,6 +260,13 @@ typedef struct {
 
     /* One-shot flags */
     bool elem_gift_given;
+
+    /* Self-describing struct sizes (v10+).
+       Stored at save time so the loader knows exactly how many bytes
+       to read for the header and each dungeon floor, even if the
+       structs grow in a future build. */
+    uint32_t saved_header_size;
+    uint32_t saved_dungeon_size;
 } save_header;
 
 /* Variables used by save/load - declared here so they're visible to game_save/game_load */
@@ -367,6 +374,8 @@ static void game_save(void) {
     hdr.miniboss_type = current_miniboss_type;
     hdr.medbay_kit_stock = g_medbay_kit_stock;
     hdr.elem_gift_given = g_elem_gift_given;
+    hdr.saved_header_size  = (uint32_t)sizeof(save_header);
+    hdr.saved_dungeon_size = (uint32_t)sizeof(sr_dungeon);
 
     FILE *f = fopen(SAVE_FILE, "wb");
     if (!f) return;
@@ -402,6 +411,11 @@ static bool game_load(void) {
     long file_size = ftell(f);
     fseek(f, 0, SEEK_SET);
 
+    if (file_size < 8) {
+        printf("[load] File too small (%ld bytes)\n", file_size);
+        fclose(f); return false;
+    }
+
     uint8_t *raw = (uint8_t *)malloc((size_t)file_size);
     if (!raw) { fclose(f); return false; }
     if ((long)fread(raw, 1, (size_t)file_size, f) != file_size) {
@@ -411,7 +425,6 @@ static bool game_load(void) {
     fclose(f);
 
     /* Check magic + version from the first 8 bytes */
-    if (file_size < 8) { free(raw); return false; }
     uint32_t magic, version;
     memcpy(&magic, raw, 4);
     memcpy(&version, raw + 4, 4);
@@ -419,13 +432,14 @@ static bool game_load(void) {
         printf("[load] Bad magic: 0x%08X\n", magic);
         free(raw); return false;
     }
-    if (version != SAVE_VERSION) {
-        printf("[load] Version mismatch: save=%u, code=%u\n", version, SAVE_VERSION);
+    if (version < 8 || version > SAVE_VERSION) {
+        printf("[load] Unsupported version: save=%u, accepted=8-%u\n",
+               version, SAVE_VERSION);
         free(raw); return false;
     }
 
     /* Determine old header size by subtracting floor data.
-       floor_generated[] is at the same offset in all v8 layouts because
+       floor_generated[] is at the same offset in all v8+ layouts because
        it appears before combat_snap (where the struct diverged). */
     size_t fg_offset = offsetof(save_header, floor_generated);
     if ((size_t)file_size < fg_offset + sizeof(((save_header *)0)->floor_generated)) {
@@ -441,8 +455,9 @@ static bool game_load(void) {
 
     size_t old_hdr_size = (size_t)file_size - (size_t)num_floors * sizeof(sr_dungeon);
     long hdr_diff = (long)sizeof(save_header) - (long)old_hdr_size;
-    printf("[load] file=%ld, hdr_now=%d, hdr_old=%d, diff=%ld, floors=%d\n",
-           file_size, (int)sizeof(save_header), (int)old_hdr_size, hdr_diff, num_floors);
+    printf("[load] file=%ld, ver=%u, hdr_now=%d, hdr_old=%d, diff=%ld, floors=%d\n",
+           file_size, version, (int)sizeof(save_header),
+           (int)old_hdr_size, hdr_diff, num_floors);
 
     save_header hdr;
     memset(&hdr, 0, sizeof(hdr));
@@ -450,17 +465,17 @@ static bool game_load(void) {
     if (hdr_diff == 0) {
         /* Same layout, straight copy */
         memcpy(&hdr, raw, sizeof(hdr));
-    } else if (hdr_diff > 0 && hdr_diff <= 16) {
+    } else if (hdr_diff > 0 && hdr_diff <= 64) {
         /* Older save with smaller header. Splice missing bytes.
-           The known gap is combat_state.enemy_atk_pause (4 bytes,
-           in the middle of combat_snap). Any remaining diff is
-           missing tail fields (medbay_kit_stock, elem_gift_given)
-           which stay zero from the memset above. */
+           Known gap: combat_state.enemy_atk_pause (4 bytes in the
+           middle of combat_snap). Remaining diff is tail fields
+           (medbay_kit_stock, elem_gift_given, saved_header_size,
+           saved_dungeon_size) which stay zero from memset. */
         size_t pause_off = offsetof(save_header, combat_snap)
                          + offsetof(combat_state, enemy_atk_pause);
 
         if (hdr_diff >= 12 && old_hdr_size > pause_off) {
-            /* 4-byte gap in the middle + 8 bytes missing at tail */
+            /* 4-byte gap in the middle + missing bytes at tail */
             memcpy(&hdr, raw, pause_off);
             /* enemy_atk_pause stays 0 from memset */
             size_t after_gap = old_hdr_size - pause_off;
@@ -471,6 +486,11 @@ static bool game_load(void) {
             memcpy(&hdr, raw, old_hdr_size);
             printf("[load] Migrated: filled %ld missing tail bytes\n", hdr_diff);
         }
+    } else if (hdr_diff < 0) {
+        /* Newer save loaded by older build: read what we understand */
+        memcpy(&hdr, raw, sizeof(hdr));
+        printf("[load] Loading newer v%u save (skipping %ld extra header bytes)\n",
+               version, -hdr_diff);
     } else {
         printf("[load] Cannot migrate: header diff=%ld bytes\n", hdr_diff);
         free(raw); return false;
@@ -598,7 +618,8 @@ static bool game_has_save(void) {
     size_t n = fread(header, 4, 2, f);
     fclose(f);
 
-    bool ok = (n == 2 && header[0] == SAVE_MAGIC && header[1] == SAVE_VERSION);
+    bool ok = (n == 2 && header[0] == SAVE_MAGIC &&
+               header[1] >= 8 && header[1] <= SAVE_VERSION);
     printf("[save-check] magic=0x%08X ver=%u, valid=%d\n", header[0], header[1], ok);
     return ok;
 }
@@ -2559,6 +2580,15 @@ static void init(void) {
             hub_from_large.z_off       = sr_config_float(&gcfg, "hub_from_large.z_offset", 80.0f);
             hub_from_large.hover_amp   = sr_config_float(&gcfg, "hub_from_large.hover_amplitude", 0.15f);
             hub_from_large.hover_speed = sr_config_float(&gcfg, "hub_from_large.hover_speed", 0.6f);
+
+            /* Combat ground plane lighting */
+            combat_ground_ambient    = sr_config_float(&gcfg, "combat.ground_ambient", 0.25f);
+            combat_ground_tile_scale = sr_config_float(&gcfg, "combat.ground_tile_scale", 4.0f);
+            combat_light_x           = sr_config_float(&gcfg, "combat.light_x", 0.0f);
+            combat_light_y           = sr_config_float(&gcfg, "combat.light_y", 0.4f);
+            combat_light_intensity   = sr_config_float(&gcfg, "combat.light_intensity", 1.0f);
+            combat_light_radius      = sr_config_float(&gcfg, "combat.light_radius", 0.7f);
+            combat_shadow_opacity    = sr_config_float(&gcfg, "combat.shadow_opacity", 0.55f);
 
             /* Movement mode */
             dng_instant_step = (int)sr_config_float(&gcfg, "movement.instant_step", 0) != 0;
