@@ -404,18 +404,55 @@ static bool game_load(void) {
            file_size, (int)sizeof(save_header));
 
     save_header hdr;
+    memset(&hdr, 0, sizeof(hdr));
     size_t hdr_read = fread(&hdr, sizeof(hdr), 1, f);
+
     if (hdr_read != 1) {
-        printf("[load] Header read failed (got %d items, file too small)\n", (int)hdr_read);
+        /* File too small for current header. Try reading whatever is
+           available so we can at least check magic/version and report
+           a useful error. */
+        fseek(f, 0, SEEK_SET);
+        memset(&hdr, 0, sizeof(hdr));
+        size_t avail = (size_t)file_size;
+        if (avail > sizeof(hdr)) avail = sizeof(hdr);
+        size_t bytes = fread(&hdr, 1, avail, f);
+        if (bytes < 8 || hdr.magic != SAVE_MAGIC) {
+            printf("[load] Header read failed (got %d bytes, corrupt file)\n", (int)bytes);
+            fclose(f); return false;
+        }
+        printf("[load] Save from older build (ver=%u, %ld bytes vs %d expected)\n",
+               hdr.version, file_size, (int)sizeof(save_header));
+        printf("[load] Struct layout changed, cannot migrate. Please start a new game.\n");
         fclose(f); return false;
     }
+
     if (hdr.magic != SAVE_MAGIC) {
         printf("[load] Bad magic: 0x%08X (expected 0x%08X)\n", hdr.magic, SAVE_MAGIC);
         fclose(f); return false;
     }
-    if (hdr.version != SAVE_VERSION) {
-        printf("[load] Version mismatch: save=%u, code=%u\n", hdr.version, SAVE_VERSION);
+    /* Accept current version and previous compatible version */
+    if (hdr.version != SAVE_VERSION && hdr.version != SAVE_VERSION - 1) {
+        printf("[load] Version too old: save=%u, supported=%u-%u\n",
+               hdr.version, SAVE_VERSION - 1, SAVE_VERSION);
         fclose(f); return false;
+    }
+
+    /* Validate file size matches expected layout to catch silent struct
+       changes that shifted field offsets (e.g. embedded struct grew). */
+    {
+        int expected_floors = 0;
+        for (int i = 0; i < DNG_MAX_FLOORS; i++)
+            if (hdr.floor_generated[i]) expected_floors++;
+        long expected_size = (long)sizeof(save_header)
+                           + (long)expected_floors * (long)sizeof(sr_dungeon);
+        if (file_size != expected_size) {
+            printf("[load] Size mismatch: file=%ld, expected=%ld "
+                   "(hdr=%d + %d floors * %d)\n",
+                   file_size, expected_size, (int)sizeof(save_header),
+                   expected_floors, (int)sizeof(sr_dungeon));
+            printf("[load] Save layout incompatible with this build.\n");
+            fclose(f); return false;
+        }
     }
 
     /* Restore dungeon floors */
@@ -434,8 +471,8 @@ static bool game_load(void) {
         }
     }
     fclose(f);
-    printf("[load] OK: %d floors, state=%d, ship='%s'\n",
-           floors_loaded, hdr.app_state_saved, hdr.ship.name);
+    printf("[load] OK: ver=%u, %d floors, state=%d, ship='%s'\n",
+           hdr.version, floors_loaded, hdr.app_state_saved, hdr.ship.name);
 
     /* Restore progression */
     selected_class = hdr.selected_class;
@@ -542,11 +579,14 @@ static bool game_has_save(void) {
     size_t n = fread(&hdr, sizeof(hdr), 1, f);
     fclose(f);
 
-    printf("[save-check] File %ld bytes (need %d), read=%d, magic=0x%08X (expect 0x%08X), ver=%u (expect %u)\n",
-           file_size, (int)sizeof(save_header), (int)n, hdr.magic, SAVE_MAGIC, hdr.version, SAVE_VERSION);
+    printf("[save-check] File %ld bytes (need %d), read=%d, magic=0x%08X, ver=%u (accept %u-%u)\n",
+           file_size, (int)sizeof(save_header), (int)n, hdr.magic,
+           hdr.version, SAVE_VERSION - 1, SAVE_VERSION);
 
-    bool ok = (n == 1 && hdr.magic == SAVE_MAGIC && hdr.version == SAVE_VERSION);
-    if (!ok) printf("[save-check] Save invalid or version mismatch\n");
+    /* Accept current and previous compatible version */
+    bool ok = (n == 1 && hdr.magic == SAVE_MAGIC &&
+               (hdr.version == SAVE_VERSION || hdr.version == SAVE_VERSION - 1));
+    if (!ok) printf("[save-check] Save invalid or incompatible version\n");
     return ok;
 }
 
