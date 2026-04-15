@@ -2919,6 +2919,7 @@ static void frame(void) {
         dng_wall_texture = ITEX_ALIEN_CORRIDOR;
         dng_room_wall_texture = ITEX_ALIEN_WALL;
         dng_floor_texture = ITEX_HUB_FLOOR;
+        combat_floor_texture = ITEX_HUB_FLOOR;  /* persist for combat ground plane */
         dng_ceiling_texture = ITEX_HUB_CEILING;
         dng_window_texture = ITEX_ALIEN_WIN;
         dng_skip_pillars = true;

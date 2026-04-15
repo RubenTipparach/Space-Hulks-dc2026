@@ -56,7 +56,7 @@ combat:
   ground_tile_scale: 4.0
   light_x: 0.0
   light_y: 0.4
-  light_intensity: 1.0
+  light_intensity: 0.55
   light_radius: 0.42
   shadow_opacity: 0.55
 

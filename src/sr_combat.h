@@ -2596,6 +2596,7 @@ static void combat_draw_pile_viewer(uint32_t *px, int W, int H,
 
 /* ── Combat ground plane config (loaded from game_config.yaml) ────── */
 
+static int   combat_floor_texture      = -1;     /* snapshot of floor tex at combat start */
 static float combat_ground_ambient    = 0.25f;  /* base floor brightness */
 static float combat_ground_tile_scale = 4.0f;   /* texture repeat factor */
 static float combat_light_x           = 0.0f;   /* point light X (-1..1) */
@@ -2607,9 +2608,9 @@ static float combat_shadow_opacity    = 0.55f;  /* shadow darkness (0=none, 1=fu
 /* ── Perspective ground plane beneath enemies ──────────────────────── */
 
 static void combat_draw_ground_plane(uint32_t *px, int W, int H) {
-    /* Use the current dungeon floor texture, fallback to ITEX_TILE */
-    const sr_indexed_texture *floor_tex = (dng_floor_texture >= 0)
-        ? &itextures[dng_floor_texture] : &itextures[ITEX_TILE];
+    /* Use the floor texture snapshot from combat start */
+    const sr_indexed_texture *floor_tex = (combat_floor_texture >= 0)
+        ? &itextures[combat_floor_texture] : &itextures[ITEX_TILE];
     if (!floor_tex->indices) floor_tex = &itextures[ITEX_TILE];
     if (!floor_tex->indices) return;
 
