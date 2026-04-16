@@ -97,21 +97,21 @@ miniboss_4:
 # keep the fight dragging out until the right element comes down.
 boss_1:
   name: RAVAGER
-  hp: 360
+  hp: 240
   dmg_min: 9
   dmg_max: 14
   range: 2
 
 boss_2:
   name: VOID WYRM
-  hp: 420
+  hp: 240
   dmg_min: 10
   dmg_max: 16
   range: 3
 
 boss_3:
   name: HIVEMIND
-  hp: 480
+  hp: 240
   dmg_min: 11
   dmg_max: 18
   range: 2
