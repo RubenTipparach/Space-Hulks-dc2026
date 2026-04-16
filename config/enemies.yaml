@@ -4,28 +4,28 @@
 # ── Tier 1 (Difficulty 0-1) ──────────────────────────
 lurker:
   name: LURKER
-  hp: 8
+  hp: 16
   dmg_min: 1
   dmg_max: 3
   range: 2
 
 brute:
   name: BRUTE
-  hp: 18
+  hp: 36
   dmg_min: 4
   dmg_max: 6
   range: 1
 
 spitter:
   name: SPITTER
-  hp: 10
+  hp: 20
   dmg_min: 2
   dmg_max: 4
   range: 3
 
 hiveguard:
   name: HIVEGUARD
-  hp: 24
+  hp: 48
   dmg_min: 3
   dmg_max: 5
   range: 2
@@ -33,28 +33,28 @@ hiveguard:
 # ── Tier 2 (Difficulty 2+) ──────────────────────────
 stalker:
   name: STALKER
-  hp: 14
+  hp: 28
   dmg_min: 3
   dmg_max: 5
   range: 2
 
 mauler:
   name: MAULER
-  hp: 28
+  hp: 56
   dmg_min: 5
   dmg_max: 8
   range: 1
 
 acid_thrower:
   name: ACID THROWER
-  hp: 16
+  hp: 32
   dmg_min: 3
   dmg_max: 6
   range: 4
 
 warden:
   name: WARDEN
-  hp: 32
+  hp: 64
   dmg_min: 4
   dmg_max: 6
   range: 2
@@ -62,28 +62,28 @@ warden:
 # ── Minibosses (Tier 2 elites) ──────────────────────
 miniboss_1:
   name: SHADOW ALPHA
-  hp: 50
+  hp: 100
   dmg_min: 5
   dmg_max: 8
   range: 2
 
 miniboss_2:
   name: RAVAGER BROOD
-  hp: 55
+  hp: 110
   dmg_min: 6
   dmg_max: 9
   range: 1
 
 miniboss_3:
   name: VENOM QUEEN
-  hp: 42
+  hp: 84
   dmg_min: 5
   dmg_max: 7
   range: 3
 
 miniboss_4:
   name: HIVE SENTINEL
-  hp: 60
+  hp: 120
   dmg_min: 5
   dmg_max: 8
   range: 2
@@ -97,21 +97,21 @@ miniboss_4:
 # keep the fight dragging out until the right element comes down.
 boss_1:
   name: RAVAGER
-  hp: 180
+  hp: 360
   dmg_min: 9
   dmg_max: 14
   range: 2
 
 boss_2:
   name: VOID WYRM
-  hp: 210
+  hp: 420
   dmg_min: 10
   dmg_max: 16
   range: 3
 
 boss_3:
   name: HIVEMIND
-  hp: 240
+  hp: 480
   dmg_min: 11
   dmg_max: 18
   range: 2

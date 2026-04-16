@@ -118,7 +118,7 @@ static const int card_targets[] = {
     TARGET_ENEMY,         /* MELEE */
     TARGET_SELF,          /* OVERCHARGE */
     TARGET_SELF,          /* REPAIR */
-    TARGET_ALL_ENEMIES,   /* STUN */
+    TARGET_ENEMY,         /* STUN (melee, single target) */
     TARGET_SELF,          /* FORTIFY */
     TARGET_ENEMY,         /* DOUBLE SHOT */
     TARGET_ENEMY,         /* DASH */
@@ -194,6 +194,28 @@ static int card_element(int card) {
         case CARD_FIRE:      return ELEM_FIRE;
         case CARD_LIGHTNING: return ELEM_LIGHTNING;
         default:             return -1;
+    }
+}
+
+/* Card melee range requirement: returns max distance (0 = no limit) */
+static int card_max_range(int card) {
+    switch (card) {
+        case CARD_MELEE:       return 2;
+        case CARD_STUN:        return 2;
+        case CARD_WELDER:      return 2;
+        case CARD_CHAINSAW:    return 2;
+        case CARD_WELDER_UP:   return 2;
+        case CARD_CHAINSAW_UP: return 2;
+        default:               return 0; /* 0 = no range limit */
+    }
+}
+
+/* Card minimum range requirement (for sniper-type cards) */
+static int card_min_range(int card) {
+    switch (card) {
+        case CARD_SNIPER:    return 2;
+        case CARD_SNIPER_UP: return 2;
+        default:             return 0;
     }
 }
 
@@ -955,7 +977,7 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
             } else {
                 sr_audio_play_sfx(&audio_sfx_error);
                 int d = (t >= 0) ? cs->enemies[t].distance : 0;
-                snprintf(buf, sizeof(buf), "TOO FAR! DIST: %d", d);
+                snprintf(buf, sizeof(buf), "NOT IN RANGE! DIST: %d", d);
                 combat_set_message(cs, buf);
                 cs->energy += cost; /* refund */
                 return; /* don't consume card */
@@ -976,16 +998,27 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
             combat_set_message(cs, "REPAIR +4HP");
             break;
 
-        case CARD_STUN:
-            sr_audio_play_sfx(&audio_sfx_stun_gun);
-            for (int i = 0; i < cs->enemy_count; i++)
-                if (cs->enemies[i].alive) {
-                    cs->enemies[i].lightning_stun = 1;
-                    cs->enemies[i].flash_timer = 20;
-                }
-            combat_set_message(cs, "STUN! ENEMIES SKIP TURN");
-            cs->player_shield += 1; /* minor shield bonus */
+        case CARD_STUN: {
+            int t = cs->target;
+            while (t < cs->enemy_count && !cs->enemies[t].alive) t++;
+            if (t >= cs->enemy_count) t = combat_first_alive_enemy(cs);
+            if (t >= 0 && cs->enemies[t].distance <= 2) {
+                sr_audio_play_sfx(&audio_sfx_stun_gun);
+                cs->enemies[t].lightning_stun = 1;
+                cs->enemies[t].flash_timer = 20;
+                snprintf(buf, sizeof(buf), "STUN %s! SKIP TURN", enemy_templates[cs->enemies[t].type].name);
+                combat_set_message(cs, buf);
+                cs->player_shield += 1; /* minor shield bonus */
+            } else {
+                sr_audio_play_sfx(&audio_sfx_error);
+                int d = (t >= 0) ? cs->enemies[t].distance : 0;
+                snprintf(buf, sizeof(buf), "NOT IN RANGE! DIST: %d", d);
+                combat_set_message(cs, buf);
+                cs->energy += cost; /* refund */
+                return; /* don't consume card */
+            }
             break;
+        }
 
         case CARD_FORTIFY:
             sr_audio_play_sfx(&audio_sfx_fortify);
@@ -1185,7 +1218,7 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
             } else {
                 sr_audio_play_sfx(&audio_sfx_error);
                 int d = (t >= 0) ? cs->enemies[t].distance : 0;
-                snprintf(buf, sizeof(buf), "TOO FAR! DIST: %d", d);
+                snprintf(buf, sizeof(buf), "NOT IN RANGE! DIST: %d", d);
                 combat_set_message(cs, buf);
                 cs->energy += cost;
                 return;
@@ -1207,7 +1240,7 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
             } else {
                 sr_audio_play_sfx(&audio_sfx_error);
                 int d = (t >= 0) ? cs->enemies[t].distance : 0;
-                snprintf(buf, sizeof(buf), "TOO FAR! DIST: %d", d);
+                snprintf(buf, sizeof(buf), "NOT IN RANGE! DIST: %d", d);
                 combat_set_message(cs, buf);
                 cs->energy += cost;
                 return;
@@ -1346,7 +1379,7 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
             } else {
                 sr_audio_play_sfx(&audio_sfx_error);
                 int d = (t >= 0) ? cs->enemies[t].distance : 0;
-                snprintf(buf, sizeof(buf), "TOO FAR! DIST: %d", d);
+                snprintf(buf, sizeof(buf), "NOT IN RANGE! DIST: %d", d);
                 combat_set_message(cs, buf);
                 cs->energy += cost;
                 return;
@@ -1368,7 +1401,7 @@ static void combat_play_card(combat_state *cs, int hand_idx) {
             } else {
                 sr_audio_play_sfx(&audio_sfx_error);
                 int d = (t >= 0) ? cs->enemies[t].distance : 0;
-                snprintf(buf, sizeof(buf), "TOO FAR! DIST: %d", d);
+                snprintf(buf, sizeof(buf), "NOT IN RANGE! DIST: %d", d);
                 combat_set_message(cs, buf);
                 cs->energy += cost;
                 return;
@@ -2165,16 +2198,22 @@ static void combat_touch_ended(combat_state *cs, float fx, float fy) {
     int target_type = card_targets[card];
     float dy = cs->drag_start_y - fy;  /* positive = dragged upward */
 
+    /* Self-target: also accept drop on the green player zone (no upward drag needed) */
+    bool in_player_zone = (fx < 100.0f && fy >= 120.0f && fy <= 230.0f);
+    if (target_type == TARGET_SELF && in_player_zone) {
+        combat_play_card(cs, cs->drag_card);
+        combat_check_victory(cs);
+        return;
+    }
+
     /* Must drag upward at least 30px to play */
     if (dy < 30.0f) return;
 
     bool played = false;
     if (target_type == TARGET_SELF) {
-        /* Self-target: play if dragged up at all, or dropped in player zone */
-        if (dy >= 10.0f || (fx < 100.0f && fy >= 130.0f && fy <= 230.0f)) {
-            combat_play_card(cs, cs->drag_card);
-            played = true;
-        }
+        /* Self-target: play if dragged up */
+        combat_play_card(cs, cs->drag_card);
+        played = true;
     } else if (target_type == TARGET_ALL_ENEMIES) {
         if (fy < 130.0f) {
             combat_play_card(cs, cs->drag_card);
@@ -2394,7 +2433,7 @@ static const char *card_effect_text(int card_type) {
         case CARD_MELEE:       return "6 DMG\nRANGE 2";
         case CARD_OVERCHARGE:  return "+2 ENERGY";
         case CARD_REPAIR:      return "+4 HP";
-        case CARD_STUN:        return "SKIP ENEMY\nATTACKS";
+        case CARD_STUN:        return "STUN 1\nMELEE";
         case CARD_FORTIFY:     return "+6 SHIELD";
         case CARD_DOUBLE_SHOT: return "5 DMG";
         case CARD_DASH:        return "+3 MOVE\n2 DMG";
@@ -2410,7 +2449,7 @@ static const char *card_effect_text(int card_type) {
         case CARD_DEFLECTOR:   return "+4 SHIELD\nREFLECT DMG";
         case CARD_STUN_GUN:    return "STUN 1T\n1 DMG";
         case CARD_MICROWAVE:   return "5 DMG\n*3 DMG ALL";
-        case CARD_QUICKSTEP:   return "+1 MOVE\nTO DISC";
+        case CARD_QUICKSTEP:   return "+1 MOVE\nTO DISCARD";
         case CARD_SNIPER_UP:   return "8 DMG\nDIST 2+";
         case CARD_SHOTGUN_UP:  return "2-5 DMG\nANY RANGE";
         case CARD_WELDER_UP:   return "6 DMG +3SH\nRANGE 2";
@@ -2437,7 +2476,7 @@ static const char *card_description_text(int card_type) {
         case CARD_MELEE:       return "POWERFUL CLOSE RANGE\nATTACK. RANGE 2.";
         case CARD_OVERCHARGE:  return "GAIN EXTRA ENERGY\nTHIS TURN. COSTS\nNOTHING TO PLAY.";
         case CARD_REPAIR:      return "RESTORE HIT POINTS.\nHEALING PERSISTS\nBETWEEN COMBATS.";
-        case CARD_STUN:        return "ALL ENEMIES SKIP\nTHEIR NEXT ATTACK\nPHASE.";
+        case CARD_STUN:        return "STUNS ONE ENEMY FOR\n1 TURN. MUST BE\nADJACENT TO TARGET.";
         case CARD_FORTIFY:     return "HEAVY SHIELD BOOST.\nGREAT FOR BRACING\nAGAINST BIG HITS.";
         case CARD_DOUBLE_SHOT: return "TWO SHOTS AT ONE\nTARGET FOR HIGH\nSINGLE-TARGET DMG.";
         case CARD_DASH:        return "MOVE AND STRIKE.\nGAIN MOVEMENT THEN\nDEAL DAMAGE.";
@@ -3198,6 +3237,16 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
                 int esz = (int)(16.0f * efs + 0.5f);
                 int esy = 10 + combat.enemies[i].distance * 8;
                 if (combat.drag_x >= ecx - esz && combat.drag_x <= ecx + esz && combat.drag_y < esy + esz + 40) {
+                    int dist = combat.enemies[i].distance;
+                    int max_r = card_max_range(card);
+                    int min_r = card_min_range(card);
+                    bool out_of_range = (max_r > 0 && dist > max_r) || (min_r > 0 && dist < min_r);
+                    if (out_of_range) {
+                        /* Show red highlight and NOT IN RANGE text */
+                        combat_draw_rect_outline(px, W, H, ecx - esz/2 - 4, esy - 4, esz + 8, esz + 50, 0xFF4444FF);
+                        sr_draw_text_shadow(px, W, H, ecx - 30, esy + esz + 42,
+                                            "NOT IN RANGE", 0xFF4444FF, shadow);
+                    } else {
                     /* Check weakness for elemental cards */
                     bool is_weak = (elem >= 0 && g_weakness.initialized &&
                                     g_weakness.weakness_known[combat.enemies[i].type] &&
@@ -3217,6 +3266,7 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
                         sr_draw_text_shadow(px, W, H, ecx - 12, esy + esz + 42,
                                             dmgbuf, 0xFF00FFFF, shadow);
                     }
+                    } /* end else (in range) */
                 }
             }
         }
@@ -3240,9 +3290,9 @@ static void draw_combat_scene(sr_framebuffer *fb_ptr) {
             combat.pile_view_selected = -1;
         }
         /* Discard pile button (disabled when log overlay is open) */
-        char rbuf[16];
-        snprintf(rbuf, sizeof(rbuf), "DISC:%d", combat.discard_count);
-        if (!combat.log_open && ui_button(px, W, H, W - 56, 28, 52, 12, rbuf,
+        char rbuf[20];
+        snprintf(rbuf, sizeof(rbuf), "DISCARD:%d", combat.discard_count);
+        if (!combat.log_open && ui_button(px, W, H, W - 68, 28, 64, 12, rbuf,
                       0xFF111122, 0xFF1A1A33, 0xFF333366)) {
             combat.discard_view_open = true;
             combat.deck_view_open = false;

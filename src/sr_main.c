@@ -2634,7 +2634,7 @@ static void dispatch_dialog_action(int action) {
             app_state = STATE_SHOP;
             break;
         case DIALOG_ACTION_HEAL:
-            if (!mission_medbay_done && mission_briefed && !mission_armory_done) {
+            if (!mission_medbay_done && mission_briefed) {
                 g_player.hp = g_player.hp_max;
                 mission_medbay_done = true;
                 /* Onboarding: Vasquez gives the player 150 biomass to spend
@@ -2645,7 +2645,6 @@ static void dispatch_dialog_action(int action) {
                          "VASQUEZ: TAKE 150 BIOMASS. SPEND IT IN MY SHOP.");
                 g_hub.hud_msg_timer = 120;
             } else {
-                if (!mission_medbay_done && mission_briefed) mission_medbay_done = true;
                 dng_rng_seed((uint32_t)(player_sector * 5555 + 456 + player_biomass * 13));
                 medbay_shop_generate(&g_medbay_shop);
                 active_shop_type = 1;
@@ -3612,7 +3611,7 @@ static void handle_screen_tap(float sx, float sy) {
                         }
                         break;
                     case DIALOG_ACTION_HEAL:
-                        if (!mission_medbay_done && mission_briefed && !mission_armory_done) {
+                        if (!mission_medbay_done && mission_briefed) {
                             /* First visit during prep: free heal + 150 biomass +
                                new objective for the medbay shop. */
                             g_player.hp = g_player.hp_max;
@@ -3623,9 +3622,8 @@ static void handle_screen_tap(float sx, float sy) {
                             g_hub.hud_msg_timer = 120;
                         } else {
                             /* Open medbay shop */
-                            if (!mission_medbay_done && mission_briefed) mission_medbay_done = true;
                             dng_rng_seed((uint32_t)(player_sector * 5555 + 456 + player_biomass * 13));
-                            shop_generate(&g_medbay_shop);
+                            medbay_shop_generate(&g_medbay_shop);
                             active_shop_type = 1;
                             app_state = STATE_SHOP;
                         }
@@ -4274,7 +4272,7 @@ static void event(const sapp_event *ev) {
                                     }
                                     break;
                                 case DIALOG_ACTION_HEAL:
-                                    snprintf(g_dialog.lines[0], DIALOG_LINE_LEN, "MEDICAL STATION ONLINE.");
+                                    snprintf(g_dialog.lines[0], DIALOG_LINE_LEN, "BIOMASS RESEARCH TERMINAL ONLINE.");
                                     g_dialog.line_count = 1;
                                     break;
                             }
