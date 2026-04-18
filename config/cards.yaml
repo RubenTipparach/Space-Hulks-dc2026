@@ -32,8 +32,8 @@ repair:
   description: "RESTORE HIT POINTS.\nHEALING PERSISTS\nBETWEEN COMBATS."
 
 stun:
-  effect: "SKIP ENEMY\nATTACKS"
-  description: "ALL ENEMIES SKIP\nTHEIR NEXT ATTACK\nPHASE."
+  effect: "STUN 1\nMELEE"
+  description: "STUNS ONE ENEMY FOR\n1 TURN. MUST BE\nADJACENT TO TARGET."
 
 fortify:
   effect: "+6 SHIELD"
@@ -96,7 +96,7 @@ microwave:
   description: "DEALS 5 DAMAGE. IF\nTHE TARGET DIES, ALL\nOTHER ENEMIES TAKE 3."
 
 quickstep:
-  effect: "+1 MOVE\nTO DISC"
+  effect: "+1 MOVE\nTO DISCARD"
   description: "GENERATES A MOVE\nCARD INTO YOUR\nDISCARD PILE."
 
 # Upgraded class-specific cards (dropped by brutes and harder enemies)

@@ -2825,7 +2825,7 @@ static void hub_draw_hud(uint32_t *px, int W, int H) {
                                 snprintf(g_dialog.lines[0], DIALOG_LINE_LEN, "BROWSING INVENTORY...");
                                 g_dialog.line_count = 1; break;
                             case DIALOG_ACTION_HEAL:
-                                snprintf(g_dialog.lines[0], DIALOG_LINE_LEN, "MEDICAL STATION ONLINE.");
+                                snprintf(g_dialog.lines[0], DIALOG_LINE_LEN, "BIOMASS RESEARCH TERMINAL ONLINE.");
                                 g_dialog.line_count = 1; break;
                         }
                         g_dialog.pending_action = action;
